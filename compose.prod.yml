@@ -17,7 +17,7 @@ services:
       retries: 10
 
   app:
-    image: ${PAGE_BUILDER_IMAGE:-ghcr.io/page-builder/page-builder-cms:latest}
+    image: ${PAGE_BUILDER_IMAGE:-ghcr.io/GITHUB_OWNER/IMAGE_NAME:latest}
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-3001}:3001"

@@ -15,14 +15,16 @@ The image does not run Vite or install dependencies at container startup. Those 
 Once releases publish images, production servers should pull the image instead of building from source:
 
 ```sh
-docker pull ghcr.io/page-builder/page-builder-cms:latest
+docker pull ghcr.io/GITHUB_OWNER/IMAGE_NAME:latest
 ```
 
 Pin a version for predictable upgrades:
 
 ```sh
-docker pull ghcr.io/page-builder/page-builder-cms:1.0.0
+docker pull ghcr.io/GITHUB_OWNER/IMAGE_NAME:1.0.0
 ```
+
+`GITHUB_OWNER` and `IMAGE_NAME` are placeholders until the public repository/package name is finalized.
 
 ## Run With An External Postgres Database
 
@@ -38,7 +40,7 @@ docker run -d \
   -e UPLOADS_DIR=/app/uploads \
   -v page-builder-uploads:/app/uploads \
   --restart unless-stopped \
-  ghcr.io/page-builder/page-builder-cms:latest
+  ghcr.io/GITHUB_OWNER/IMAGE_NAME:latest
 ```
 
 Then open:

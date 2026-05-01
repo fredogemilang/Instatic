@@ -37,7 +37,7 @@ describe('self-host docker config', () => {
     const compose = readFileSync('compose.prod.yml', 'utf8')
     const buildOverride = readFileSync('compose.build.yml', 'utf8')
 
-    expect(compose).toContain('ghcr.io/page-builder/page-builder-cms:latest')
+    expect(compose).toContain('ghcr.io/GITHUB_OWNER/IMAGE_NAME:latest')
     expect(compose).not.toContain('build:')
     expect(compose).toContain('restart: unless-stopped')
     expect(compose).toContain('condition: service_healthy')
@@ -55,6 +55,7 @@ describe('self-host docker config', () => {
     const vpsDocs = readFileSync('docs/deployment/vps-compose.md', 'utf8')
     const managedDocs = readFileSync('docs/deployment/managed-hosts.md', 'utf8')
     const backupDocs = readFileSync('docs/deployment/backup-restore.md', 'utf8')
+    const releaseDocs = readFileSync('docs/deployment/release-workflow.md', 'utf8')
 
     expect(env).toContain('POSTGRES_PASSWORD=')
     expect(env).toContain('SESSION_SECRET=')
@@ -64,5 +65,7 @@ describe('self-host docker config', () => {
     expect(vpsDocs).toContain('compose.build.yml')
     expect(managedDocs).toContain('DATABASE_URL')
     expect(backupDocs).toContain('pg_dump')
+    expect(releaseDocs).toContain('GitHub Actions builds the Docker image')
+    expect(releaseDocs).toContain('ghcr.io/GITHUB_OWNER/IMAGE_NAME')
   })
 })

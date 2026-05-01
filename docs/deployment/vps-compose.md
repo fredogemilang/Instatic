@@ -18,11 +18,13 @@ cd page-builder-cms
 Download the production Compose and environment templates from the release source:
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/page-builder/page-builder/main/compose.prod.yml
-curl -fsSLO https://raw.githubusercontent.com/page-builder/page-builder/main/.env.production.example
+curl -fsSLO https://raw.githubusercontent.com/GITHUB_OWNER/GITHUB_REPO/main/compose.prod.yml
+curl -fsSLO https://raw.githubusercontent.com/GITHUB_OWNER/GITHUB_REPO/main/.env.production.example
 ```
 
-Before the project has a public GitHub repository/image, use the local repository files directly:
+`GITHUB_OWNER` and `GITHUB_REPO` are placeholders until the public repository is renamed and published.
+
+Before the project has a public GitHub repository/image, use the local repository files directly or build from source:
 
 ```sh
 cp compose.prod.yml /path/on/server/compose.prod.yml
@@ -38,6 +40,7 @@ cp .env.production.example .env
 Edit `.env` and replace:
 
 ```txt
+PAGE_BUILDER_IMAGE=ghcr.io/GITHUB_OWNER/IMAGE_NAME:latest
 POSTGRES_PASSWORD=replace-with-a-long-random-hex-password
 SESSION_SECRET=replace-with-a-long-random-hex-secret
 ```
@@ -90,7 +93,7 @@ Postgres and upload volumes stay attached.
 
 ## Build From Source Instead
 
-Most users should pull the published image. Developers can build locally from a source checkout with:
+Most users should pull the published image. Until the image exists, or when developing locally, build from a source checkout with:
 
 ```sh
 docker compose -f compose.prod.yml -f compose.build.yml up -d --build

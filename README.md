@@ -2,6 +2,8 @@
 
 Self-hosted CMS with an integrated visual page builder. The app serves the public website, admin editor, CMS API, published pages, and uploaded media from one Bun server backed by Postgres.
 
+The project is currently private and the final public repository/image name is still work in progress. Deployment files are prepared for a published GitHub Container Registry image; replace placeholder image names with the final package before the first public release.
+
 ## Local Development
 
 Install dependencies:
@@ -53,6 +55,7 @@ Deployment docs:
 - [VPS Docker Compose](docs/deployment/vps-compose.md)
 - [Managed hosts](docs/deployment/managed-hosts.md)
 - [Backup and restore](docs/deployment/backup-restore.md)
+- [Release and image publishing workflow](docs/deployment/release-workflow.md)
 
 ## Required Production Data
 
