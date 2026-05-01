@@ -1,6 +1,8 @@
 import { handleAgentRequest } from './agentHandler'
 import { handleCmsRequest } from './cms/handlers'
 import type { DbClient } from './cms/db'
+import { getPublishedContentEntryByRoute } from './cms/contentRepository'
+import { renderContentDocumentHtml } from './cms/contentRenderer'
 import { getPublishedPageBySlug } from './cms/publishRepository'
 import { renderPublishedSnapshot } from './cms/publicRenderer'
 import { jsonResponse } from './http'
@@ -15,6 +17,15 @@ export interface ServerRuntime {
 function publicSlugFromPath(pathname: string): string {
   const trimmed = pathname.replace(/^\/+|\/+$/g, '')
   return trimmed === '' ? 'index' : trimmed
+}
+
+function contentRouteFromPath(pathname: string): { collectionSlug: string; entrySlug: string } | null {
+  const parts = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  if (parts.length !== 2) return null
+  return {
+    collectionSlug: decodeURIComponent(parts[0]),
+    entrySlug: decodeURIComponent(parts[1]),
+  }
 }
 
 export async function handleServerRequest(
@@ -59,6 +70,26 @@ export async function handleServerRequest(
       return new Response(renderPublishedSnapshot(snapshot), {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       })
+    }
+
+    const contentRoute = contentRouteFromPath(url.pathname)
+    if (contentRoute) {
+      const entry = await getPublishedContentEntryByRoute(
+        runtime.db,
+        contentRoute.collectionSlug,
+        contentRoute.entrySlug,
+      )
+      if (entry) {
+        return new Response(renderContentDocumentHtml({
+          title: entry.title,
+          bodyMarkdown: entry.bodyMarkdown,
+          seoTitle: entry.seoTitle,
+          seoDescription: entry.seoDescription,
+          featuredMediaPath: entry.featuredMediaPath,
+        }), {
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        })
+      }
     }
   }
 

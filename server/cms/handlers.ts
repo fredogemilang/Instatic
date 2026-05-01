@@ -22,6 +22,17 @@ import {
 import { loadDraftSite, saveDraftSite } from './siteRepository'
 import { getDraftPublishStatus, publishDraftSite } from './publishRepository'
 import {
+  createContentCollection,
+  createContentEntry,
+  getContentEntry,
+  listContentCollections,
+  listContentEntries,
+  publishContentEntry,
+  saveContentEntryDraft,
+  softDeleteContentCollection,
+  softDeleteContentEntry,
+} from './contentRepository'
+import {
   createMediaAsset,
   deleteMediaAsset,
   listMediaAssets,
@@ -46,6 +57,22 @@ const MAX_MEDIA_BYTES = 50 * 1024 * 1024
 function readString(body: Record<string, unknown>, key: string): string {
   const value = body[key]
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function readNullableString(body: Record<string, unknown>, key: string): string | null {
+  const value = body[key]
+  if (value === null) return null
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function slugify(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/['"]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'untitled'
 }
 
 function sessionCookie(token: string, expires: Date): string {
@@ -264,6 +291,123 @@ export async function handleCmsRequest(
     }
 
     return methodNotAllowed()
+  }
+
+  if (url.pathname === '/api/cms/content/collections') {
+    const admin = await getAuthenticatedAdmin(req, db)
+    if (!admin) return jsonResponse({ error: 'Unauthorized' }, { status: 401 })
+
+    if (req.method === 'GET') {
+      return jsonResponse({ collections: await listContentCollections(db) })
+    }
+
+    if (req.method === 'POST') {
+      const body = await readJsonObject(req)
+      const name = readString(body, 'name')
+      if (!name) return badRequest('Collection name is required')
+
+      const singularLabel = readString(body, 'singularLabel') || name.replace(/s$/i, '') || name
+      const pluralLabel = readString(body, 'pluralLabel') || name
+      const slug = slugify(readString(body, 'slug') || pluralLabel)
+      const collection = await createContentCollection(db, {
+        name,
+        slug,
+        singularLabel,
+        pluralLabel,
+      })
+      return jsonResponse({ collection }, { status: 201 })
+    }
+
+    return methodNotAllowed()
+  }
+
+  const collectionItemMatch = url.pathname.match(/^\/api\/cms\/content\/collections\/([^/]+)$/)
+  if (collectionItemMatch) {
+    const admin = await getAuthenticatedAdmin(req, db)
+    if (!admin) return jsonResponse({ error: 'Unauthorized' }, { status: 401 })
+
+    const collectionId = decodeURIComponent(collectionItemMatch[1])
+    if (req.method === 'DELETE') {
+      const collection = await softDeleteContentCollection(db, collectionId)
+      if (!collection) return jsonResponse({ error: 'Collection cannot be deleted' }, { status: 409 })
+      return jsonResponse({ collection })
+    }
+
+    return methodNotAllowed()
+  }
+
+  const collectionEntriesMatch = url.pathname.match(/^\/api\/cms\/content\/collections\/([^/]+)\/entries$/)
+  if (collectionEntriesMatch) {
+    const admin = await getAuthenticatedAdmin(req, db)
+    if (!admin) return jsonResponse({ error: 'Unauthorized' }, { status: 401 })
+
+    const collectionId = decodeURIComponent(collectionEntriesMatch[1])
+    if (req.method === 'GET') {
+      return jsonResponse({ entries: await listContentEntries(db, collectionId) })
+    }
+
+    if (req.method === 'POST') {
+      const body = await readJsonObject(req)
+      const title = readString(body, 'title') || 'Untitled'
+      const entry = await createContentEntry(db, {
+        collectionId,
+        title,
+        slug: slugify(readString(body, 'slug') || title),
+        bodyMarkdown: readString(body, 'bodyMarkdown'),
+        featuredMediaId: readNullableString(body, 'featuredMediaId'),
+        seoTitle: readString(body, 'seoTitle'),
+        seoDescription: readString(body, 'seoDescription'),
+      })
+      return jsonResponse({ entry }, { status: 201 })
+    }
+
+    return methodNotAllowed()
+  }
+
+  const contentEntryMatch = url.pathname.match(/^\/api\/cms\/content\/entries\/([^/]+)$/)
+  if (contentEntryMatch) {
+    const admin = await getAuthenticatedAdmin(req, db)
+    if (!admin) return jsonResponse({ error: 'Unauthorized' }, { status: 401 })
+
+    const entryId = decodeURIComponent(contentEntryMatch[1])
+    if (req.method === 'GET') {
+      const entry = await getContentEntry(db, entryId)
+      if (!entry) return jsonResponse({ error: 'Content entry not found' }, { status: 404 })
+      return jsonResponse({ entry })
+    }
+
+    if (req.method === 'PUT') {
+      const body = await readJsonObject(req)
+      const title = readString(body, 'title') || 'Untitled'
+      const entry = await saveContentEntryDraft(db, entryId, {
+        title,
+        slug: slugify(readString(body, 'slug') || title),
+        bodyMarkdown: readString(body, 'bodyMarkdown'),
+        featuredMediaId: readNullableString(body, 'featuredMediaId'),
+        seoTitle: readString(body, 'seoTitle'),
+        seoDescription: readString(body, 'seoDescription'),
+      })
+      if (!entry) return jsonResponse({ error: 'Content entry not found' }, { status: 404 })
+      return jsonResponse({ entry })
+    }
+
+    if (req.method === 'DELETE') {
+      const entry = await softDeleteContentEntry(db, entryId)
+      if (!entry) return jsonResponse({ error: 'Content entry not found' }, { status: 404 })
+      return jsonResponse({ entry })
+    }
+
+    return methodNotAllowed()
+  }
+
+  const publishContentEntryMatch = url.pathname.match(/^\/api\/cms\/content\/entries\/([^/]+)\/publish$/)
+  if (publishContentEntryMatch) {
+    const admin = await getAuthenticatedAdmin(req, db)
+    if (!admin) return jsonResponse({ error: 'Unauthorized' }, { status: 401 })
+    if (req.method !== 'POST') return methodNotAllowed()
+
+    const entryId = decodeURIComponent(publishContentEntryMatch[1])
+    return jsonResponse(await publishContentEntry(db, entryId, admin.id))
   }
 
   if (url.pathname === '/api/cms/publish') {
