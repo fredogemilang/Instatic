@@ -1,22 +1,8 @@
-import { afterEach, describe, expect, it } from 'bun:test'
+import { describe, expect, it } from 'bun:test'
 import { materializeRuntimePreviewDocument } from '../../editor/components/Canvas/runtimePreviewDocument'
 
-const originalCreateObjectUrl = URL.createObjectURL
-const originalRevokeObjectUrl = URL.revokeObjectURL
-
-afterEach(() => {
-  URL.createObjectURL = originalCreateObjectUrl
-  URL.revokeObjectURL = originalRevokeObjectUrl
-})
-
 describe('runtime preview document materialization', () => {
-  it('rewrites preview asset paths to sandbox-safe object URLs', () => {
-    const revoked: string[] = []
-    URL.createObjectURL = (() => 'blob:http://localhost/runtime-entry') as typeof URL.createObjectURL
-    URL.revokeObjectURL = ((url: string) => {
-      revoked.push(url)
-    }) as typeof URL.revokeObjectURL
-
+  it('rewrites preview asset paths to sandbox-safe data module URLs', () => {
     const result = materializeRuntimePreviewDocument({
       html:
         `<!DOCTYPE html><meta http-equiv="Content-Security-Policy" ` +
@@ -30,9 +16,8 @@ describe('runtime preview document materialization', () => {
       }],
     })
 
-    expect(result.html).toContain('blob:http://localhost/runtime-entry')
-    expect(result.html).toContain("script-src 'self' blob: data:")
-    result.revoke()
-    expect(revoked).toEqual(['blob:http://localhost/runtime-entry'])
+    expect(result.html).toContain('data:text/javascript; charset=utf-8,window.__preview%20%3D%20true')
+    expect(result.html).not.toContain('blob:')
+    expect(result.html).toContain("script-src 'self' data:")
   })
 })
