@@ -1,6 +1,8 @@
 import type { SiteDocument } from '../page-tree/types'
 import type { IPersistenceAdapter } from './types'
+import { parseJsonResponse } from '@core/utils/jsonValidate'
 import { responseErrorMessage } from './httpErrors'
+import { CmsSiteEnvelopeSchema } from './responseSchemas'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
@@ -39,8 +41,10 @@ export class CmsAdapter implements IPersistenceAdapter {
     if (!res.ok) {
       throw new Error(await responseErrorMessage(res, `CMS load failed with ${res.status}`))
     }
-    const body = await res.json() as { site?: SiteDocument }
-    return body.site
+    // Envelope validated; SiteDocument is too deep to schema here (separate
+    // audit-types pass) — pass-through as unknown then cast back.
+    const body = await parseJsonResponse(res, CmsSiteEnvelopeSchema)
+    return body.site as SiteDocument | undefined
   }
 }
 

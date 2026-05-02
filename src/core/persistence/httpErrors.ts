@@ -1,9 +1,12 @@
+import { parseJsonResponse } from '@core/utils/jsonValidate'
+import { ErrorEnvelopeSchema } from './responseSchemas'
+
 export async function responseErrorMessage(
   res: Response,
   fallback: string,
 ): Promise<string> {
   try {
-    const body = await res.clone().json() as { error?: unknown }
+    const body = await parseJsonResponse(res.clone(), ErrorEnvelopeSchema)
     if (typeof body.error === 'string' && body.error.trim()) return body.error
   } catch {
     // Fall through to text response parsing.

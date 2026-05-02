@@ -1,3 +1,6 @@
+import { parseJsonResponse } from '@core/utils/jsonValidate'
+import { CmsSetupStatusSchema, ErrorEnvelopeSchema } from './responseSchemas'
+
 interface CmsSetupStatus {
   hasSite: boolean
   hasAdmin: boolean
@@ -20,8 +23,9 @@ type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respo
 async function assertOk(res: Response, fallback: string): Promise<void> {
   if (res.ok) return
   try {
-    const body = await res.json() as { error?: string }
-    throw new Error(body.error || fallback)
+    const body = await parseJsonResponse(res, ErrorEnvelopeSchema)
+    const errorText = typeof body.error === 'string' ? body.error : ''
+    throw new Error(errorText || fallback)
   } catch (err) {
     if (err instanceof Error && err.message !== 'Unexpected end of JSON input') throw err
     throw new Error(fallback, { cause: err })
@@ -37,7 +41,7 @@ export async function getCmsSetupStatus(
     credentials: 'include',
   })
   await assertOk(res, `CMS setup status failed with ${res.status}`)
-  return await res.json() as CmsSetupStatus
+  return await parseJsonResponse(res, CmsSetupStatusSchema)
 }
 
 export async function setupCms(

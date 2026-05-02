@@ -1,4 +1,9 @@
+import { parseJsonResponse } from '@core/utils/jsonValidate'
 import { responseErrorMessage } from './httpErrors'
+import {
+  CmsPublishResultSchema,
+  CmsPublishStatusSchema,
+} from './responseSchemas'
 
 interface CmsPublishResult {
   publishedPages: number
@@ -25,7 +30,7 @@ export async function publishCmsDraft(
   if (!res.ok) {
     throw new Error(await responseErrorMessage(res, `CMS publish failed with ${res.status}`))
   }
-  return await res.json() as CmsPublishResult
+  return await parseJsonResponse(res, CmsPublishResultSchema)
 }
 
 export async function getCmsPublishStatus(
@@ -39,5 +44,5 @@ export async function getCmsPublishStatus(
   if (!res.ok) {
     throw new Error(await responseErrorMessage(res, `CMS publish status failed with ${res.status}`))
   }
-  return await res.json() as CmsPublishStatus
+  return await parseJsonResponse(res, CmsPublishStatusSchema)
 }
