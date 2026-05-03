@@ -60,9 +60,7 @@
     display: grid;
     min-width: 0;
     grid-column: 2 / 4;
-    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: 8px;
     border: 0;
     background: transparent;
     color: inherit;
@@ -89,19 +87,12 @@
     white-space: nowrap;
 }
 
-.rowMeta,
-.rowSummary {
+.rowMeta {
     color: var(--editor-text-muted);
     font-size: 10px;
     font-weight: 600;
     line-height: 1.2;
     white-space: nowrap;
-}
-
-.rowSummary {
-    max-width: 120px;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .editor {
@@ -207,4 +198,46 @@
     color: var(--editor-text-muted);
     font-size: 12px;
     line-height: 1.5;
+}
+
+.categoryField {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+}
+
+.categoryMenu {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 4px);
+    right: 0;
+    left: 0;
+    display: grid;
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid var(--panel-border);
+    border-radius: var(--panel-radius);
+    background: var(--panel-bg);
+    box-shadow: var(--panel-shadow);
+    backdrop-filter: var(--panel-blur);
+}
+
+.categoryOption {
+    display: block;
+    width: 100%;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: var(--editor-radius-sm);
+    background: transparent;
+    color: var(--editor-text);
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    text-align: left;
+}
+
+.categoryOption[aria-selected="true"],
+.categoryOption:hover {
+    background: var(--editor-surface);
 }

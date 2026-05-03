@@ -146,7 +146,7 @@ export interface CSSPropertyBag {
 
 export type FrameworkColorUtilityType = 'text' | 'background' | 'border' | 'fill'
 
-export interface GeneratedClassMetadata {
+export interface GeneratedColorClassMetadata {
   origin: 'framework'
   family: 'color'
   sourceId: string
@@ -155,6 +155,35 @@ export interface GeneratedClassMetadata {
   variantName?: string
   locked: true
 }
+
+export interface GeneratedTypographyClassMetadata {
+  origin: 'framework'
+  family: 'typography'
+  /** ID of the FrameworkTypographyGroup this class was generated from. */
+  sourceId: string
+  /** ID of the FrameworkTypographyClassGenerator (the row in the Class Generator). */
+  generatorId: string
+  /** namingConvention of the source group (e.g. "text"). */
+  tokenName: string
+  /** Step suffix from the group's `steps` string (e.g. "xs", "m"). */
+  step: string
+  locked: true
+}
+
+export interface GeneratedSpacingClassMetadata {
+  origin: 'framework'
+  family: 'spacing'
+  sourceId: string
+  generatorId: string
+  tokenName: string
+  step: string
+  locked: true
+}
+
+export type GeneratedClassMetadata =
+  | GeneratedColorClassMetadata
+  | GeneratedTypographyClassMetadata
+  | GeneratedSpacingClassMetadata
 
 /**
  * A named, reusable CSS class that can be assigned to any node.
@@ -342,13 +371,6 @@ export interface Page {
 // SiteDocument Settings
 // ---------------------------------------------------------------------------
 
-export interface TypeScale {
-  /** Base font size in px — default 16 */
-  baseSize: number
-  /** Scale ratio e.g. 1.25 = Major Third, 1.333 = Perfect Fourth */
-  ratio: number
-}
-
 export interface SiteSettings {
   metaTitle?: string
   metaDescription?: string
@@ -362,31 +384,144 @@ export interface SiteSettings {
   language?: string
   /** Global CSS custom property tokens (design tokens) */
   colorTokens: Record<string, string>
-  /** Structured framework token settings. Color is the first supported family. */
+  /** Structured framework token settings (colors, typography, spacing, preferences). */
   framework?: FrameworkSettings
-  typeScale: TypeScale
   /** Keyboard shortcut overrides: action → key combo string */
   shortcuts: Record<string, string>
 }
 
 export interface FrameworkSettings {
   colors: FrameworkColorSettings
+  typography?: FrameworkTypographySettings
+  spacing?: FrameworkSpacingSettings
+  /** Shared scale preferences (root font size, screen widths, rem/px output). */
+  preferences?: FrameworkPreferencesSettings
+}
+
+export interface FrameworkPreferencesSettings {
+  /** Root font size used to convert px → rem in published CSS. Default 10 (Core Framework). */
+  rootFontSize: number
+  /** Lower clamp anchor in px for fluid scales. Default 320. */
+  minScreenWidth: number
+  /** Upper clamp anchor in px for fluid scales. Default 1400. */
+  maxScreenWidth: number
+  /** Whether to emit clamp() values in `rem` (true) or `px` (false). */
+  isRem: boolean
+}
+
+// ─── Typography ──────────────────────────────────────────────────────────────
+
+export type FrameworkScaleMode = 'fluid' | 'fluid_manual'
+
+export interface FrameworkScaleBreakpointConfig {
+  /** Per-breakpoint scale ratio — references TYPE_RATIO_OPTIONS / SPACING_RATIO_OPTIONS by value, or any number. */
+  scaleRatio: number | string
+  /** When true, override scaleRatio with a free-form number from scaleRatioInputValue. */
+  isCustomScaleRatio?: boolean
+  scaleRatioInputValue?: number
+}
+
+export interface FrameworkTypographyBreakpointConfig extends FrameworkScaleBreakpointConfig {
+  /** Base font size at this breakpoint in px. */
+  fontSize: number
+}
+
+export interface FrameworkSpacingBreakpointConfig extends FrameworkScaleBreakpointConfig {
+  /** Base size at this breakpoint in px. */
+  size: number
+}
+
+export interface FrameworkScaleManualSize {
+  id: string
+  name: string
+  min: number
+  max: number
+}
+
+export interface FrameworkTypographyGroup {
+  id: string
+  /** Display name shown on the tab. */
+  name: string
+  /** Variable prefix — e.g. "text" produces --text-xs, --text-m, …  */
+  namingConvention: string
+  min: FrameworkTypographyBreakpointConfig
+  max: FrameworkTypographyBreakpointConfig
+  /** Comma-separated step labels — e.g. "xs,s,m,l,xl,2xl,3xl,4xl". */
+  steps: string
+  /** Index in the steps list whose value equals min.fontSize / max.fontSize. */
+  baseScaleIndex: number
+  mode: FrameworkScaleMode
+  /** Manual mode entries — only consulted when mode === 'fluid_manual'. */
+  manualSizes?: FrameworkScaleManualSize[]
+  isDisabled?: boolean
+  /** Sort order across the tabs row. Smaller values render first. */
+  order: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface FrameworkTypographyClassGenerator {
+  id: string
+  /** Class name pattern — `*` or `{step}` is replaced with the step suffix. */
+  name: string
+  /** kebab-case CSS properties this generated class targets (e.g. ['font-size']). */
+  property: string[]
+  /** ID of the FrameworkTypographyGroup this generator targets. */
+  tabId: string
+  isDisabled?: boolean
+}
+
+export interface FrameworkTypographySettings {
+  groups: FrameworkTypographyGroup[]
+  classes?: FrameworkTypographyClassGenerator[]
+  isDisabled?: boolean
+}
+
+// ─── Spacing ────────────────────────────────────────────────────────────────
+
+export interface FrameworkSpacingGroup {
+  id: string
+  name: string
+  namingConvention: string
+  min: FrameworkSpacingBreakpointConfig
+  max: FrameworkSpacingBreakpointConfig
+  steps: string
+  baseScaleIndex: number
+  mode: FrameworkScaleMode
+  manualSizes?: FrameworkScaleManualSize[]
+  isDisabled?: boolean
+  order: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface FrameworkSpacingClassGenerator {
+  id: string
+  name: string
+  property: string[]
+  tabId: string
+  isDisabled?: boolean
+}
+
+export interface FrameworkSpacingSettings {
+  groups: FrameworkSpacingGroup[]
+  classes?: FrameworkSpacingClassGenerator[]
+  isDisabled?: boolean
 }
 
 export interface FrameworkColorSettings {
-  categories: FrameworkColorCategory[]
   tokens: FrameworkColorToken[]
-}
-
-export interface FrameworkColorCategory {
-  id: string
-  name: string
-  order: number
 }
 
 export interface FrameworkColorToken {
   id: string
-  categoryId: string | null
+  /**
+   * Free-form category label. Empty string means "uncategorized".
+   * Categories are derived from the union of token category strings — there is
+   * no separate registry. When no token references a given label it ceases to
+   * exist in the UI.
+   */
+  category: string
   slug: string
   lightValue: string
   darkValue: string
@@ -406,8 +541,6 @@ export interface FrameworkColorToken {
   updatedAt: number
 }
 
-export const DEFAULT_TYPE_SCALE: TypeScale = { baseSize: 16, ratio: 1.25 }
-
 export const DEFAULT_COLOR_TOKENS: Record<string, string> = {
   '--color-primary': '#6366f1',
   '--color-secondary': '#8b5cf6',
@@ -420,7 +553,6 @@ export const DEFAULT_COLOR_TOKENS: Record<string, string> = {
 
 export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   colorTokens: DEFAULT_COLOR_TOKENS,
-  typeScale: DEFAULT_TYPE_SCALE,
   shortcuts: {},
 }
 

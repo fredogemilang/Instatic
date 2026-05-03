@@ -30,7 +30,6 @@ function validSite(): SiteDocument {
     ],
     settings: {
       colorTokens: {},
-      typeScale: { baseSize: 16, ratio: 1.25 },
       shortcuts: {},
     },
     pages: [
@@ -108,10 +107,10 @@ describe('validateSite — happy path', () => {
   it('fills defaults for missing settings sub-fields', () => {
     const p = validSite()
     // @ts-expect-error — intentionally malformed
-    delete p.settings.typeScale
+    delete p.settings.colorTokens
     const result = validateSite(p as unknown)
-    expect(result.settings.typeScale.baseSize).toBe(16)
-    expect(result.settings.typeScale.ratio).toBe(1.25)
+    expect(result.settings.colorTokens).toEqual({})
+    expect(result.settings.shortcuts).toEqual({})
   })
 
   it('ignores unknown extra keys (forward-compat)', () => {
@@ -412,11 +411,10 @@ describe('validateSite — framework color settings', () => {
     const p = validSite()
     p.settings.framework = {
       colors: {
-        categories: [{ id: 'brand', name: 'Brand', order: 0 }],
         tokens: [
           {
             id: 'primary-token',
-            categoryId: 'brand',
+            category: 'Brand',
             slug: 'Primary Color',
             lightValue: 'hsla(238, 100%, 62%, 1)',
             darkValue: 'hsla(238, 100%, 42%, 1)',
@@ -439,12 +437,9 @@ describe('validateSite — framework color settings', () => {
     }
 
     const result = validateSite(p)
-    expect(result.settings.framework?.colors.categories).toEqual([
-      { id: 'brand', name: 'Brand', order: 0 },
-    ])
     expect(result.settings.framework?.colors.tokens[0]).toMatchObject({
       id: 'primary-token',
-      categoryId: 'brand',
+      category: 'Brand',
       slug: 'primary-color',
       lightValue: 'hsla(238, 100%, 62%, 1)',
       darkValue: 'hsla(238, 100%, 42%, 1)',

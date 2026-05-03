@@ -38,11 +38,10 @@ describe('generateCanvasClassCSS', () => {
 
   it('includes framework color variables for editor preview', () => {
     const colors = {
-      categories: [],
       tokens: [
         {
           id: 'primary-token',
-          categoryId: null,
+          category: '',
           slug: 'primary',
           lightValue: 'hsla(238, 100%, 62%, 1)',
           darkValue: 'hsla(238, 100%, 42%, 1)',

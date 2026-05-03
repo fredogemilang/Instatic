@@ -26,7 +26,7 @@ In scope:
 - Add a dedicated Colors panel in the left rail.
 - Store color tokens in a structured framework color model.
 - Create, rename, duplicate, delete, search, and filter colors.
-- Create, rename, and delete color categories.
+- Group colors with free-form category labels (no separate registry — categories are derived from the labels currently assigned to tokens).
 - Edit light and dark color values.
 - Generate dark values by default, then allow manual editing.
 - Generate Core Framework-style variables for base colors, transparency variants, shades, and tints.
@@ -92,19 +92,13 @@ Representative shape:
 
 ```ts
 interface FrameworkColorSettings {
-  categories: FrameworkColorCategory[]
   tokens: FrameworkColorToken[]
-}
-
-interface FrameworkColorCategory {
-  id: string
-  name: string
-  order: number
 }
 
 interface FrameworkColorToken {
   id: string
-  categoryId: string | null
+  /** Free-form category label. Empty string = uncategorized. */
+  category: string
   slug: string
   lightValue: string
   darkValue: string
@@ -157,8 +151,7 @@ The panel uses the flat color-first structure selected during design:
 
 2. Toolbar
    - Search input.
-   - Compact category filter chips.
-   - Category management affordance from a small menu or dialog.
+   - Compact category filter chips, derived from the labels currently assigned to tokens.
 
 3. Color list
    - Each color token appears as one row.
@@ -169,7 +162,7 @@ The panel uses the flat color-first structure selected during design:
 4. Expanded color accordion
    - Opens inline from the selected row.
    - Uses compact controls similar to Properties panel sections.
-   - Includes slug, category, light color, dark color, dark mode toggle, utility toggles, transparent variants toggle, shade count, tint count, and preview strips.
+   - Includes slug, category (free-form text input with autocomplete from existing labels), light color, dark color, dark mode toggle, utility toggles, transparent variants toggle, shade count, tint count, and preview strips.
 
 5. Empty states
    - No colors yet.

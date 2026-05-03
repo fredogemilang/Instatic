@@ -28,10 +28,19 @@ import type {
   FrameworkColorSettings,
   FrameworkColorToken,
   FrameworkColorUtilityType,
+  FrameworkPreferencesSettings,
+  FrameworkScaleManualSize,
+  FrameworkSpacingClassGenerator,
+  FrameworkSpacingGroup,
+  FrameworkSpacingSettings,
+  FrameworkTypographyClassGenerator,
+  FrameworkTypographyGroup,
+  FrameworkTypographySettings,
   GeneratedClassMetadata,
 } from '../page-tree/types'
 import type { SiteFile, SiteFileType } from '../files/types'
-import type { VisualComponent, VCParam } from '../visualComponents/types'
+import type { VisualComponent, VCNode } from '../visualComponents/types'
+import { VisualComponentSchema } from '../visualComponents/schemas'
 import { isSafePath, normalizePath } from '../files/pathValidation'
 import { validateComponentName } from '../visualComponents/nameValidation'
 import { sanitizeRichtext, isRichtextPropKey } from '../sanitize'
@@ -299,7 +308,6 @@ function validateFrameworkColorUtilities(raw: unknown): Record<FrameworkColorUti
 function validateFrameworkColorToken(
   raw: unknown,
   index: number,
-  categoryIds: Set<string>,
 ): FrameworkColorToken | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const token = raw as Record<string, unknown>
@@ -308,13 +316,11 @@ function validateFrameworkColorToken(
   if (typeof token.lightValue !== 'string' || token.lightValue.trim() === '') return null
 
   const lightValue = token.lightValue.trim()
-  const categoryId = typeof token.categoryId === 'string' && categoryIds.has(token.categoryId)
-    ? token.categoryId
-    : null
+  const category = typeof token.category === 'string' ? token.category.trim() : ''
 
   return {
     id: token.id,
-    categoryId,
+    category,
     slug: normalizeFrameworkColorSlug(token.slug),
     lightValue,
     darkValue: typeof token.darkValue === 'string' && token.darkValue.trim() !== ''
@@ -333,33 +339,194 @@ function validateFrameworkColorToken(
 
 function validateFrameworkColorSettings(raw: unknown): FrameworkColorSettings {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { categories: [], tokens: [] }
+    return { tokens: [] }
   }
   const colors = raw as Record<string, unknown>
-  const categories = Array.isArray(colors.categories)
-    ? colors.categories
-        .map((category, index) => {
-          if (!category || typeof category !== 'object' || Array.isArray(category)) return null
-          const item = category as Record<string, unknown>
-          if (typeof item.id !== 'string' || item.id.trim() === '') return null
-          if (typeof item.name !== 'string' || item.name.trim() === '') return null
-          return {
-            id: item.id,
-            name: item.name.trim(),
-            order: typeof item.order === 'number' && isFinite(item.order) ? item.order : index,
-          }
-        })
-        .filter((category): category is FrameworkColorSettings['categories'][number] => category !== null)
-    : []
-
-  const categoryIds = new Set(categories.map((category) => category.id))
   const tokens = Array.isArray(colors.tokens)
     ? colors.tokens
-        .map((token, index) => validateFrameworkColorToken(token, index, categoryIds))
+        .map((token, index) => validateFrameworkColorToken(token, index))
         .filter((token): token is FrameworkColorToken => token !== null)
     : []
 
-  return { categories, tokens }
+  return { tokens }
+}
+
+function validateFrameworkPreferencesSettings(raw: unknown): FrameworkPreferencesSettings | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const prefs = raw as Record<string, unknown>
+  return {
+    rootFontSize:
+      typeof prefs.rootFontSize === 'number' && Number.isFinite(prefs.rootFontSize) && prefs.rootFontSize > 0
+        ? prefs.rootFontSize
+        : 10,
+    minScreenWidth:
+      typeof prefs.minScreenWidth === 'number' && Number.isFinite(prefs.minScreenWidth) && prefs.minScreenWidth > 0
+        ? prefs.minScreenWidth
+        : 320,
+    maxScreenWidth:
+      typeof prefs.maxScreenWidth === 'number' && Number.isFinite(prefs.maxScreenWidth) && prefs.maxScreenWidth > 0
+        ? prefs.maxScreenWidth
+        : 1400,
+    isRem: typeof prefs.isRem === 'boolean' ? prefs.isRem : true,
+  }
+}
+
+function validateFrameworkScaleManualSize(raw: unknown): FrameworkScaleManualSize | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.id !== 'string' || typeof r.name !== 'string') return null
+  if (typeof r.min !== 'number' || !Number.isFinite(r.min)) return null
+  if (typeof r.max !== 'number' || !Number.isFinite(r.max)) return null
+  return { id: r.id, name: r.name, min: r.min, max: r.max }
+}
+
+function validateFrameworkTypographyGroup(raw: unknown, index: number): FrameworkTypographyGroup | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.id !== 'string' || !r.id) return null
+  if (typeof r.name !== 'string' || !r.name) return null
+  const min = r.min as Record<string, unknown> | undefined
+  const max = r.max as Record<string, unknown> | undefined
+  if (!min || !max) return null
+  if (typeof min.fontSize !== 'number') return null
+  if (typeof max.fontSize !== 'number') return null
+
+  const manualSizes = Array.isArray(r.manualSizes)
+    ? (r.manualSizes as unknown[])
+        .map(validateFrameworkScaleManualSize)
+        .filter((s): s is FrameworkScaleManualSize => s !== null)
+    : undefined
+
+  return {
+    id: r.id,
+    name: r.name,
+    namingConvention: typeof r.namingConvention === 'string' ? r.namingConvention : 'text',
+    min: {
+      fontSize: min.fontSize,
+      scaleRatio: typeof min.scaleRatio === 'number' || typeof min.scaleRatio === 'string' ? min.scaleRatio : 1.125,
+      isCustomScaleRatio: typeof min.isCustomScaleRatio === 'boolean' ? min.isCustomScaleRatio : undefined,
+      scaleRatioInputValue: typeof min.scaleRatioInputValue === 'number' ? min.scaleRatioInputValue : undefined,
+    },
+    max: {
+      fontSize: max.fontSize,
+      scaleRatio: typeof max.scaleRatio === 'number' || typeof max.scaleRatio === 'string' ? max.scaleRatio : 1.333,
+      isCustomScaleRatio: typeof max.isCustomScaleRatio === 'boolean' ? max.isCustomScaleRatio : undefined,
+      scaleRatioInputValue: typeof max.scaleRatioInputValue === 'number' ? max.scaleRatioInputValue : undefined,
+    },
+    steps: typeof r.steps === 'string' && r.steps ? r.steps : 'xs,s,m,l,xl,2xl,3xl,4xl',
+    baseScaleIndex: typeof r.baseScaleIndex === 'number' && Number.isFinite(r.baseScaleIndex) ? r.baseScaleIndex : 2,
+    mode: r.mode === 'fluid_manual' ? 'fluid_manual' : 'fluid',
+    manualSizes,
+    isDisabled: typeof r.isDisabled === 'boolean' ? r.isDisabled : undefined,
+    order: typeof r.order === 'number' && Number.isFinite(r.order) ? r.order : index,
+    createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
+    updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : Date.now(),
+  }
+}
+
+function validateFrameworkClassGenerator(
+  raw: unknown,
+): FrameworkTypographyClassGenerator | FrameworkSpacingClassGenerator | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.id !== 'string' || !r.id) return null
+  if (typeof r.name !== 'string' || !r.name) return null
+  if (typeof r.tabId !== 'string') return null
+  const property = Array.isArray(r.property)
+    ? (r.property as unknown[]).filter((p): p is string => typeof p === 'string' && p.length > 0)
+    : []
+  if (property.length === 0) return null
+  return {
+    id: r.id,
+    name: r.name,
+    property,
+    tabId: r.tabId,
+    isDisabled: typeof r.isDisabled === 'boolean' ? r.isDisabled : undefined,
+  }
+}
+
+function validateFrameworkTypographySettings(raw: unknown): FrameworkTypographySettings | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const r = raw as Record<string, unknown>
+  const groups = Array.isArray(r.groups)
+    ? (r.groups as unknown[])
+        .map((g, i) => validateFrameworkTypographyGroup(g, i))
+        .filter((g): g is FrameworkTypographyGroup => g !== null)
+    : []
+  const classes = Array.isArray(r.classes)
+    ? (r.classes as unknown[])
+        .map(validateFrameworkClassGenerator)
+        .filter((c): c is FrameworkTypographyClassGenerator => c !== null)
+    : undefined
+  return {
+    groups,
+    classes,
+    isDisabled: typeof r.isDisabled === 'boolean' ? r.isDisabled : undefined,
+  }
+}
+
+function validateFrameworkSpacingGroup(raw: unknown, index: number): FrameworkSpacingGroup | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.id !== 'string' || !r.id) return null
+  if (typeof r.name !== 'string' || !r.name) return null
+  const min = r.min as Record<string, unknown> | undefined
+  const max = r.max as Record<string, unknown> | undefined
+  if (!min || !max) return null
+  if (typeof min.size !== 'number') return null
+  if (typeof max.size !== 'number') return null
+
+  const manualSizes = Array.isArray(r.manualSizes)
+    ? (r.manualSizes as unknown[])
+        .map(validateFrameworkScaleManualSize)
+        .filter((s): s is FrameworkScaleManualSize => s !== null)
+    : undefined
+
+  return {
+    id: r.id,
+    name: r.name,
+    namingConvention: typeof r.namingConvention === 'string' ? r.namingConvention : 'space',
+    min: {
+      size: min.size,
+      scaleRatio: typeof min.scaleRatio === 'number' || typeof min.scaleRatio === 'string' ? min.scaleRatio : 1.25,
+      isCustomScaleRatio: typeof min.isCustomScaleRatio === 'boolean' ? min.isCustomScaleRatio : undefined,
+      scaleRatioInputValue: typeof min.scaleRatioInputValue === 'number' ? min.scaleRatioInputValue : undefined,
+    },
+    max: {
+      size: max.size,
+      scaleRatio: typeof max.scaleRatio === 'number' || typeof max.scaleRatio === 'string' ? max.scaleRatio : 1.414,
+      isCustomScaleRatio: typeof max.isCustomScaleRatio === 'boolean' ? max.isCustomScaleRatio : undefined,
+      scaleRatioInputValue: typeof max.scaleRatioInputValue === 'number' ? max.scaleRatioInputValue : undefined,
+    },
+    steps: typeof r.steps === 'string' && r.steps ? r.steps : '4xs,3xs,2xs,xs,s,m,l,xl,2xl,3xl,4xl',
+    baseScaleIndex: typeof r.baseScaleIndex === 'number' && Number.isFinite(r.baseScaleIndex) ? r.baseScaleIndex : 5,
+    mode: r.mode === 'fluid_manual' ? 'fluid_manual' : 'fluid',
+    manualSizes,
+    isDisabled: typeof r.isDisabled === 'boolean' ? r.isDisabled : undefined,
+    order: typeof r.order === 'number' && Number.isFinite(r.order) ? r.order : index,
+    createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
+    updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : Date.now(),
+  }
+}
+
+function validateFrameworkSpacingSettings(raw: unknown): FrameworkSpacingSettings | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const r = raw as Record<string, unknown>
+  const groups = Array.isArray(r.groups)
+    ? (r.groups as unknown[])
+        .map((g, i) => validateFrameworkSpacingGroup(g, i))
+        .filter((g): g is FrameworkSpacingGroup => g !== null)
+    : []
+  const classes = Array.isArray(r.classes)
+    ? (r.classes as unknown[])
+        .map(validateFrameworkClassGenerator)
+        .filter((c): c is FrameworkSpacingClassGenerator => c !== null)
+    : undefined
+  return {
+    groups,
+    classes,
+    isDisabled: typeof r.isDisabled === 'boolean' ? r.isDisabled : undefined,
+  }
 }
 
 function validateFrameworkSettings(raw: unknown): SiteSettings['framework'] | undefined {
@@ -367,6 +534,9 @@ function validateFrameworkSettings(raw: unknown): SiteSettings['framework'] | un
   const framework = raw as Record<string, unknown>
   return {
     colors: validateFrameworkColorSettings(framework.colors),
+    typography: validateFrameworkTypographySettings(framework.typography),
+    spacing: validateFrameworkSpacingSettings(framework.spacing),
+    preferences: validateFrameworkPreferencesSettings(framework.preferences),
   }
 }
 
@@ -383,19 +553,6 @@ function validateSettings(raw: unknown, path: string): SiteSettings {
         ? (raw.colorTokens as Record<string, string>)
         : {},
     framework: validateFrameworkSettings(raw.framework),
-    typeScale:
-      raw.typeScale && typeof raw.typeScale === 'object' && !Array.isArray(raw.typeScale)
-        ? {
-            baseSize:
-              typeof (raw.typeScale as Record<string, unknown>).baseSize === 'number'
-                ? (raw.typeScale as Record<string, unknown>).baseSize as number
-                : 16,
-            ratio:
-              typeof (raw.typeScale as Record<string, unknown>).ratio === 'number'
-                ? (raw.typeScale as Record<string, unknown>).ratio as number
-                : 1.25,
-          }
-        : { baseSize: 16, ratio: 1.25 },
     shortcuts:
       raw.shortcuts && typeof raw.shortcuts === 'object' && !Array.isArray(raw.shortcuts)
         ? (raw.shortcuts as Record<string, string>)
@@ -407,21 +564,38 @@ function validateGeneratedClassMetadata(raw: unknown): GeneratedClassMetadata | 
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
   const generated = raw as Record<string, unknown>
   if (generated.origin !== 'framework') return undefined
-  if (generated.family !== 'color') return undefined
   if (typeof generated.sourceId !== 'string' || generated.sourceId.trim() === '') return undefined
-  if (!VALID_FRAMEWORK_COLOR_UTILITIES.has(generated.utility as FrameworkColorUtilityType)) return undefined
   if (typeof generated.tokenName !== 'string' || generated.tokenName.trim() === '') return undefined
   if (generated.locked !== true) return undefined
 
-  return {
-    origin: 'framework',
-    family: 'color',
-    sourceId: generated.sourceId,
-    utility: generated.utility as FrameworkColorUtilityType,
-    tokenName: generated.tokenName,
-    variantName: typeof generated.variantName === 'string' ? generated.variantName : undefined,
-    locked: true,
+  if (generated.family === 'color') {
+    if (!VALID_FRAMEWORK_COLOR_UTILITIES.has(generated.utility as FrameworkColorUtilityType)) return undefined
+    return {
+      origin: 'framework',
+      family: 'color',
+      sourceId: generated.sourceId,
+      utility: generated.utility as FrameworkColorUtilityType,
+      tokenName: generated.tokenName,
+      variantName: typeof generated.variantName === 'string' ? generated.variantName : undefined,
+      locked: true,
+    }
   }
+
+  if (generated.family === 'typography' || generated.family === 'spacing') {
+    if (typeof generated.generatorId !== 'string' || generated.generatorId.trim() === '') return undefined
+    if (typeof generated.step !== 'string' || generated.step.trim() === '') return undefined
+    return {
+      origin: 'framework',
+      family: generated.family,
+      sourceId: generated.sourceId,
+      generatorId: generated.generatorId,
+      tokenName: generated.tokenName,
+      step: generated.step,
+      locked: true,
+    }
+  }
+
+  return undefined
 }
 
 const VALID_FILE_TYPES: SiteFileType[] = [
@@ -466,92 +640,53 @@ function validateSiteFile(raw: unknown, _path: string): SiteFile | null {
 }
 
 // ---------------------------------------------------------------------------
-// VisualComponent validator (lenient per-item, mirrors validateSiteFile)
+// VisualComponent validator (Zod-driven, lenient per-item)
 // ---------------------------------------------------------------------------
+
+/**
+ * Walk a VCNode tree and sanitize any richtext prop values.
+ * Security: prevents XSS via tampered site data (Constraint #299 / Task #302).
+ * Returns a new VCNode with sanitized props (does not mutate in place).
+ */
+function sanitizeVCNodeTree(node: VCNode): VCNode {
+  const sanitizedProps: Record<string, unknown> = {}
+  for (const [key, val] of Object.entries(node.props)) {
+    sanitizedProps[key] =
+      isRichtextPropKey(key) && typeof val === 'string' ? sanitizeRichtext(val) : val
+  }
+  return {
+    ...node,
+    props: sanitizedProps,
+    childNodes: node.childNodes?.map(sanitizeVCNodeTree),
+  }
+}
 
 /**
  * Validate a single raw VisualComponent from storage.
  *
  * Returns a fully-shaped VisualComponent or null (silently drop bad entries).
+ * Uses Zod for structural validation; sanitizes richtext props post-parse.
  * Self-healing: filePath is always re-derived from name to fix stale paths.
  *
  * Architecture source: Contribution #619 §9
  */
 function validateVisualComponent(raw: unknown): VisualComponent | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-  const r = raw as Record<string, unknown>
+  const result = VisualComponentSchema.safeParse(raw)
+  if (!result.success) return null
 
-  // Required string fields
-  if (typeof r.id !== 'string' || !r.id) return null
-  if (typeof r.name !== 'string' || !r.name) return null
+  const vc = result.data
 
   // Name must pass PascalCase + reserved-word checks (drop on fail)
-  const nameValidation = validateComponentName(r.name, [])
+  const nameValidation = validateComponentName(vc.name, [])
   if (!nameValidation.ok) return null
 
-  // rootNode must be a valid PageNode shape (at minimum)
-  if (!r.rootNode || typeof r.rootNode !== 'object' || Array.isArray(r.rootNode)) return null
-  let rootNode: PageNode
-  try {
-    rootNode = validatePageNode(r.rootNode, `visualComponents[${r.id}].rootNode`)
-  } catch {
-    return null
-  }
-
-  // params — validate each entry, skip malformed
-  const params: VCParam[] = []
-  if (Array.isArray(r.params)) {
-    for (const p of r.params as unknown[]) {
-      if (!p || typeof p !== 'object' || Array.isArray(p)) continue
-      const param = p as Record<string, unknown>
-      if (typeof param.id !== 'string' || typeof param.name !== 'string') continue
-      const validTypes: VCParam['type'][] = ['string', 'number', 'boolean', 'url', 'enum', 'color']
-      const paramType = validTypes.includes(param.type as VCParam['type'])
-        ? (param.type as VCParam['type'])
-        : 'string'
-      params.push({
-        id: param.id,
-        name: param.name,
-        type: paramType,
-        defaultValue: param.defaultValue ?? '',
-        required: typeof param.required === 'boolean' ? param.required : false,
-        enumOptions: Array.isArray(param.enumOptions)
-          ? (param.enumOptions as unknown[]).filter((o) => typeof o === 'string') as string[]
-          : undefined,
-      })
-    }
-  }
-
   // filePath: always re-derive from name (self-healing, Contribution #619 §9 VP-6)
-  const filePath = `src/components/${r.name}.tsx`
+  const filePath = `src/components/${vc.name}.tsx`
 
-  return {
-    id: r.id,
-    name: r.name,
-    rootNode: rootNode as VisualComponent['rootNode'],
-    params,
-    breakpoints: Array.isArray(r.breakpoints)
-      ? (r.breakpoints as unknown[])
-          .filter((b) => b && typeof b === 'object' && !Array.isArray(b))
-          .map((b) => {
-            const bp = b as Record<string, unknown>
-            return {
-              id: typeof bp.id === 'string' ? bp.id : '',
-              label: typeof bp.label === 'string' ? bp.label : '',
-              width: typeof bp.width === 'number' ? bp.width : 0,
-              icon: typeof bp.icon === 'string' ? bp.icon : 'monitor',
-            }
-          })
-          .filter((bp) => bp.id !== '')
-      : [],
-    classIds: Array.isArray(r.classIds)
-      ? (r.classIds as unknown[]).filter((id) => typeof id === 'string') as string[]
-      : [],
-    filePath,
-    generated: typeof r.generated === 'boolean' ? r.generated : true,
-    ejected: typeof r.ejected === 'boolean' ? r.ejected : false,
-    createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
-  }
+  // Sanitize richtext props in the rootNode tree (security: Constraint #299)
+  const rootNode = sanitizeVCNodeTree(vc.rootNode)
+
+  return { ...vc, filePath, rootNode }
 }
 
 // ---------------------------------------------------------------------------

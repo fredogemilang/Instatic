@@ -324,16 +324,14 @@ describe('publishPage', () => {
     const { html } = publishPage(page, site, registry)
     expect(html).toContain(':root {')
     expect(html).toContain('--color-primary')
-    expect(html).toContain('--type-base-size')
   })
 
   it('injects framework color variables and used generated utility CSS', () => {
     const colors = {
-      categories: [{ id: 'brand', name: 'Brand', order: 0 }],
       tokens: [
         {
           id: 'primary-token',
-          categoryId: 'brand',
+          category: 'Brand',
           slug: 'primary',
           lightValue: 'hsla(238, 100%, 62%, 1)',
           darkValue: 'hsla(238, 100%, 42%, 1)',

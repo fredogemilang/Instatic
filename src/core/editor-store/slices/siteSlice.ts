@@ -12,9 +12,15 @@ import {
   type SiteSettings,
   type PageTemplateConfig,
   type DynamicPropBinding,
-  type FrameworkColorCategory,
   type FrameworkColorToken,
   type FrameworkColorUtilityType,
+  type FrameworkPreferencesSettings,
+  type FrameworkScaleManualSize,
+  type FrameworkScaleMode,
+  type FrameworkSpacingClassGenerator,
+  type FrameworkSpacingGroup,
+  type FrameworkTypographyClassGenerator,
+  type FrameworkTypographyGroup,
   DEFAULT_BREAKPOINTS,
   DEFAULT_SITE_SETTINGS,
   createNode,
@@ -47,6 +53,16 @@ import {
   generateFrameworkColorUtilityClasses,
   normalizeFrameworkColorSlug,
 } from '@core/framework/colors'
+import { generateFrameworkTypographyUtilityClasses } from '@core/framework/typography'
+import { generateFrameworkSpacingUtilityClasses } from '@core/framework/spacing'
+import {
+  buildDefaultSpacingGroup,
+  buildDefaultTypographyGroup,
+  makeFreshSpacingGroup,
+  makeFreshTypographyGroup,
+  nextSpacingTabValues,
+  nextTypographyTabValues,
+} from '@core/framework/defaults'
 
 /** Maximum undo history depth — prevents unbounded memory growth */
 const MAX_HISTORY = 50
@@ -93,14 +109,42 @@ export interface SiteSlice {
   updateSiteSettings: (patch: Partial<SiteSettings>) => void
 
   // Framework color mutations
-  createFrameworkColorCategory: (name: string) => FrameworkColorCategory
-  renameFrameworkColorCategory: (categoryId: string, name: string) => void
-  deleteFrameworkColorCategory: (categoryId: string) => void
   createFrameworkColorToken: (input: CreateFrameworkColorTokenInput) => FrameworkColorToken
   updateFrameworkColorToken: (tokenId: string, patch: UpdateFrameworkColorTokenPatch) => void
   duplicateFrameworkColorToken: (tokenId: string) => FrameworkColorToken | null
   reorderFrameworkColorToken: (tokenId: string, direction: 'up' | 'down') => void
   deleteFrameworkColorToken: (tokenId: string) => void
+
+  // Framework preferences
+  updateFrameworkPreferences: (patch: Partial<FrameworkPreferencesSettings>) => void
+
+  // Framework typography mutations
+  toggleFrameworkTypographyDisabled: () => void
+  createFrameworkTypographyGroup: () => FrameworkTypographyGroup
+  updateFrameworkTypographyGroup: (groupId: string, patch: UpdateFrameworkTypographyGroupPatch) => void
+  duplicateFrameworkTypographyGroup: (groupId: string) => FrameworkTypographyGroup | null
+  resetFrameworkTypographyGroup: (groupId: string) => void
+  deleteFrameworkTypographyGroup: (groupId: string) => void
+  upsertFrameworkTypographyManualSize: (
+    groupId: string,
+    sizeId: string,
+    patch: Partial<FrameworkScaleManualSize>,
+  ) => void
+  setFrameworkTypographyClassGenerators: (classes: FrameworkTypographyClassGenerator[]) => void
+
+  // Framework spacing mutations
+  toggleFrameworkSpacingDisabled: () => void
+  createFrameworkSpacingGroup: () => FrameworkSpacingGroup
+  updateFrameworkSpacingGroup: (groupId: string, patch: UpdateFrameworkSpacingGroupPatch) => void
+  duplicateFrameworkSpacingGroup: (groupId: string) => FrameworkSpacingGroup | null
+  resetFrameworkSpacingGroup: (groupId: string) => void
+  deleteFrameworkSpacingGroup: (groupId: string) => void
+  upsertFrameworkSpacingManualSize: (
+    groupId: string,
+    sizeId: string,
+    patch: Partial<FrameworkScaleManualSize>,
+  ) => void
+  setFrameworkSpacingClassGenerators: (classes: FrameworkSpacingClassGenerator[]) => void
 
   // ─── Undo / Redo ──────────────────────────────────────────────────────────
   /** Snapshots of previous site states — most recent last */
@@ -123,7 +167,7 @@ export interface SiteSlice {
 type ColorVariantOptions = { enabled: boolean; count: number }
 
 interface CreateFrameworkColorTokenInput {
-  categoryId?: string | null
+  category?: string
   slug: string
   lightValue: string
   darkValue?: string
@@ -135,7 +179,7 @@ interface CreateFrameworkColorTokenInput {
 }
 
 type UpdateFrameworkColorTokenPatch = Partial<{
-  categoryId: string | null
+  category: string
   slug: string
   lightValue: string
   darkValue: string
@@ -145,6 +189,31 @@ type UpdateFrameworkColorTokenPatch = Partial<{
   generateShades: Partial<ColorVariantOptions>
   generateTints: Partial<ColorVariantOptions>
   order: number
+}>
+
+export type UpdateFrameworkTypographyGroupPatch = Partial<{
+  name: string
+  namingConvention: string
+  steps: string
+  baseScaleIndex: number
+  mode: FrameworkScaleMode
+  isDisabled: boolean
+  /** Patch into the `min` breakpoint config — fields are merged, untouched fields preserved. */
+  min: Partial<FrameworkTypographyGroup['min']>
+  max: Partial<FrameworkTypographyGroup['max']>
+  manualSizes: FrameworkScaleManualSize[]
+}>
+
+export type UpdateFrameworkSpacingGroupPatch = Partial<{
+  name: string
+  namingConvention: string
+  steps: string
+  baseScaleIndex: number
+  mode: FrameworkScaleMode
+  isDisabled: boolean
+  min: Partial<FrameworkSpacingGroup['min']>
+  max: Partial<FrameworkSpacingGroup['max']>
+  manualSizes: FrameworkScaleManualSize[]
 }>
 
 function createDefaultSiteDocument(name: string): SiteDocument {
@@ -183,14 +252,40 @@ const DEFAULT_COLOR_VARIANTS: ColorVariantOptions = { enabled: true, count: 4 }
 
 function ensureFrameworkColors(site: SiteDocument): NonNullable<SiteSettings['framework']>['colors'] {
   if (!site.settings.framework) {
-    site.settings.framework = { colors: { categories: [], tokens: [] } }
+    site.settings.framework = { colors: { tokens: [] } }
   }
   if (!site.settings.framework.colors) {
-    site.settings.framework.colors = { categories: [], tokens: [] }
+    site.settings.framework.colors = { tokens: [] }
   }
-  site.settings.framework.colors.categories ??= []
   site.settings.framework.colors.tokens ??= []
   return site.settings.framework.colors
+}
+
+function normalizeCategoryLabel(input: string | undefined | null): string {
+  return typeof input === 'string' ? input.trim() : ''
+}
+
+/**
+ * Match a new category label against existing tokens case-insensitively.
+ * If any other token already uses a category with the same letters (regardless
+ * of case), the canonical casing of that existing label wins — this prevents
+ * "Brand" and "brand" from drifting into separate categories when the user
+ * forgets the original capitalization.
+ */
+function canonicalizeCategoryLabel(
+  input: string | undefined | null,
+  tokens: FrameworkColorToken[],
+  excludeTokenId?: string,
+): string {
+  const trimmed = normalizeCategoryLabel(input)
+  if (!trimmed) return ''
+  const lower = trimmed.toLowerCase()
+  for (const token of tokens) {
+    if (token.id === excludeTokenId) continue
+    const existing = token.category.trim()
+    if (existing && existing.toLowerCase() === lower) return existing
+  }
+  return trimmed
 }
 
 function nextOrder(items: Array<{ order: number }>): number {
@@ -225,7 +320,7 @@ function createFrameworkColorTokenFromInput(
   const lightValue = input.lightValue.trim()
   return {
     id: nanoid(),
-    categoryId: input.categoryId ?? null,
+    category: canonicalizeCategoryLabel(input.category, colors.tokens),
     slug: uniqueColorSlug(colors.tokens, input.slug),
     lightValue,
     darkValue: input.darkValue?.trim() || generateDefaultDarkColor(lightValue),
@@ -254,7 +349,9 @@ function applyFrameworkColorTokenPatch(
   patch: UpdateFrameworkColorTokenPatch,
   colors: NonNullable<SiteSettings['framework']>['colors'],
 ): void {
-  if (patch.categoryId !== undefined) token.categoryId = patch.categoryId
+  if (patch.category !== undefined) {
+    token.category = canonicalizeCategoryLabel(patch.category, colors.tokens, token.id)
+  }
   if (patch.slug !== undefined) token.slug = uniqueColorSlug(colors.tokens, patch.slug, token.id)
   if (patch.lightValue !== undefined) token.lightValue = patch.lightValue.trim()
   if (patch.darkValue !== undefined) token.darkValue = patch.darkValue.trim()
@@ -305,7 +402,7 @@ function reorderFrameworkColorTokenInGroup(
   if (!token) return
 
   const group = colors.tokens
-    .filter((candidate) => candidate.categoryId === token.categoryId)
+    .filter((candidate) => candidate.category === token.category)
     .sort((a, b) => a.order - b.order || a.slug.localeCompare(b.slug))
   const currentIndex = group.findIndex((candidate) => candidate.id === tokenId)
   const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
@@ -343,6 +440,126 @@ function reconcileFrameworkColorClasses(site: SiteDocument): void {
 
   for (const classId of Object.keys(site.classes)) {
     if (!isGeneratedColorClassId(classId, site)) continue
+    if (nextClassIds.has(classId)) continue
+    delete site.classes[classId]
+    pruneClassIdFromNodes(site, classId)
+  }
+
+  for (const [classId, nextClass] of Object.entries(nextClasses)) {
+    const existing = site.classes[classId]
+    site.classes[classId] = {
+      ...nextClass,
+      createdAt: existing?.createdAt ?? nextClass.createdAt,
+    }
+  }
+}
+
+function ensureFrameworkTypography(
+  site: SiteDocument,
+): NonNullable<NonNullable<SiteSettings['framework']>['typography']> {
+  if (!site.settings.framework) {
+    site.settings.framework = { colors: { tokens: [] } }
+  }
+  if (!site.settings.framework.typography) {
+    site.settings.framework.typography = { groups: [], classes: [] }
+  }
+  site.settings.framework.typography.groups ??= []
+  site.settings.framework.typography.classes ??= []
+  return site.settings.framework.typography
+}
+
+function ensureFrameworkSpacing(
+  site: SiteDocument,
+): NonNullable<NonNullable<SiteSettings['framework']>['spacing']> {
+  if (!site.settings.framework) {
+    site.settings.framework = { colors: { tokens: [] } }
+  }
+  if (!site.settings.framework.spacing) {
+    site.settings.framework.spacing = { groups: [], classes: [] }
+  }
+  site.settings.framework.spacing.groups ??= []
+  site.settings.framework.spacing.classes ??= []
+  return site.settings.framework.spacing
+}
+
+function nextOrderValue(items: Array<{ order: number }>): number {
+  return items.reduce((max, item) => Math.max(max, item.order), -1) + 1
+}
+
+function applyFrameworkTypographyGroupPatch(
+  group: FrameworkTypographyGroup,
+  patch: UpdateFrameworkTypographyGroupPatch,
+): void {
+  if (patch.name !== undefined) group.name = patch.name
+  if (patch.namingConvention !== undefined) group.namingConvention = patch.namingConvention
+  if (patch.steps !== undefined) group.steps = patch.steps
+  if (patch.baseScaleIndex !== undefined) group.baseScaleIndex = patch.baseScaleIndex
+  if (patch.mode !== undefined) group.mode = patch.mode
+  if (patch.isDisabled !== undefined) group.isDisabled = patch.isDisabled
+  if (patch.min) group.min = { ...group.min, ...patch.min }
+  if (patch.max) group.max = { ...group.max, ...patch.max }
+  if (patch.manualSizes !== undefined) group.manualSizes = patch.manualSizes
+  group.updatedAt = Date.now()
+}
+
+function applyFrameworkSpacingGroupPatch(
+  group: FrameworkSpacingGroup,
+  patch: UpdateFrameworkSpacingGroupPatch,
+): void {
+  if (patch.name !== undefined) group.name = patch.name
+  if (patch.namingConvention !== undefined) group.namingConvention = patch.namingConvention
+  if (patch.steps !== undefined) group.steps = patch.steps
+  if (patch.baseScaleIndex !== undefined) group.baseScaleIndex = patch.baseScaleIndex
+  if (patch.mode !== undefined) group.mode = patch.mode
+  if (patch.isDisabled !== undefined) group.isDisabled = patch.isDisabled
+  if (patch.min) group.min = { ...group.min, ...patch.min }
+  if (patch.max) group.max = { ...group.max, ...patch.max }
+  if (patch.manualSizes !== undefined) group.manualSizes = patch.manualSizes
+  group.updatedAt = Date.now()
+}
+
+function isGeneratedTypographyClassId(id: string, site: SiteDocument): boolean {
+  return (
+    site.classes[id]?.generated?.origin === 'framework' &&
+    site.classes[id]?.generated?.family === 'typography'
+  )
+}
+
+function isGeneratedSpacingClassId(id: string, site: SiteDocument): boolean {
+  return (
+    site.classes[id]?.generated?.origin === 'framework' &&
+    site.classes[id]?.generated?.family === 'spacing'
+  )
+}
+
+function reconcileFrameworkTypographyClasses(site: SiteDocument): void {
+  const typography = ensureFrameworkTypography(site)
+  const nextClasses = generateFrameworkTypographyUtilityClasses(typography)
+  const nextClassIds = new Set(Object.keys(nextClasses))
+
+  for (const classId of Object.keys(site.classes)) {
+    if (!isGeneratedTypographyClassId(classId, site)) continue
+    if (nextClassIds.has(classId)) continue
+    delete site.classes[classId]
+    pruneClassIdFromNodes(site, classId)
+  }
+
+  for (const [classId, nextClass] of Object.entries(nextClasses)) {
+    const existing = site.classes[classId]
+    site.classes[classId] = {
+      ...nextClass,
+      createdAt: existing?.createdAt ?? nextClass.createdAt,
+    }
+  }
+}
+
+function reconcileFrameworkSpacingClasses(site: SiteDocument): void {
+  const spacing = ensureFrameworkSpacing(site)
+  const nextClasses = generateFrameworkSpacingUtilityClasses(spacing)
+  const nextClassIds = new Set(Object.keys(nextClasses))
+
+  for (const classId of Object.keys(site.classes)) {
+    if (!isGeneratedSpacingClassId(classId, site)) continue
     if (nextClassIds.has(classId)) continue
     delete site.classes[classId]
     pruneClassIdFromNodes(site, classId)
@@ -500,6 +717,12 @@ export const createSiteSlice: StateCreator<EditorStore, [], [], SiteSlice> = (se
       renderCache.clear()
       if (site.settings.framework?.colors) {
         reconcileFrameworkColorClasses(site)
+      }
+      if (site.settings.framework?.typography) {
+        reconcileFrameworkTypographyClasses(site)
+      }
+      if (site.settings.framework?.spacing) {
+        reconcileFrameworkSpacingClasses(site)
       }
       const packageJson = clonePackageJson(site.packageJson)
       const siteRuntime = cloneSiteRuntimeConfig(site.runtime)
@@ -698,43 +921,6 @@ export const createSiteSlice: StateCreator<EditorStore, [], [], SiteSlice> = (se
       })
     },
 
-    createFrameworkColorCategory: (name) => {
-      const { site } = get()
-      if (!site) throw new Error('[siteSlice] Site document is not initialized')
-      const colors = ensureFrameworkColors(site)
-      const category: FrameworkColorCategory = {
-        id: nanoid(),
-        name: name.trim() || 'Untitled',
-        order: nextOrder(colors.categories),
-      }
-
-      mutateSite((draftSite) => {
-        ensureFrameworkColors(draftSite).categories.push(category)
-      })
-
-      return category
-    },
-
-    renameFrameworkColorCategory: (categoryId, name) => {
-      const trimmed = name.trim()
-      if (!trimmed) return
-      mutateSite((site) => {
-        const category = ensureFrameworkColors(site).categories.find((candidate) => candidate.id === categoryId)
-        if (!category || category.name === trimmed) return
-        category.name = trimmed
-      })
-    },
-
-    deleteFrameworkColorCategory: (categoryId) => {
-      mutateSite((site) => {
-        const colors = ensureFrameworkColors(site)
-        colors.categories = colors.categories.filter((category) => category.id !== categoryId)
-        for (const token of colors.tokens) {
-          if (token.categoryId === categoryId) token.categoryId = null
-        }
-      })
-    },
-
     createFrameworkColorToken: (input) => {
       const { site } = get()
       if (!site) throw new Error('[siteSlice] Site document is not initialized')
@@ -789,6 +975,260 @@ export const createSiteSlice: StateCreator<EditorStore, [], [], SiteSlice> = (se
         const colors = ensureFrameworkColors(site)
         colors.tokens = colors.tokens.filter((token) => token.id !== tokenId)
         reconcileFrameworkColorClasses(site)
+      })
+    },
+
+    // ─── Framework preferences ───────────────────────────────────────────────
+    updateFrameworkPreferences: (patch) => {
+      mutateSite((site) => {
+        if (!site.settings.framework) {
+          site.settings.framework = { colors: { tokens: [] } }
+        }
+        const current = site.settings.framework.preferences ?? {
+          rootFontSize: 10,
+          minScreenWidth: 320,
+          maxScreenWidth: 1400,
+          isRem: true,
+        }
+        site.settings.framework.preferences = { ...current, ...patch }
+      })
+    },
+
+    // ─── Framework typography ───────────────────────────────────────────────
+    toggleFrameworkTypographyDisabled: () => {
+      mutateSite((site) => {
+        const typography = ensureFrameworkTypography(site)
+        typography.isDisabled = !typography.isDisabled
+        reconcileFrameworkTypographyClasses(site)
+      })
+    },
+
+    createFrameworkTypographyGroup: () => {
+      const { site } = get()
+      if (!site) throw new Error('[siteSlice] Site document is not initialized')
+      const typography = ensureFrameworkTypography(site)
+      const { name, varName } = nextTypographyTabValues(typography.groups)
+      const order = nextOrderValue(typography.groups)
+      const group = makeFreshTypographyGroup(name, varName, order)
+
+      mutateSite((draftSite) => {
+        const draftTypography = ensureFrameworkTypography(draftSite)
+        draftTypography.groups.push(group)
+        reconcileFrameworkTypographyClasses(draftSite)
+      })
+      return group
+    },
+
+    updateFrameworkTypographyGroup: (groupId, patch) => {
+      mutateSite((site) => {
+        const typography = ensureFrameworkTypography(site)
+        const group = typography.groups.find((g) => g.id === groupId)
+        if (!group) return
+        applyFrameworkTypographyGroupPatch(group, patch)
+        reconcileFrameworkTypographyClasses(site)
+      })
+    },
+
+    duplicateFrameworkTypographyGroup: (groupId) => {
+      const { site } = get()
+      if (!site) return null
+      const typography = ensureFrameworkTypography(site)
+      const source = typography.groups.find((g) => g.id === groupId)
+      if (!source) return null
+
+      const { name, varName } = nextTypographyTabValues(typography.groups)
+      const order = nextOrderValue(typography.groups)
+      const now = Date.now()
+      const copy: FrameworkTypographyGroup = {
+        ...structuredClone(source),
+        id: nanoid(),
+        name,
+        namingConvention: varName,
+        manualSizes: source.manualSizes?.map((m) => ({
+          ...m,
+          id: nanoid(),
+          name: m.name.replace(source.namingConvention, varName),
+        })),
+        order,
+        createdAt: now,
+        updatedAt: now,
+      }
+
+      mutateSite((draftSite) => {
+        const draftTypography = ensureFrameworkTypography(draftSite)
+        draftTypography.groups.push(copy)
+        reconcileFrameworkTypographyClasses(draftSite)
+      })
+      return copy
+    },
+
+    resetFrameworkTypographyGroup: (groupId) => {
+      mutateSite((site) => {
+        const typography = ensureFrameworkTypography(site)
+        const idx = typography.groups.findIndex((g) => g.id === groupId)
+        if (idx < 0) return
+        const order = typography.groups[idx].order
+        typography.groups[idx] = { ...buildDefaultTypographyGroup(order), id: groupId }
+        reconcileFrameworkTypographyClasses(site)
+      })
+    },
+
+    deleteFrameworkTypographyGroup: (groupId) => {
+      mutateSite((site) => {
+        const typography = ensureFrameworkTypography(site)
+        typography.groups = typography.groups.filter((g) => g.id !== groupId)
+        typography.classes = typography.classes?.filter((c) => c.tabId !== groupId) ?? []
+        reconcileFrameworkTypographyClasses(site)
+      })
+    },
+
+    upsertFrameworkTypographyManualSize: (groupId, sizeId, patch) => {
+      mutateSite((site) => {
+        const typography = ensureFrameworkTypography(site)
+        const group = typography.groups.find((g) => g.id === groupId)
+        if (!group) return
+        group.manualSizes ??= []
+        const idx = group.manualSizes.findIndex((m) => m.id === sizeId)
+        if (idx < 0) {
+          if (typeof patch.name !== 'string' || patch.min === undefined || patch.max === undefined) return
+          group.manualSizes.push({
+            id: sizeId,
+            name: patch.name,
+            min: patch.min,
+            max: patch.max,
+          })
+        } else {
+          group.manualSizes[idx] = { ...group.manualSizes[idx], ...patch }
+        }
+        group.updatedAt = Date.now()
+        reconcileFrameworkTypographyClasses(site)
+      })
+    },
+
+    setFrameworkTypographyClassGenerators: (classes) => {
+      mutateSite((site) => {
+        const typography = ensureFrameworkTypography(site)
+        typography.classes = classes
+        reconcileFrameworkTypographyClasses(site)
+      })
+    },
+
+    // ─── Framework spacing ───────────────────────────────────────────────
+    toggleFrameworkSpacingDisabled: () => {
+      mutateSite((site) => {
+        const spacing = ensureFrameworkSpacing(site)
+        spacing.isDisabled = !spacing.isDisabled
+        reconcileFrameworkSpacingClasses(site)
+      })
+    },
+
+    createFrameworkSpacingGroup: () => {
+      const { site } = get()
+      if (!site) throw new Error('[siteSlice] Site document is not initialized')
+      const spacing = ensureFrameworkSpacing(site)
+      const { name, varName } = nextSpacingTabValues(spacing.groups)
+      const order = nextOrderValue(spacing.groups)
+      const group = makeFreshSpacingGroup(name, varName, order)
+
+      mutateSite((draftSite) => {
+        const draftSpacing = ensureFrameworkSpacing(draftSite)
+        draftSpacing.groups.push(group)
+        reconcileFrameworkSpacingClasses(draftSite)
+      })
+      return group
+    },
+
+    updateFrameworkSpacingGroup: (groupId, patch) => {
+      mutateSite((site) => {
+        const spacing = ensureFrameworkSpacing(site)
+        const group = spacing.groups.find((g) => g.id === groupId)
+        if (!group) return
+        applyFrameworkSpacingGroupPatch(group, patch)
+        reconcileFrameworkSpacingClasses(site)
+      })
+    },
+
+    duplicateFrameworkSpacingGroup: (groupId) => {
+      const { site } = get()
+      if (!site) return null
+      const spacing = ensureFrameworkSpacing(site)
+      const source = spacing.groups.find((g) => g.id === groupId)
+      if (!source) return null
+
+      const { name, varName } = nextSpacingTabValues(spacing.groups)
+      const order = nextOrderValue(spacing.groups)
+      const now = Date.now()
+      const copy: FrameworkSpacingGroup = {
+        ...structuredClone(source),
+        id: nanoid(),
+        name,
+        namingConvention: varName,
+        manualSizes: source.manualSizes?.map((m) => ({
+          ...m,
+          id: nanoid(),
+          name: m.name.replace(source.namingConvention, varName),
+        })),
+        order,
+        createdAt: now,
+        updatedAt: now,
+      }
+
+      mutateSite((draftSite) => {
+        const draftSpacing = ensureFrameworkSpacing(draftSite)
+        draftSpacing.groups.push(copy)
+        reconcileFrameworkSpacingClasses(draftSite)
+      })
+      return copy
+    },
+
+    resetFrameworkSpacingGroup: (groupId) => {
+      mutateSite((site) => {
+        const spacing = ensureFrameworkSpacing(site)
+        const idx = spacing.groups.findIndex((g) => g.id === groupId)
+        if (idx < 0) return
+        const order = spacing.groups[idx].order
+        spacing.groups[idx] = { ...buildDefaultSpacingGroup(order), id: groupId }
+        reconcileFrameworkSpacingClasses(site)
+      })
+    },
+
+    deleteFrameworkSpacingGroup: (groupId) => {
+      mutateSite((site) => {
+        const spacing = ensureFrameworkSpacing(site)
+        spacing.groups = spacing.groups.filter((g) => g.id !== groupId)
+        spacing.classes = spacing.classes?.filter((c) => c.tabId !== groupId) ?? []
+        reconcileFrameworkSpacingClasses(site)
+      })
+    },
+
+    upsertFrameworkSpacingManualSize: (groupId, sizeId, patch) => {
+      mutateSite((site) => {
+        const spacing = ensureFrameworkSpacing(site)
+        const group = spacing.groups.find((g) => g.id === groupId)
+        if (!group) return
+        group.manualSizes ??= []
+        const idx = group.manualSizes.findIndex((m) => m.id === sizeId)
+        if (idx < 0) {
+          if (typeof patch.name !== 'string' || patch.min === undefined || patch.max === undefined) return
+          group.manualSizes.push({
+            id: sizeId,
+            name: patch.name,
+            min: patch.min,
+            max: patch.max,
+          })
+        } else {
+          group.manualSizes[idx] = { ...group.manualSizes[idx], ...patch }
+        }
+        group.updatedAt = Date.now()
+        reconcileFrameworkSpacingClasses(site)
+      })
+    },
+
+    setFrameworkSpacingClassGenerators: (classes) => {
+      mutateSite((site) => {
+        const spacing = ensureFrameworkSpacing(site)
+        spacing.classes = classes
+        reconcileFrameworkSpacingClasses(site)
       })
     },
   }

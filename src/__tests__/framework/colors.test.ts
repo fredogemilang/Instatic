@@ -9,11 +9,10 @@ import {
 
 function makeColorSettings(overrides: Partial<FrameworkColorSettings> = {}): FrameworkColorSettings {
   return {
-    categories: [{ id: 'brand', name: 'Brand', order: 0 }],
     tokens: [
       {
         id: 'primary-token',
-        categoryId: 'brand',
+        category: 'Brand',
         slug: 'primary',
         lightValue: 'hsla(238, 100%, 62%, 1)',
         darkValue: 'hsla(238, 100%, 42%, 1)',

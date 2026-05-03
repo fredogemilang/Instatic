@@ -22,10 +22,9 @@ function resetStore() {
 beforeEach(resetStore)
 
 describe('framework color store actions', () => {
-  it('creates a category and color token with generated locked utilities', () => {
-    const category = useEditorStore.getState().createFrameworkColorCategory('Brand')
+  it('creates a color token with a category label and generated locked utilities', () => {
     const token = useEditorStore.getState().createFrameworkColorToken({
-      categoryId: category.id,
+      category: 'Brand',
       slug: 'primary',
       lightValue: 'hsla(238, 100%, 62%, 1)',
       darkModeEnabled: true,
@@ -41,13 +40,9 @@ describe('framework color store actions', () => {
     })
 
     const state = useEditorStore.getState()
-    expect(state.site!.settings.framework!.colors.categories[0]).toMatchObject({
-      id: category.id,
-      name: 'Brand',
-    })
     expect(state.site!.settings.framework!.colors.tokens[0]).toMatchObject({
       id: token.id,
-      categoryId: category.id,
+      category: 'Brand',
       slug: 'primary',
       lightValue: 'hsla(238, 100%, 62%, 1)',
       darkModeEnabled: true,
@@ -179,7 +174,7 @@ describe('framework color store actions', () => {
   it('reconciles generated utility classes when loading a site with framework colors', () => {
     const token: FrameworkColorToken = {
       id: 'primary-token',
-      categoryId: null,
+      category: '',
       slug: 'primary',
       lightValue: 'hsla(238, 100%, 62%, 1)',
       darkValue: 'hsla(238, 100%, 42%, 1)',
@@ -202,7 +197,6 @@ describe('framework color store actions', () => {
         ...makeSite().settings,
         framework: {
           colors: {
-            categories: [],
             tokens: [token],
           },
         },
@@ -256,5 +250,39 @@ describe('framework color store actions', () => {
       .sort((a, b) => a.order - b.order)
       .map((token) => token.slug)
     expect(orderedSlugs).toEqual(['secondary', 'primary', 'primary-copy'])
+  })
+
+  it('canonicalizes a new token category to match an existing label case-insensitively', () => {
+    useEditorStore.getState().createFrameworkColorToken({
+      slug: 'primary',
+      lightValue: 'hsla(238, 100%, 62%, 1)',
+      category: 'Brand',
+    })
+    const second = useEditorStore.getState().createFrameworkColorToken({
+      slug: 'secondary',
+      lightValue: 'hsla(0, 94%, 68%, 1)',
+      category: 'brand',
+    })
+
+    expect(second.category).toBe('Brand')
+  })
+
+  it('canonicalizes an updated token category to match an existing label case-insensitively', () => {
+    useEditorStore.getState().createFrameworkColorToken({
+      slug: 'primary',
+      lightValue: 'hsla(238, 100%, 62%, 1)',
+      category: 'Brand',
+    })
+    const second = useEditorStore.getState().createFrameworkColorToken({
+      slug: 'secondary',
+      lightValue: 'hsla(0, 94%, 68%, 1)',
+    })
+
+    useEditorStore.getState().updateFrameworkColorToken(second.id, { category: 'BRAND' })
+
+    const updated = useEditorStore.getState().site!.settings.framework!.colors.tokens.find(
+      (token) => token.id === second.id,
+    )
+    expect(updated?.category).toBe('Brand')
   })
 })

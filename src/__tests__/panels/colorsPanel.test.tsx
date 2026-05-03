@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import React from 'react'
+import React, { act } from 'react'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { ColorsPanel } from '../../editor/components/ColorsPanel'
 import { useEditorStore } from '@core/editor-store/store'
@@ -163,7 +163,7 @@ describe('ColorsPanel', () => {
     ).toBe('var(--primary)')
   })
 
-  it('creates categories and assigns a token to one', () => {
+  it('assigns a free-form category to a token via the editor input', () => {
     const token = useEditorStore.getState().createFrameworkColorToken({
       slug: 'primary',
       lightValue: 'hsla(238, 100%, 62%, 1)',
@@ -171,44 +171,90 @@ describe('ColorsPanel', () => {
 
     render(<ColorsPanel variant="docked" />)
 
-    fireEvent.click(screen.getByRole('button', { name: /create category/i }))
-    fireEvent.change(screen.getByRole('textbox', { name: /category name/i }), {
-      target: { value: 'Brand' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: /^create$/i }))
-
-    const category = useEditorStore.getState().site!.settings.framework!.colors.categories[0]
-    expect(category.name).toBe('Brand')
-    expect(screen.getByRole('button', { name: /^brand$/i })).toBeDefined()
-
     fireEvent.click(screen.getByRole('button', { name: /edit color primary/i }))
-    fireEvent.click(within(screen.getByTestId('colors-panel')).getByRole('combobox', { name: /category/i }))
-    fireEvent.click(screen.getByRole('option', { name: 'Brand' }))
+    const panel = screen.getByTestId('colors-panel')
+    const categoryInput = within(panel).getByRole('textbox', { name: /category/i })
+    fireEvent.focus(categoryInput)
+    fireEvent.change(categoryInput, { target: { value: 'Brand' } })
+    fireEvent.blur(categoryInput)
 
-    expect(useEditorStore.getState().site!.settings.framework!.colors.tokens.find((candidate) => candidate.id === token.id)?.categoryId).toBe(category.id)
+    const updated = useEditorStore.getState().site!.settings.framework!.colors.tokens.find(
+      (candidate) => candidate.id === token.id,
+    )
+    expect(updated?.category).toBe('Brand')
     expect(within(screen.getByRole('button', { name: 'Edit color primary' })).getByText('Brand')).toBeDefined()
+    // The free-form label appears as a chip in the FilterBar derived from tokens.
+    expect(screen.getByRole('button', { name: /^brand$/i })).toBeDefined()
   })
 
-  it('creates a color token in a selected category from the create dialog', () => {
+  it('suggests existing categories from other tokens via the autocomplete dropdown', () => {
+    useEditorStore.getState().createFrameworkColorToken({
+      slug: 'primary',
+      lightValue: 'hsla(238, 100%, 62%, 1)',
+      category: 'Brand',
+    })
+    const secondary = useEditorStore.getState().createFrameworkColorToken({
+      slug: 'secondary',
+      lightValue: 'hsla(0, 94%, 68%, 1)',
+    })
+
     render(<ColorsPanel variant="docked" />)
 
-    fireEvent.click(screen.getByRole('button', { name: /create category/i }))
-    fireEvent.change(screen.getByRole('textbox', { name: /category name/i }), {
-      target: { value: 'Brand' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: /^create$/i }))
+    fireEvent.click(screen.getByRole('button', { name: /edit color secondary/i }))
+    const panel = screen.getByTestId('colors-panel')
+    const categoryInput = within(panel).getByRole('textbox', { name: /category/i })
+    fireEvent.focus(categoryInput)
 
-    const category = useEditorStore.getState().site!.settings.framework!.colors.categories[0]
+    expect(screen.getByRole('listbox', { name: /category suggestions/i })).toBeDefined()
+    fireEvent.click(screen.getByRole('option', { name: 'Brand' }))
+
+    expect(
+      useEditorStore.getState().site!.settings.framework!.colors.tokens.find(
+        (candidate) => candidate.id === secondary.id,
+      )?.category,
+    ).toBe('Brand')
+  })
+
+  it('drops a category from the filter bar when its last token loses the label', () => {
+    const token = useEditorStore.getState().createFrameworkColorToken({
+      slug: 'primary',
+      lightValue: 'hsla(238, 100%, 62%, 1)',
+      category: 'Brand',
+    })
+
+    render(<ColorsPanel variant="docked" />)
+
+    expect(screen.getByRole('button', { name: /^brand$/i })).toBeDefined()
+
+    act(() => {
+      useEditorStore.getState().updateFrameworkColorToken(token.id, { category: '' })
+    })
+
+    expect(screen.queryByRole('button', { name: /^brand$/i })).toBeNull()
+  })
+
+  it('creates a color token with a chosen category from the create dialog', () => {
+    useEditorStore.getState().createFrameworkColorToken({
+      slug: 'existing',
+      lightValue: 'hsla(238, 100%, 62%, 1)',
+      category: 'Brand',
+    })
+
+    render(<ColorsPanel variant="docked" />)
+
     fireEvent.click(screen.getAllByRole('button', { name: /create color/i })[0])
     fireEvent.change(screen.getByRole('textbox', { name: /token name/i }), {
       target: { value: 'primary' },
     })
-    fireEvent.click(screen.getByRole('combobox', { name: /category/i }))
+    const categoryInput = screen.getByRole('textbox', { name: /category/i })
+    fireEvent.focus(categoryInput)
     fireEvent.click(screen.getByRole('option', { name: 'Brand' }))
     fireEvent.click(screen.getByRole('button', { name: /^create$/i }))
 
-    const token = useEditorStore.getState().site!.settings.framework!.colors.tokens[0]
-    expect(token.categoryId).toBe(category.id)
+    const created = useEditorStore.getState().site!.settings.framework!.colors.tokens.find(
+      (candidate) => candidate.slug === 'primary',
+    )
+    expect(created?.category).toBe('Brand')
     expect(within(screen.getByRole('button', { name: 'Edit color primary' })).getByText('Brand')).toBeDefined()
   })
 
