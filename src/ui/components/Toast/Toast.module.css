@@ -1,0 +1,150 @@
+/* ── Toast stack ─────────────────────────────────────────────────────────── */
+/*
+ * Bottom-right floating stack — a column of toasts that grows upward.
+ * Pointer events are forwarded so close buttons & actions remain clickable;
+ * the stack itself doesn't capture clicks behind it because the toasts are
+ * the only interactive elements.
+ *
+ * z-index sits above the editor toolbar (60) and modals (variable) but below
+ * the tooltip layer (2000) — toasts are non-blocking surfaces.
+ */
+
+.stack {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 1500;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 8px;
+    max-width: min(420px, calc(100vw - 32px));
+    pointer-events: none;
+}
+
+/* ── Toast card ──────────────────────────────────────────────────────────── */
+
+.toast {
+    pointer-events: auto;
+    display: grid;
+    grid-template-columns: 16px 1fr auto;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--panel-radius);
+    box-shadow: var(--panel-shadow);
+    backdrop-filter: blur(var(--panel-blur));
+    color: var(--editor-text);
+    font-size: 12px;
+    line-height: 1.4;
+    animation: toast-enter 140ms ease-out;
+}
+
+@keyframes toast-enter {
+    from {
+        opacity: 0;
+        transform: translateY(6px) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* ── Per-kind accents ────────────────────────────────────────────────────── */
+/*
+ * The card itself stays achromatic — only the leading icon and a 1px tinted
+ * left edge carry the semantic colour. Aligned with the achromatic-color-policy
+ * gate (Constraint #376): semantic state tokens are the only chromatic accents
+ * permitted on editor chrome.
+ */
+
+.kind-error {
+    border-left: 2px solid var(--editor-danger);
+}
+.kind-error .icon {
+    color: var(--editor-danger-light);
+}
+
+.kind-warning {
+    border-left: 2px solid var(--editor-warning);
+}
+.kind-warning .icon {
+    color: var(--editor-warning);
+}
+
+.kind-success {
+    border-left: 2px solid var(--editor-success-green);
+}
+.kind-success .icon {
+    color: var(--editor-success-green);
+}
+
+.kind-info {
+    border-left: 2px solid var(--editor-text-muted);
+}
+.kind-info .icon {
+    color: var(--editor-text-secondary);
+}
+
+/* ── Slots ───────────────────────────────────────────────────────────────── */
+
+.icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+}
+
+.content {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.title {
+    margin: 0;
+    color: var(--editor-text-bright);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.body {
+    margin: 0;
+    color: var(--editor-text-secondary);
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    /* Cap to ~3 lines so a noisy stack trace can't fill the viewport. */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.location {
+    margin: 2px 0 0;
+    color: var(--editor-text-muted);
+    font-family:
+        ui-monospace,
+        SFMono-Regular,
+        SF Mono,
+        Menlo,
+        Consolas,
+        "Liberation Mono",
+        monospace;
+    font-size: 10px;
+    letter-spacing: 0.01em;
+}
+
+.actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}

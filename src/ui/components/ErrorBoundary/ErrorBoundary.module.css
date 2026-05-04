@@ -1,0 +1,163 @@
+/* ── Fallback panel ──────────────────────────────────────────────────────── */
+/*
+ * Boundaries in dev mode render a panel that shows the failed location,
+ * error chain, component stack, and reset/copy actions. In prod the same
+ * panel appears with shortened copy.
+ *
+ * Tokens:
+ *   - achromatic surface (panel-bg / panel-border)
+ *   - --editor-danger* for the leading icon and title accent
+ *   - --editor-radius for outer corners (matches button + section radii)
+ */
+
+.fallback {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px 18px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-left: 3px solid var(--editor-danger);
+    border-radius: var(--editor-radius);
+    color: var(--editor-text);
+    font-size: 12px;
+    line-height: 1.4;
+    max-width: 720px;
+    margin: 16px auto;
+    overflow: hidden;
+}
+
+.head {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.icon {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    color: var(--editor-danger-light);
+}
+
+.headText {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.title {
+    margin: 0;
+    color: var(--editor-text-bright);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.message {
+    margin: 0;
+    color: var(--editor-text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.message code {
+    font-family:
+        ui-monospace,
+        SFMono-Regular,
+        SF Mono,
+        Menlo,
+        Consolas,
+        "Liberation Mono",
+        monospace;
+    font-size: 11px;
+    color: var(--editor-text-bright);
+    padding: 1px 4px;
+    background: var(--editor-surface);
+    border-radius: var(--editor-radius-sm);
+}
+
+/* ── Cause chain ─────────────────────────────────────────────────────────── */
+
+.causeChain {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--editor-text-secondary);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+.causeChain li {
+    margin-bottom: 2px;
+    overflow-wrap: anywhere;
+}
+
+.causeChain code {
+    font-family:
+        ui-monospace,
+        SFMono-Regular,
+        SF Mono,
+        Menlo,
+        Consolas,
+        "Liberation Mono",
+        monospace;
+    color: var(--editor-text);
+}
+
+/* ── Component stack ─────────────────────────────────────────────────────── */
+
+.details {
+    background: var(--editor-surface);
+    border: 1px solid var(--editor-border);
+    border-radius: var(--editor-radius-sm);
+    padding: 8px 10px;
+    color: var(--editor-text-secondary);
+    font-size: 11px;
+}
+
+.details summary {
+    cursor: pointer;
+    color: var(--editor-text);
+    font-weight: 500;
+}
+
+.details summary:focus-visible {
+    outline: 2px solid var(--editor-accent);
+    outline-offset: 2px;
+}
+
+.stack {
+    margin: 8px 0 0;
+    padding: 8px;
+    background: var(--editor-bg);
+    border-radius: var(--editor-radius-sm);
+    color: var(--editor-text-muted);
+    font-family:
+        ui-monospace,
+        SFMono-Regular,
+        SF Mono,
+        Menlo,
+        Consolas,
+        "Liberation Mono",
+        monospace;
+    font-size: 10.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    max-height: 240px;
+}
+
+/* ── Actions ─────────────────────────────────────────────────────────────── */
+
+.actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}

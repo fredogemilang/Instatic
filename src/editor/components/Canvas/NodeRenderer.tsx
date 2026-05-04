@@ -18,6 +18,7 @@ import { resolveProps } from '@core/page-tree/selectors'
 import { registry } from '@core/module-engine/registry'
 import { resolveDynamicProps } from '@core/templates/dynamicBindings'
 import { WarningDiamondIcon } from 'pixel-art-icons/icons/warning-diamond'
+import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { ModuleSandboxFrame } from './ModuleSandboxFrame'
 import { CanvasBreakpointContext, CanvasSelectionContext, CanvasTemplateContext } from './CanvasContexts'
 import { getCanvasNodeClassIds, getCanvasNodeClassName } from './canvasNodeClassName'
@@ -164,23 +165,40 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       onNodeContextMenu={handleNodeContextMenu}
       onNodeDoubleClick={onNodeDoubleClick}
     >
-      {/* mcClassName forwarded to the module component so the CSS class targets
-          the module's own root element (button, div, etc.) rather than the
-          NodeWrapper wrapper div. Task #401 Bug 1 fix. */}
-      {shouldRenderSandbox ? (
-        <ModuleSandboxFrame
-          moduleDefinition={definition}
-          props={effectiveProps}
-          nodeId={nodeId}
-          isSelected={isSelected}
-          mcClassName={mcClassName}
-          classIds={effectiveClassIds}
-        />
-      ) : (
-        <ComponentType props={effectiveProps as never} nodeId={nodeId} isSelected={isSelected} mcClassName={mcClassName}>
-          {children}
-        </ComponentType>
-      )}
+      {/*
+        Per-module isolation: a buggy first-party or third-party module
+        render must not collapse the entire canvas. The boundary scope is
+        scoped to the module render path; selection chrome (NodeWrapper)
+        and the rest of the page tree keep working. resetKey on the
+        moduleId means an editor swap to a different module clears
+        any stuck error.
+        silentToast: the canvas-level boundary already toasts, and a
+        100-node page with one bad module would otherwise produce 100
+        identical toasts on every render.
+      */}
+      <ErrorBoundary
+        location="node-renderer"
+        resetKeys={[node.moduleId, nodeId]}
+        silentToast
+      >
+        {/* mcClassName forwarded to the module component so the CSS class targets
+            the module's own root element (button, div, etc.) rather than the
+            NodeWrapper wrapper div. Task #401 Bug 1 fix. */}
+        {shouldRenderSandbox ? (
+          <ModuleSandboxFrame
+            moduleDefinition={definition}
+            props={effectiveProps}
+            nodeId={nodeId}
+            isSelected={isSelected}
+            mcClassName={mcClassName}
+            classIds={effectiveClassIds}
+          />
+        ) : (
+          <ComponentType props={effectiveProps as never} nodeId={nodeId} isSelected={isSelected} mcClassName={mcClassName}>
+            {children}
+          </ComponentType>
+        )}
+      </ErrorBoundary>
     </NodeWrapper>
   )
 })

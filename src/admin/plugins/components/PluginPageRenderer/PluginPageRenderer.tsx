@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Button } from '@ui/components/Button'
+import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import type {
   PluginAdminPageRoute,
   PluginPageContent,
@@ -32,6 +33,20 @@ type AppPluginPageRoute = PluginAdminPageRoute & {
 }
 
 export function PluginPageRenderer({ page, importModule }: PluginPageRendererProps) {
+  // Plugins are user-installed code — a render failure inside one must not
+  // blank the admin shell. Reset key combines plugin id + page id so
+  // navigating between plugin pages naturally clears stuck errors.
+  return (
+    <ErrorBoundary
+      location="plugin-page"
+      resetKeys={[page.pluginId, page.id]}
+    >
+      <PluginPageContent page={page} importModule={importModule} />
+    </ErrorBoundary>
+  )
+}
+
+function PluginPageContent({ page, importModule }: PluginPageRendererProps) {
   if (page.content.kind === 'map') {
     return (
       <section className={styles.pluginPage} aria-labelledby="plugin-page-title">

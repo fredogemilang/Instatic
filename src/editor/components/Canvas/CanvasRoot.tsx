@@ -26,6 +26,7 @@ import { useDroppable } from '@dnd-kit/core'
 import { useEditorStore, selectActiveCanvasPage, selectRightSidebarExpanded } from '@core/editor-store/store'
 import type { Breakpoint } from '@core/page-tree/schemas'
 import { registry } from '@core/module-engine/registry'
+import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { useCanvas } from '../../hooks/useCanvas'
 import { CanvasTransformLayer } from './CanvasTransformLayer'
 import { CanvasNotch } from './CanvasNotch'
@@ -276,16 +277,27 @@ export function CanvasRoot() {
           />
         )}
 
-        {/* The transform layer — pan/zoom applied here */}
-        <CanvasTransformLayer
-          ref={transformLayerRef}
-          page={canvasPage}
-          breakpoints={breakpoints}
-          activeBreakpointId={activeBreakpointId}
-          dimInactiveBreakpoints={focusActiveBreakpoint}
-          onBreakpointActivate={setActiveBreakpoint}
-          templateContext={templatePreviewContext}
-        />
+        {/*
+          A buggy module render must not blank the toolbar / DOM panel /
+          properties panel that share the editor shell. Resetting on the
+          active page id means switching pages naturally clears stuck
+          errors — the user navigates away from a broken module preview
+          rather than getting "stuck" on the failure screen.
+        */}
+        <ErrorBoundary
+          location="canvas"
+          resetKeys={[canvasPage?.id ?? null, activeDocument?.kind ?? null]}
+        >
+          <CanvasTransformLayer
+            ref={transformLayerRef}
+            page={canvasPage}
+            breakpoints={breakpoints}
+            activeBreakpointId={activeBreakpointId}
+            dimInactiveBreakpoints={focusActiveBreakpoint}
+            onBreakpointActivate={setActiveBreakpoint}
+            templateContext={templatePreviewContext}
+          />
+        </ErrorBoundary>
 
         {contextMenu && createPortal(
           <LayerNodeContextMenu
