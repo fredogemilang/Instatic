@@ -69,7 +69,7 @@ export type VCNode = Static<typeof VCNodeSchema>
 export const VCParamSchema = Type.Object({
   /** Stable ID — generated with nanoid(); survives param renames */
   id: Type.String(),
-  /** camelCase, valid JS identifier, unique within the VC */
+  /** Free-form name; uniqueness within the VC is validated at the slice boundary */
   name: Type.String(),
   /** Param type — unknown values fall back to 'string' in the parser helper */
   type: withFallback(VCParamTypeSchema, 'string' as const),
@@ -226,9 +226,7 @@ function parseVCNode(raw: unknown): VCNode | null {
  * `parseValue(VisualComponentSchema, raw)`.
  *
  * Naming invariants (enforced by validateComponentName at write boundaries):
- *   - PascalCase, valid JS identifier
- *   - Not a reserved React/JS name
- *   - Not a base module display name
+ *   - Non-empty (whitespace-only is rejected; trimmed before storage)
  *   - Unique within the site
  */
 export const VisualComponentSchema = Type.Object({

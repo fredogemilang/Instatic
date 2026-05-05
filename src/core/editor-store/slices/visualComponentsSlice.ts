@@ -229,12 +229,11 @@ function clonePageSubtreeAsVCNode(
 
 export interface VisualComponentsSlice {
   /**
-   * Create a new Visual Component with the given PascalCase name.
+   * Create a new Visual Component with the given (free-form) name.
    * Returns the new VC's id.
    *
    * Throws VisualComponentNameError if:
-   * - `name` is empty, not PascalCase, a reserved word, a base module name,
-   *   or already used by another VC in the site.
+   * - `name` is empty / whitespace-only, or already used by another VC in the site.
    */
   createVisualComponent(name: string): string
 
@@ -304,7 +303,7 @@ export interface VisualComponentsSlice {
   updateParamDefaultValue(vcId: string, paramId: string, value: unknown): void
 
   /**
-   * Rename a VC param. Validates camelCase + uniqueness before mutating.
+   * Rename a VC param. Validates non-empty + uniqueness before mutating.
    * Throws VisualComponentParamNameError on invalid name.
    * Because propBindings and propOverrides reference paramId (not name),
    * no other rewriting is needed.
@@ -363,6 +362,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
       throw new VisualComponentNameError(validation.reason, validation.error)
     }
 
+    const trimmedName = name.trim()
     const id = nanoid()
     const rootNodeId = nanoid()
     const now = Date.now()
@@ -378,7 +378,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
 
     const newVC: VisualComponent = {
       id,
-      name,
+      name: trimmedName,
       rootNode,
       params: [],
       breakpoints: [],
@@ -405,11 +405,13 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
       throw new VisualComponentNameError(validation.reason, validation.error)
     }
 
+    const trimmedName = newName.trim()
+
     set((state) => {
         if (!state.site) return
         const vc = (state.site.visualComponents ?? []).find((v) => v.id === id)
         if (!vc) return
-        vc.name = newName
+        vc.name = trimmedName
         state.site.updatedAt = Date.now()
       })
   },
@@ -439,6 +441,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
     }
 
     const paramId = nanoid()
+    const trimmedName = name.trim()
 
     set((state) => {
         if (!state.site) return
@@ -447,7 +450,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
 
         const newParam: VCParam = {
           id: paramId,
-          name,
+          name: trimmedName,
           type,
           defaultValue,
           required: false,
@@ -641,13 +644,15 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
       }
     }
 
+    const trimmedName = newName.trim()
+
     set((state) => {
         if (!state.site) return
         const vc = (state.site.visualComponents ?? []).find((v) => v.id === vcId)
         if (!vc) return
         const param = vc.params.find((p) => p.id === paramId)
         if (!param) return
-        param.name = newName
+        param.name = trimmedName
         state.site.updatedAt = Date.now()
       })
   },
@@ -685,6 +690,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
     if (!nameValidation.ok) {
       throw new VisualComponentNameError(nameValidation.reason, nameValidation.error)
     }
+    const trimmedName = name.trim()
 
     // 2. Active document must be a page (null = default page canvas) — VC mode is not allowed
     if (activeDocument?.kind === 'visualComponent') {
@@ -752,7 +758,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
         // 5d. Build the new VisualComponent
         const newVc: VisualComponent = {
           id: newVcId,
-          name,
+          name: trimmedName,
           rootNode: clonedRoot,
           params: [],
           breakpoints: [],

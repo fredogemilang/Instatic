@@ -22,7 +22,7 @@
  * Section 1 — File existence (FE-1 – FE-4)
  * Section 2 — Dependency direction (DD-1 – DD-2)
  * Section 3 — Type shape / static source scan (TS-1 – TS-4)
- * Section 4 — nameValidation: one gate per NameError code (NV-1 – NV-9)
+ * Section 4 — nameValidation: free-form names (NV-1 – NV-9)
  * Section 5 — recursionGuard pure functions (RG-1 – RG-8)
  * Section 6 — visualComponentsSlice CRUD via store (SL-1 – SL-14)
  * Section 7 — validateSite extension (VP-1 – VP-7)
@@ -31,7 +31,7 @@
  *
  * Both flags from Test Engineer review #1894 are directly addressed here:
  *  Flag #1: §3 recursion guard is at slice write boundary → RG-4 to RG-8
- *  Flag #2: §6 name validation per error code → NV-1 to NV-9
+ *  Flag #2: §6 name validation per error code → NV-1 + NV-6 + NV-9 (only EMPTY + PROJECT_DUPLICATE remain)
  *
  * @see Contribution #619 §2 — data model
  * @see Contribution #619 §3 — recursion guard spec
@@ -176,7 +176,7 @@ function rawSite(overrides: Record<string, unknown> = {}): Record<string, unknow
         nodes: {
           root: {
             id: 'root',
-            moduleId: 'base.root',
+            moduleId: 'base.body',
             props: {},
             children: [],
             breakpointOverrides: {},
@@ -364,40 +364,37 @@ describe('Gate NV-1 — EMPTY: empty string rejected', () => {
   })
 })
 
-describe('Gate NV-2 — NOT_PASCAL_CASE: lowercase-starting name rejected', () => {
-  it('validateComponentName("card", []) returns {ok:false, error:"NOT_PASCAL_CASE"}', () => {
+describe('Gate NV-2 — lowercase-starting names are now allowed (free-form)', () => {
+  it('validateComponentName("card", []) returns {ok:true}', () => {
     requireNV(validateComponentName)
     const result = validateComponentName('card', [])
-    expect(result.ok).toBe(false)
-    expect((result as { error: string }).error).toBe('NOT_PASCAL_CASE')
+    expect(result.ok).toBe(true)
   })
 })
 
-describe('Gate NV-3 — NOT_PASCAL_CASE: digit-starting name rejected', () => {
-  it('validateComponentName("123Card", []) returns {ok:false, error:"NOT_PASCAL_CASE"}', () => {
+describe('Gate NV-3 — digit-starting names are now allowed (free-form)', () => {
+  it('validateComponentName("123Card", []) returns {ok:true}', () => {
     requireNV(validateComponentName)
     const result = validateComponentName('123Card', [])
-    expect(result.ok).toBe(false)
-    expect((result as { error: string }).error).toBe('NOT_PASCAL_CASE')
+    expect(result.ok).toBe(true)
   })
 })
 
-describe('Gate NV-4 — RESERVED_WORD: React reserved names rejected', () => {
-  it('validateComponentName("Fragment", []) returns {ok:false, error:"RESERVED_WORD"}', () => {
+describe('Gate NV-4 — names containing spaces are now allowed (free-form)', () => {
+  it('validateComponentName("Hero Section", []) returns {ok:true}', () => {
     requireNV(validateComponentName)
-    const result = validateComponentName('Fragment', [])
-    expect(result.ok).toBe(false)
-    expect((result as { error: string }).error).toBe('RESERVED_WORD')
+    const result = validateComponentName('Hero Section', [])
+    expect(result.ok).toBe(true)
   })
 })
 
-describe('Gate NV-5 — BASE_MODULE_COLLISION: base module display names rejected', () => {
-  it('validateComponentName("Button", []) returns {ok:false, error:"BASE_MODULE_COLLISION"}', () => {
-    // "Button" is a canonical base module (Context #338)
+describe('Gate NV-5 — names matching a base module display name are now allowed (free-form)', () => {
+  it('validateComponentName("Button", []) returns {ok:true}', () => {
+    // Components are stored entities, not generated source files — sharing a
+    // name with a base module is harmless.
     requireNV(validateComponentName)
     const result = validateComponentName('Button', [])
-    expect(result.ok).toBe(false)
-    expect((result as { error: string }).error).toBe('BASE_MODULE_COLLISION')
+    expect(result.ok).toBe(true)
   })
 })
 
@@ -411,7 +408,7 @@ describe('Gate NV-6 — PROJECT_DUPLICATE: duplicate name in same site rejected'
   })
 })
 
-describe('Gate NV-7 — valid PascalCase name accepted', () => {
+describe('Gate NV-7 — basic name accepted', () => {
   it('validateComponentName("Card", []) returns {ok:true}', () => {
     requireNV(validateComponentName)
     const result = validateComponentName('Card', [])
@@ -419,10 +416,10 @@ describe('Gate NV-7 — valid PascalCase name accepted', () => {
   })
 })
 
-describe('Gate NV-8 — valid multi-word PascalCase accepted', () => {
-  it('validateComponentName("MyButton", []) returns {ok:true}', () => {
+describe('Gate NV-8 — multi-word name with spaces accepted', () => {
+  it('validateComponentName("My Button", []) returns {ok:true}', () => {
     requireNV(validateComponentName)
-    const result = validateComponentName('MyButton', [])
+    const result = validateComponentName('My Button', [])
     expect(result.ok).toBe(true)
   })
 })
@@ -637,13 +634,15 @@ describe('Gate SL-3 — createVisualComponent: throws on EMPTY name', () => {
   })
 })
 
-describe('Gate SL-4 — createVisualComponent: throws on NOT_PASCAL_CASE name', () => {
+describe('Gate SL-4 — createVisualComponent: free-form names accepted (no PascalCase requirement)', () => {
   beforeEach(() => { setupSite() })
 
-  it('createVisualComponent("myCard") throws VisualComponentNameError', () => {
+  it('createVisualComponent("my header section") does NOT throw', () => {
     requireSliceAction('createVisualComponent')
     const s = useEditorStore.getState() as Record<string, unknown>
-    expect(() => (s.createVisualComponent as (name: string) => string)('myCard')).toThrow()
+    expect(() => (s.createVisualComponent as (name: string) => string)('my header section')).not.toThrow()
+    const vcs = (useEditorStore.getState().site as unknown as { visualComponents: Array<{ name: string }> }).visualComponents
+    expect(vcs.some((vc) => vc.name === 'my header section')).toBe(true)
   })
 })
 
@@ -680,13 +679,24 @@ describe('Gate SL-6 — renameVisualComponent: updates name', () => {
 describe('Gate SL-7 — renameVisualComponent: throws on invalid new name', () => {
   beforeEach(() => { setupSite() })
 
-  it('renaming a VC to lowercase name throws', () => {
+  it('renaming a VC to an empty name throws', () => {
     requireSliceAction('createVisualComponent')
     requireSliceAction('renameVisualComponent')
     const s = useEditorStore.getState() as Record<string, unknown>
     const id = (s.createVisualComponent as (name: string) => string)('Card')
     expect(() =>
-      ((useEditorStore.getState() as Record<string, unknown>).renameVisualComponent as (id: string, name: string) => void)(id, 'card')
+      ((useEditorStore.getState() as Record<string, unknown>).renameVisualComponent as (id: string, name: string) => void)(id, '   ')
+    ).toThrow()
+  })
+
+  it('renaming a VC to a name already used by another VC throws', () => {
+    requireSliceAction('createVisualComponent')
+    requireSliceAction('renameVisualComponent')
+    const s = useEditorStore.getState() as Record<string, unknown>
+    ;(s.createVisualComponent as (name: string) => string)('Card')
+    const id = (useEditorStore.getState() as { createVisualComponent: (name: string) => string }).createVisualComponent('Other')
+    expect(() =>
+      ((useEditorStore.getState() as Record<string, unknown>).renameVisualComponent as (id: string, name: string) => void)(id, 'Card')
     ).toThrow()
   })
 })
@@ -841,13 +851,13 @@ describe('Gate VP-2 — valid VC passes through validateSite cleanly', () => {
   })
 })
 
-describe('Gate VP-3 — lenient: VC with invalid name is dropped', () => {
-  it('a VC with a lowercase name is silently dropped (lenient per-item)', () => {
-    const raw = rawSite({ visualComponents: [rawVC({ name: 'notPascal' })] })
+describe('Gate VP-3 — lenient: VC with invalid (empty) name is dropped', () => {
+  it('a VC with a whitespace-only name is silently dropped (lenient per-item)', () => {
+    const raw = rawSite({ visualComponents: [rawVC({ name: '   ' })] })
     const site = validateSite(raw) as SiteDocument & { visualComponents: Array<unknown> }
-    // Either an empty array or the bad entry is dropped — either way, no 'notPascal' vc
+    // Either an empty array or the bad entry is dropped — either way, no whitespace vc
     const hasInvalid = site.visualComponents?.some(
-      (vc) => (vc as { name: string }).name === 'notPascal'
+      (vc) => (vc as { name: string }).name.trim().length === 0
     ) ?? false
     expect(hasInvalid).toBe(false)
   })

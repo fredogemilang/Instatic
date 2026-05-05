@@ -26,6 +26,7 @@ import { useDroppable } from '@dnd-kit/core'
 import { useEditorStore, selectActiveCanvasPage, selectRightSidebarExpanded } from '@core/editor-store/store'
 import type { Breakpoint } from '@core/page-tree/schemas'
 import { registry } from '@core/module-engine/registry'
+import { getNodeDisplayName } from '@core/page-tree/nodeDisplayName'
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { useCanvas } from '../../hooks/useCanvas'
 import { CanvasTransformLayer } from './CanvasTransformLayer'
@@ -273,7 +274,7 @@ export function CanvasRoot() {
     if (!node) return
 
     const definition = registry.get(node.moduleId)
-    const currentName = node.label || definition?.name || node.moduleId
+    const currentName = getNodeDisplayName(node, definition, state.site?.visualComponents)
     const nextName = window.prompt('Rename element', currentName)?.trim()
     if (!nextName || nextName === currentName) return
 

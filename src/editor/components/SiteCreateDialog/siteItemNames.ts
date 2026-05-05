@@ -8,16 +8,6 @@ export function slugifySiteItemName(value: string, fallback = 'page') {
     .replace(/^-|-$/g, '') || fallback
 }
 
-export function toPascalCaseSiteItemName(value: string, fallback = 'Component') {
-  return value
-    .trim()
-    .replace(/[^a-zA-Z0-9]+/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join('') || fallback
-}
-
 function stripSitePrefix(value: string, prefix: string) {
   return value.trim().replace(new RegExp(`^${prefix.replace(/\//g, '\\/')}`), '')
 }

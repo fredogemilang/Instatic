@@ -172,8 +172,35 @@ describe('VCBreadcrumb — inline name editing', () => {
   // 5 — Invalid rename shows role="alert"
   // ---------------------------------------------------------------------------
 
-  it('shows role="alert" when invalid name is submitted (not PascalCase)', () => {
-    setupVCMode()
+  it('shows role="alert" when invalid name is submitted (duplicate name)', () => {
+    const { vcId } = setupVCMode()
+
+    // Add a second VC so we can trigger PROJECT_DUPLICATE on rename
+    act(() => {
+      useEditorStore.setState((s) => {
+        const site = s.site!
+        const otherVC = {
+          id: 'vc-other',
+          name: 'TakenName',
+          rootNode: { id: 'r', moduleId: 'base.body', props: {}, children: [], breakpointOverrides: {}, classIds: [] },
+          params: [],
+          breakpoints: [],
+          classIds: [],
+          createdAt: 1,
+        }
+        return {
+          site: {
+            ...site,
+            visualComponents: [
+              ...(site.visualComponents ?? []),
+              otherVC,
+            ],
+          },
+        } as Parameters<typeof useEditorStore.setState>[0]
+      })
+    })
+    expect(vcId).toBeDefined()
+
     render(<VCBreadcrumb />)
 
     act(() => {
@@ -183,17 +210,17 @@ describe('VCBreadcrumb — inline name editing', () => {
     const input = screen.getByTestId('vc-breadcrumb-name-input') as HTMLInputElement
 
     act(() => {
-      fireEvent.change(input, { target: { value: 'notPascalCase' } })
+      fireEvent.change(input, { target: { value: 'TakenName' } })
       fireEvent.blur(input)
     })
 
     const alert = screen.getByRole('alert')
     expect(alert).toBeDefined()
-    expect(alert.textContent).toContain('PascalCase')
+    expect(alert.textContent).toContain('TakenName')
   })
 
-  it('keeps the input mounted after invalid rename', () => {
-    setupVCMode()
+  it('accepts a name with spaces (free-form)', () => {
+    const { vcId } = setupVCMode()
     render(<VCBreadcrumb />)
 
     act(() => {
@@ -203,12 +230,14 @@ describe('VCBreadcrumb — inline name editing', () => {
     const input = screen.getByTestId('vc-breadcrumb-name-input') as HTMLInputElement
 
     act(() => {
-      fireEvent.change(input, { target: { value: 'invalid name with spaces' } })
+      fireEvent.change(input, { target: { value: 'Hero Section' } })
       fireEvent.blur(input)
     })
 
-    // Input should still be in the DOM (user can correct the name)
-    expect(screen.getByTestId('vc-breadcrumb-name-input')).toBeDefined()
+    // Spaces are valid → rename committed and input dismissed
+    expect(screen.queryByTestId('vc-breadcrumb-name-input')).toBeNull()
+    const vc = useEditorStore.getState().site!.visualComponents!.find((v) => v.id === vcId)
+    expect(vc?.name).toBe('Hero Section')
   })
 
   // ---------------------------------------------------------------------------

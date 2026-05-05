@@ -99,16 +99,16 @@ describe('validateSite — round-trip with representative fixture', () => {
 // ---------------------------------------------------------------------------
 
 describe('validateSite — negative: bad VC name is silently dropped (rule 4)', () => {
-  it('VC with non-PascalCase name is dropped; valid VCs survive', () => {
+  it('VC with empty name is dropped; valid VCs survive', () => {
     const raw = loadFixture() as Record<string, unknown>
     const fixture = raw as { visualComponents: Array<Record<string, unknown>> }
-    // Prepend an invalid VC (lowercase name) before the valid one
+    // Prepend an invalid VC (whitespace-only name) before the valid one
     fixture.visualComponents = [
-      { id: 'vc-bad', name: 'notPascalCase', rootNode: { id: 'n', moduleId: 'base.text', props: {}, breakpointOverrides: {}, children: [], classIds: [] }, params: [], breakpoints: [], classIds: [], createdAt: 1700000000000 },
+      { id: 'vc-bad', name: '   ', rootNode: { id: 'n', moduleId: 'base.text', props: {}, breakpointOverrides: {}, children: [], classIds: [] }, params: [], breakpoints: [], classIds: [], createdAt: 1700000000000 },
       ...fixture.visualComponents,
     ]
     const result = validateSite(raw)
-    expect(result.visualComponents.some((vc) => vc.name === 'notPascalCase')).toBe(false)
+    expect(result.visualComponents.some((vc) => vc.name.trim().length === 0)).toBe(false)
     expect(result.visualComponents.some((vc) => vc.name === 'MyCard')).toBe(true)
   })
 })
@@ -123,7 +123,7 @@ describe('validateSite — negative: duplicate page slug throws (rules 1–2)', 
       title: 'Duplicate Home',
       rootNodeId: 'root-dup',
       nodes: {
-        'root-dup': { id: 'root-dup', moduleId: 'base.root', props: {}, breakpointOverrides: {}, children: [], classIds: [] },
+        'root-dup': { id: 'root-dup', moduleId: 'base.body', props: {}, breakpointOverrides: {}, children: [], classIds: [] },
       },
     })
     expect(() => validateSite(raw)).toThrow(SiteValidationError)

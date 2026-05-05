@@ -21,7 +21,6 @@ import {
   buildScriptPath,
   buildStylePath,
   slugifySiteItemName,
-  toPascalCaseSiteItemName,
   type SiteCreatePayload,
   type SiteCreateKind,
 } from '../SiteCreateDialog'
@@ -132,7 +131,7 @@ export function SiteExplorerPanel({
         const page = addPage(name, slug ?? slugifySiteItemName(name))
         openPageInCanvas(page.id)
       } else if (createKind === 'component') {
-        const vcId = createVisualComponent(toPascalCaseSiteItemName(name))
+        const vcId = createVisualComponent(name)
         setActiveDocument({ kind: 'visualComponent', vcId })
       } else if (createKind === 'style') {
         const fileId = createFile(buildStylePath(name), 'style', '')
@@ -176,7 +175,7 @@ export function SiteExplorerPanel({
     if (renameTarget.kind === 'page') {
       renamePage(renameTarget.id, payload.value, payload.slug)
     } else if (renameTarget.kind === 'component') {
-      renameVisualComponent(renameTarget.id, toPascalCaseSiteItemName(payload.value))
+      renameVisualComponent(renameTarget.id, payload.value)
     } else {
       renameFile(renameTarget.id, pathFromRenameInput(renameTarget.path, payload.value))
     }

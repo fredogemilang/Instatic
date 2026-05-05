@@ -2,7 +2,7 @@
  * ParamRow — component tests
  *
  * Tests:
- *   PR-1  default-edit: renaming to invalid name shows role="alert" and does NOT call onParamRename
+ *   PR-1  default-edit: renaming to a duplicate name shows role="alert" and does NOT call onParamRename
  *   PR-2  enum: renders a <Select> with the correct options
  *   PR-3  slot: does NOT render a value control
  *   PR-4  advanced disclosure: toggles required and description fields
@@ -23,7 +23,7 @@ afterEach(cleanup)
 // ---------------------------------------------------------------------------
 
 describe('Gate PR-1 — invalid rename shows alert, blocks onParamRename', () => {
-  it('shows a role="alert" error and does not call onParamRename for non-camelCase name', () => {
+  it('shows a role="alert" error and does not call onParamRename for a duplicate name', () => {
     const onParamRename = { fn: (_: string) => {} }
     let renameCalled = false
     onParamRename.fn = () => { renameCalled = true }
@@ -37,14 +37,17 @@ describe('Gate PR-1 — invalid rename shows alert, blocks onParamRename', () =>
         value="Hello"
         onValueChange={() => {}}
         onParamRename={onParamRename.fn}
-        existingParams={[{ id: 'p-1', name: 'title' }]}
+        existingParams={[
+          { id: 'p-1', name: 'title' },
+          { id: 'p-2', name: 'subtitle' },
+        ]}
       />
     )
 
     const input = screen.getByRole('textbox', { name: /parameter name/i })
 
-    // Type an invalid name (starts with uppercase — not camelCase)
-    fireEvent.change(input, { target: { value: 'NotCamelCase' } })
+    // Type a name that collides with another param on the same VC
+    fireEvent.change(input, { target: { value: 'subtitle' } })
 
     // Error alert should appear
     expect(screen.getByRole('alert')).toBeDefined()
@@ -56,7 +59,7 @@ describe('Gate PR-1 — invalid rename shows alert, blocks onParamRename', () =>
     expect(renameCalled).toBe(false)
   })
 
-  it('calls onParamRename with the new name when valid camelCase is committed', () => {
+  it('calls onParamRename with the new name when a free-form name is committed', () => {
     let renamedTo = ''
 
     render(
@@ -73,14 +76,14 @@ describe('Gate PR-1 — invalid rename shows alert, blocks onParamRename', () =>
     )
 
     const input = screen.getByRole('textbox', { name: /parameter name/i })
-    fireEvent.change(input, { target: { value: 'headline' } })
+    fireEvent.change(input, { target: { value: 'Page headline' } })
 
-    // No error for valid camelCase
+    // No error for free-form name
     expect(screen.queryByRole('alert')).toBeNull()
 
     // Commit via blur
     fireEvent.blur(input)
-    expect(renamedTo).toBe('headline')
+    expect(renamedTo).toBe('Page headline')
   })
 })
 

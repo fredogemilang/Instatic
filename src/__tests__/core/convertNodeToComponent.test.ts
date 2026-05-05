@@ -10,9 +10,9 @@
  *   CNC-3 — activeDocument switches to new VC; selectedNodeId cleared
  *   CNC-4 — node-scoped classes hoisted into VC.classIds with scope.nodeId rewritten
  *   CNC-5 — generic site classes stay shared, NOT duplicated
- *   CNC-6 — throws VisualComponentNameError on invalid PascalCase name
+ *   CNC-6 — throws VisualComponentNameError on invalid name
  *   CNC-7 — throws plain Error when called on base.visual-component-ref
- *   CNC-8 — throws plain Error when called on base.root
+ *   CNC-8 — throws plain Error when called on base.body
  *   CNC-9 — site.updatedAt advances on success; no-op on failure
  *   CNC-A — succeeds when activeDocument is null (default page canvas state)
  *   CNC-B — throws when activeDocument is a VC (cannot convert from inside a VC)
@@ -344,7 +344,7 @@ describe('Gate CNC-5 — generic classes stay shared, not duplicated', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Gate CNC-6 — throws VisualComponentNameError on invalid PascalCase name
+// Gate CNC-6 — throws VisualComponentNameError on invalid name
 // ---------------------------------------------------------------------------
 
 describe('Gate CNC-6 — throws VisualComponentNameError on invalid name', () => {
@@ -357,13 +357,17 @@ describe('Gate CNC-6 — throws VisualComponentNameError on invalid name', () =>
     injectNodesIntoPage(containerId, [container])
     activatePage()
 
+    // Seed an existing VC so we can trigger PROJECT_DUPLICATE on convert.
+    callAction<string>('createVisualComponent', 'Header')
+
     const beforeVCCount = getSite().visualComponents.length
     const pageNodeCountBefore = Object.keys(getPage().nodes).length
 
     let threw = false
     let thrownError: unknown
     try {
-      callAction<string>('convertNodeToComponent', containerId, 'lowercaseName')
+      // Duplicate name → VisualComponentNameError (PROJECT_DUPLICATE)
+      callAction<string>('convertNodeToComponent', containerId, 'Header')
     } catch (err) {
       threw = true
       thrownError = err
@@ -405,13 +409,13 @@ describe('Gate CNC-7 — throws plain Error on base.visual-component-ref', () =>
 })
 
 // ---------------------------------------------------------------------------
-// Gate CNC-8 — throws plain Error when called on base.root
+// Gate CNC-8 — throws plain Error when called on base.body
 // ---------------------------------------------------------------------------
 
-describe('Gate CNC-8 — throws plain Error on base.root', () => {
+describe('Gate CNC-8 — throws plain Error on base.body', () => {
   beforeEach(() => { setupSite() })
 
-  it('throws when nodeId is the page rootNodeId (base.root)', () => {
+  it('throws when nodeId is the page rootNodeId (base.body)', () => {
     activatePage()
     const page = getPage()
 
@@ -447,10 +451,11 @@ describe('Gate CNC-9 — site.updatedAt advances on success; no-op on failure', 
     injectNodesIntoPage(containerId, [container])
     activatePage()
 
+    // Empty / whitespace-only names are still rejected — exercise that path.
     const before = getSite().updatedAt
 
     try {
-      callAction<string>('convertNodeToComponent', containerId, 'badName')
+      callAction<string>('convertNodeToComponent', containerId, '   ')
     } catch {
       // expected
     }

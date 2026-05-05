@@ -331,11 +331,11 @@ describe('Gate PB-7 — renameParam stability invariant', () => {
 describe('Gate PB-8 — renameParam throws on invalid name', () => {
   beforeEach(() => { setupSite() })
 
-  it('throws VisualComponentParamNameError when renaming to non-camelCase', () => {
+  it('throws VisualComponentParamNameError when renaming to an empty name', () => {
     const vcId = createVC('Card')
     const paramId = addParam(vcId, 'title', 'string')
 
-    expect(() => callAction<void>('renameParam', vcId, paramId, 'NotCamelCase')).toThrow()
+    expect(() => callAction<void>('renameParam', vcId, paramId, '   ')).toThrow()
   })
 
   it('throws VisualComponentParamNameError when renaming to a duplicate name', () => {

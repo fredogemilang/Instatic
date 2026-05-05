@@ -74,7 +74,7 @@ export function ConvertToComponentButton({ nodeId }: ConvertToComponentButtonPro
           ref={inputRef}
           fieldSize="sm"
           defaultValue=""
-          placeholder="ComponentName"
+          placeholder="Component name"
           autoFocus
           aria-label="Component name"
           invalid={!!error}

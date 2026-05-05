@@ -36,7 +36,7 @@ export type ParamRowMode = 'default-edit' | 'override-edit' | 'plain'
 
 export interface ParamRowProps {
   mode: ParamRowMode
-  /** camelCase param name */
+  /** Free-form param name (uniqueness validated at the slice boundary) */
   paramName: string
   paramType: VCParamType
   /** Stable param id — used for testid and rename self-exclusion */

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import type { DragCancelEvent, DragEndEvent, DragMoveEvent, DragStartEvent } from '@dnd-kit/core'
 import type { Page } from '@core/page-tree/schemas'
 import { registry } from '@core/module-engine/registry'
+import { getNodeDisplayName } from '@core/page-tree/nodeDisplayName'
+import { useEditorStore } from '@core/editor-store/store'
 import {
   findDomDropRow,
   getDomDropZone,
@@ -222,8 +224,9 @@ export function useDomPanelDnd({
     setActiveId(draggedId)
 
     const def = registry.get(node.moduleId)
+    const visualComponents = useEditorStore.getState().site?.visualComponents
     setDragPreview({
-      label: node.label || def?.name || node.moduleId,
+      label: getNodeDisplayName(node, def, visualComponents),
       moduleId: node.moduleId,
     })
   }, [measureRows, page])

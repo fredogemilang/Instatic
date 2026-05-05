@@ -40,7 +40,7 @@ function makeVisualComponent(name: string): VisualComponent {
     name,
     rootNode: {
       id: `root-${name}`,
-      moduleId: 'base.root',
+      moduleId: 'base.body',
       props: {},
       children: [],
       breakpointOverrides: {},
@@ -62,7 +62,7 @@ function loadSite() {
     slug: 'index',
     rootNodeId: 'root-home',
     nodes: {
-      'root-home': makeNode({ id: 'root-home', moduleId: 'base.root' }),
+      'root-home': makeNode({ id: 'root-home', moduleId: 'base.body' }),
     },
   })
   const pricing = makePage({
@@ -71,7 +71,7 @@ function loadSite() {
     slug: 'pricing',
     rootNodeId: 'root-pricing',
     nodes: {
-      'root-pricing': makeNode({ id: 'root-pricing', moduleId: 'base.root' }),
+      'root-pricing': makeNode({ id: 'root-pricing', moduleId: 'base.body' }),
     },
   })
 
@@ -543,7 +543,8 @@ describe('SiteExplorerPanel', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }))
 
     const state = useEditorStore.getState()
-    const created = state.site?.visualComponents.find((component) => component.name === 'FeatureRow')
+    // Component names are stored verbatim (free-form, no PascalCase coercion).
+    const created = state.site?.visualComponents.find((component) => component.name === 'feature row')
     expect(created).toBeDefined()
     expect(state.activeDocument).toEqual({
       kind: 'visualComponent',
@@ -630,9 +631,10 @@ describe('SiteExplorerPanel', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     let component = useEditorStore.getState().site?.visualComponents.find((item) => item.id === 'vc-HeroCard')
-    expect(component?.name).toBe('PromoCard')
+    // Component names are stored verbatim (free-form, no PascalCase coercion).
+    expect(component?.name).toBe('Promo card')
 
-    fireEvent.contextMenu(screen.getByRole('button', { name: /open component promocard/i }), {
+    fireEvent.contextMenu(screen.getByRole('button', { name: /open component promo card/i }), {
       clientX: 120,
       clientY: 180,
     })

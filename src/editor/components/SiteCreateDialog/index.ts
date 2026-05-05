@@ -4,5 +4,4 @@ export {
   buildScriptPath,
   buildStylePath,
   slugifySiteItemName,
-  toPascalCaseSiteItemName,
 } from './siteItemNames'

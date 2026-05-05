@@ -24,6 +24,7 @@ import { memo, useCallback, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEditorStore, selectActiveCanvasPage } from '@core/editor-store/store'
 import { registry } from '@core/module-engine/registry'
+import { getNodeDisplayName } from '@core/page-tree/nodeDisplayName'
 import { useDraggable } from '@dnd-kit/core'
 import { useDomTree } from './DomTreeContext'
 import { useDomPanelDndContext } from './DomPanelDndContext'
@@ -60,6 +61,9 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth }: TreeNodeProps)
   const isSelected = useEditorStore(useCallback((s) => s.selectedNodeId === nodeId, [nodeId]))
   const isHovered = useEditorStore(useCallback((s) => s.hoveredNodeId === nodeId, [nodeId]))
   const isRoot = useEditorStore(useCallback((s) => selectActiveCanvasPage(s)?.rootNodeId === nodeId, [nodeId]))
+  // Subscribe to visualComponents so VC renames re-render every ref's tree row
+  // (the VC name is part of the resolved displayName for visual-component-ref nodes).
+  const visualComponents = useEditorStore((s) => s.site?.visualComponents)
 
   const selectNode = useEditorStore((s) => s.selectNode)
   const hoverNode = useEditorStore((s) => s.hoverNode)
@@ -104,7 +108,7 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth }: TreeNodeProps)
   if (!node) return null
 
   const definition = registry.get(node.moduleId)
-  const displayName = node.label || definition?.name || node.moduleId
+  const displayName = getNodeDisplayName(node, definition, visualComponents)
   const hasChildren = node.children.length > 0
   // The page body is the root of the page tree — the only top-level row, so
   // collapsing it would just hide the entire document. Force it open and hide

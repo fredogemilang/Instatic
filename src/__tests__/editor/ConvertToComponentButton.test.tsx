@@ -4,7 +4,7 @@
  * CTB-1  Idle state: "Componentize" button is rendered
  * CTB-2  Click → transitions to editing state (input + Create + Cancel)
  * CTB-3  Submit invalid name → role="alert" rendered, no VC created
- * CTB-4  Submit valid PascalCase name → activeDocument switches to new VC
+ * CTB-4  Submit valid name → activeDocument switches to new VC
  * CTB-5  Escape key → cancels back to idle
  * CTB-6  Cancel button → cancels back to idle
  *
@@ -56,7 +56,7 @@ beforeEach(resetStore)
 function setupPageWithNode(): { nodeId: string; rootId: string } {
   const rootId = 'root-1'
   const nodeId = 'text-1'
-  const rootNode = makeNode({ id: rootId, moduleId: 'base.root', children: [nodeId] })
+  const rootNode = makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] })
   const textNode = makeNode({ id: nodeId, moduleId: 'base.text', props: { text: 'Hello' }, children: [] })
   const page = makePage({
     id: 'page-1',
@@ -117,24 +117,36 @@ describe('CTB-2 — click transitions to editing state', () => {
 // ---------------------------------------------------------------------------
 
 describe('CTB-3 — invalid name shows alert and does not create a VC', () => {
-  it('typing a lowercase name and pressing Enter shows a validation alert', () => {
-    // Site must be non-null for the name validation to run (site !== null guard)
-    const site = makeSite({ visualComponents: [] })
-    useEditorStore.setState({ site } as Parameters<typeof useEditorStore.setState>[0])
+  it('typing a duplicate name and pressing Enter shows a validation alert', () => {
+    // Seed a page with a node AND a pre-existing VC named "Taken" so the
+    // duplicate-name validation triggers PROJECT_DUPLICATE.
+    const { nodeId } = setupPageWithNode()
+    const existingVc = {
+      id: 'vc-existing',
+      name: 'Taken',
+      rootNode: { id: 'r', moduleId: 'base.body', props: {}, children: [], breakpointOverrides: {}, classIds: [] },
+      params: [],
+      breakpoints: [],
+      classIds: [],
+      createdAt: 1,
+    }
+    useEditorStore.setState((s) => ({
+      site: { ...s.site!, visualComponents: [existingVc] },
+    }) as Parameters<typeof useEditorStore.setState>[0])
 
-    render(<ConvertToComponentButton nodeId="any-node" />)
+    render(<ConvertToComponentButton nodeId={nodeId} />)
 
     // Enter editing state
     fireEvent.click(screen.getByRole('button', { name: /componentize/i }))
 
     const input = screen.getByRole('textbox', { name: /component name/i }) as HTMLInputElement
-    fireEvent.change(input, { target: { value: 'lowercase' } })
+    fireEvent.change(input, { target: { value: 'Taken' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
     // Error alert must appear
     expect(screen.getByRole('alert')).toBeDefined()
-    // No VC should have been created
-    expect(useEditorStore.getState().site!.visualComponents).toHaveLength(0)
+    // No new VC should have been created (the seeded one remains)
+    expect(useEditorStore.getState().site!.visualComponents).toHaveLength(1)
   })
 
   it('clicking Create with an empty name is a no-op (no alert, no VC)', () => {
@@ -154,11 +166,11 @@ describe('CTB-3 — invalid name shows alert and does not create a VC', () => {
 })
 
 // ---------------------------------------------------------------------------
-// CTB-4 — valid PascalCase name → activeDocument switches to new VC
+// CTB-4 — valid name → activeDocument switches to new VC
 // ---------------------------------------------------------------------------
 
 describe('CTB-4 — valid name converts node and switches to VC canvas', () => {
-  it('pressing Enter with a valid PascalCase name creates a VC and switches activeDocument', () => {
+  it('pressing Enter with a valid name creates a VC and switches activeDocument', () => {
     const { nodeId } = setupPageWithNode()
 
     render(<ConvertToComponentButton nodeId={nodeId} />)
@@ -213,15 +225,28 @@ describe('CTB-5 — Escape key cancels back to idle', () => {
   })
 
   it('Escape also clears any inline validation error', () => {
-    const site = makeSite({ visualComponents: [] })
-    useEditorStore.setState({ site } as Parameters<typeof useEditorStore.setState>[0])
+    // Seed a page-with-node site that already has a VC named "Taken" so
+    // typing "Taken" triggers PROJECT_DUPLICATE.
+    const { nodeId } = setupPageWithNode()
+    const existingVc = {
+      id: 'vc-existing',
+      name: 'Taken',
+      rootNode: { id: 'r', moduleId: 'base.body', props: {}, children: [], breakpointOverrides: {}, classIds: [] },
+      params: [],
+      breakpoints: [],
+      classIds: [],
+      createdAt: 1,
+    }
+    useEditorStore.setState((s) => ({
+      site: { ...s.site!, visualComponents: [existingVc] },
+    }) as Parameters<typeof useEditorStore.setState>[0])
 
-    render(<ConvertToComponentButton nodeId="any-node" />)
+    render(<ConvertToComponentButton nodeId={nodeId} />)
 
     // Produce a validation error first
     fireEvent.click(screen.getByRole('button', { name: /componentize/i }))
     const input = screen.getByRole('textbox', { name: /component name/i })
-    fireEvent.change(input, { target: { value: 'bad' } })
+    fireEvent.change(input, { target: { value: 'Taken' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(screen.getByRole('alert')).toBeDefined()
 
@@ -250,15 +275,26 @@ describe('CTB-6 — Cancel button returns to idle', () => {
   })
 
   it('Cancel also clears a validation error', () => {
-    const site = makeSite({ visualComponents: [] })
-    useEditorStore.setState({ site } as Parameters<typeof useEditorStore.setState>[0])
+    const { nodeId } = setupPageWithNode()
+    const existingVc = {
+      id: 'vc-existing',
+      name: 'Taken',
+      rootNode: { id: 'r', moduleId: 'base.body', props: {}, children: [], breakpointOverrides: {}, classIds: [] },
+      params: [],
+      breakpoints: [],
+      classIds: [],
+      createdAt: 1,
+    }
+    useEditorStore.setState((s) => ({
+      site: { ...s.site!, visualComponents: [existingVc] },
+    }) as Parameters<typeof useEditorStore.setState>[0])
 
-    render(<ConvertToComponentButton nodeId="any-node" />)
+    render(<ConvertToComponentButton nodeId={nodeId} />)
 
     // Produce a validation error
     fireEvent.click(screen.getByRole('button', { name: /componentize/i }))
     const input = screen.getByRole('textbox', { name: /component name/i })
-    fireEvent.change(input, { target: { value: 'bad' } })
+    fireEvent.change(input, { target: { value: 'Taken' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(screen.getByRole('alert')).toBeDefined()
 
