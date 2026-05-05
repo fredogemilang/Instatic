@@ -2,6 +2,7 @@ import {
   forwardRef,
   useRef,
   type InputHTMLAttributes,
+  type ReactNode,
   type TextareaHTMLAttributes,
 } from 'react'
 import { cn } from '@ui/cn'
@@ -18,11 +19,26 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   monospace?: boolean
   emphasis?: TextEmphasis
   /**
+   * Optional prefix displayed inside the input on the leading edge
+   * (e.g. "--", "$", "@"). Renders to the left of the value, inside
+   * the same border so it reads as part of the field.
+   */
+  prefix?: string
+  /**
    * Optional unit displayed inside the input on the trailing edge
    * (e.g. "px", "rem", "%"). Renders to the right of the value, inside
    * the same border so it reads as part of the field.
    */
   unit?: string
+  /**
+   * Optional arbitrary trailing-slot content rendered inside the field on
+   * the trailing edge (after `unit`, before the number-spinner column).
+   * Use for affordances that belong *inside* the field's border — e.g. a
+   * submit-affordance enter-key icon for search/picker inputs. The slot is
+   * mutually compatible with `prefix` and `unit`. Mutually exclusive with
+   * `numberSpinner` (the slot is suppressed for number inputs).
+   */
+  trailingSlot?: ReactNode
   /**
    * When true (default for `type="number"`), the native browser spinner is
    * hidden and a pair of compact `▲ / ▼` buttons is rendered inside the
@@ -50,7 +66,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     fieldSize = 'md',
     monospace = false,
     emphasis = 'default',
+    prefix,
     unit,
+    trailingSlot,
     numberSpinner,
     type,
     ...props
@@ -60,7 +78,10 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   const isNumber = type === 'number'
   // Only number inputs get the spinner. Default on for number, off otherwise.
   const showSpinner = isNumber && (numberSpinner ?? true)
-  const hasAffix = Boolean(unit) || showSpinner
+  // The trailing slot is suppressed for number inputs so it cannot collide
+  // with the spinner column (number inputs own that real estate).
+  const showTrailingSlot = !isNumber && trailingSlot != null
+  const hasAffix = Boolean(prefix) || Boolean(unit) || showSpinner || showTrailingSlot
 
   const localRef = useRef<HTMLInputElement | null>(null)
   const setRef = (node: HTMLInputElement | null) => {
@@ -111,8 +132,12 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       )}
       data-disabled={props.disabled ? 'true' : undefined}
     >
+      {prefix && <span className={styles.prefix} aria-hidden="true">{prefix}</span>}
       {inputElement}
       {unit && <span className={styles.unit} aria-hidden="true">{unit}</span>}
+      {showTrailingSlot && (
+        <span className={styles.trailingSlot}>{trailingSlot}</span>
+      )}
       {showSpinner && (
         <span className={styles.spinner} aria-hidden="true">
           <button

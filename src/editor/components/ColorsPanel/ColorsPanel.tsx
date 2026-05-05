@@ -1,5 +1,7 @@
 import {
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type FocusEvent,
@@ -569,6 +571,7 @@ function ColorTokenEditor({
           fieldSize="sm"
           value={slug}
           aria-label="Token name"
+          prefix="--"
           onChange={(event) => setSlug(event.target.value)}
           onBlur={() => {
             const nextSlug = normalizeFrameworkColorSlug(slug);
@@ -981,7 +984,12 @@ function CreateColorDialog({
   const [name, setName] = useState("");
   const [category, setCategory] = useState(defaultCategory);
   const [lightValue, setLightValue] = useState("hsla(238, 100%, 62%, 1)");
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const canSubmit = Boolean(name.trim() && lightValue.trim());
+
+  useEffect(() => {
+    requestAnimationFrame(() => nameInputRef.current?.focus());
+  }, []);
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -1021,12 +1029,14 @@ function CreateColorDialog({
           <label className={dialogStyles.field}>
             <span className={dialogStyles.label}>Token name</span>
             <Input
+              ref={nameInputRef}
               fieldSize="sm"
               value={name}
               onChange={(event) => setName(event.target.value)}
               aria-label="Token name"
               autoComplete="off"
               spellCheck={false}
+              prefix="--"
             />
           </label>
           <CategoryComboBox

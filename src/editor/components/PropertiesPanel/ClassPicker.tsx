@@ -46,6 +46,7 @@ import { Input } from '@ui/components/Input'
 import { ChevronUpIcon } from 'pixel-art-icons/icons/chevron-up'
 import { ChevronDownIcon } from 'pixel-art-icons/icons/chevron-down'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
+import { CornerDownLeftIcon } from 'pixel-art-icons/icons/corner-down-left'
 import { EditIcon } from 'pixel-art-icons/icons/edit'
 import { cn } from '@ui/cn'
 import {
@@ -160,6 +161,12 @@ function ClassPickerInner({ nodeId, trailingAction }: ClassPickerProps, ref) {
     query.trim().length > 0 &&
     !allClasses.some((c) => c.name === query.trim())
 
+  // Whether the input has actionable content. Mirrors the Enter-key
+  // behaviour below — either a brand-new class name (creates) or at least
+  // one matched suggestion (adds the first one). When false, pressing
+  // Enter or clicking the trailing enter icon is a no-op.
+  const hasSubmittableQuery = canCreateNew || (query.length > 0 && Boolean(suggestions[0]))
+
   const openSuggestions = useCallback(() => {
     setShowSuggestions(true)
   }, [])
@@ -167,11 +174,12 @@ function ClassPickerInner({ nodeId, trailingAction }: ClassPickerProps, ref) {
   const handleAddExisting = useCallback(
     (classId: string) => {
       addNodeClass(nodeId, classId)
+      setActiveClass(classId)
       clearPreviewNodeClass(nodeId, classId)
       setQuery('')
       setShowSuggestions(false)
     },
-    [nodeId, addNodeClass, clearPreviewNodeClass],
+    [nodeId, addNodeClass, setActiveClass, clearPreviewNodeClass],
   )
 
   const handleCreateAndAdd = useCallback(() => {
@@ -188,6 +196,14 @@ function ClassPickerInner({ nodeId, trailingAction }: ClassPickerProps, ref) {
       // Class with this name already exists
     }
   }, [query, createClass, addNodeClass, nodeId, setActiveClass, clearPreviewNodeClass])
+
+  // Shared submit logic for both the Enter key and the trailing enter-icon
+  // button. Either creates a brand-new class with the typed name, or adds
+  // the first matched suggestion if one exists.
+  const submitQuery = useCallback(() => {
+    if (canCreateNew) handleCreateAndAdd()
+    else if (suggestions[0]) handleAddExisting(suggestions[0].id)
+  }, [canCreateNew, suggestions, handleCreateAndAdd, handleAddExisting])
 
   const previewClass = useCallback(
     (classId: string) => {

@@ -137,6 +137,22 @@
     border: 0;
 }
 
+/* Prefix label — `--`, `$`, `@` etc. Inside the leading edge of
+ * the wrapper, vertically centered with the input value. We pad the left
+ * edge here and zero out the input's left padding (via `.inputWithAffix`)
+ * so the prefix sits flush against the value with no double-padding. */
+.prefix {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 0 0 0 6px;
+    color: var(--editor-text-muted);
+    font-size: inherit;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    user-select: none;
+}
+
 /* Unit suffix label — `px`, `rem`, `%` etc. Inside the trailing edge of
  * the wrapper, vertically centered with the input value. The input itself
  * owns its right-padding so the value already has breathing room before
@@ -152,6 +168,21 @@
     font-variant-numeric: tabular-nums;
     pointer-events: none;
     user-select: none;
+}
+
+/* Generic trailing slot — caller-provided affordance rendered inside the
+ * trailing edge of the wrapper (e.g. an enter-key submit icon button on a
+ * picker input). Stays vertically centered and inherits muted text color
+ * so plain icons read consistently with prefix / unit. The slot itself is
+ * a wrapper, not a control — it still allows pointer events on its
+ * children so embedded buttons remain clickable. */
+.trailingSlot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    padding: 0 4px 0 0;
+    color: var(--editor-text-muted);
 }
 
 /* Custom number-input spinner — replaces the browser-default ugly arrows
