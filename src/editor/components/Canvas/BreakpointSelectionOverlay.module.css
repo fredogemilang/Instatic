@@ -1,0 +1,43 @@
+/**
+ * BreakpointSelectionOverlay — selection / hover rings for the canvas.
+ *
+ * Lives inside the breakpoint viewport (which is `position: relative`) so the
+ * absolutely-positioned ring divs are placed in the viewport's coordinate
+ * system. `pointer-events: none` keeps the overlay click-through so clicks
+ * still reach the rendered module elements underneath.
+ *
+ * Ring tokens come from globals.css (`--canvas-selection-ring`,
+ * `--canvas-hover-ring`) — same tokens used by the previous in-wrapper
+ * `::after` rings, so the visual identity is preserved.
+ */
+
+.overlayLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Stack above any module content. The previous in-wrapper ring used the
+   * maximum 32-bit z-index for the same reason — modules are arbitrary HTML
+   * and can produce their own stacking contexts. */
+  z-index: 2147483647;
+}
+
+.ring {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  border-radius: 1px;
+  /* No transition: the RAF loop in BreakpointSelectionOverlay.tsx repositions
+   * the ring every animation frame from a fresh getBoundingClientRect(), so
+   * real-time movement (resize while typing, drag, scroll) is already smooth.
+   * A CSS transition on transform/width/height would (a) animate the ring in
+   * from (0,0) on first appearance and (b) slide it between sibling elements
+   * when the user hovers from one to the next, both of which feel wrong. */
+}
+
+.selection {
+  box-shadow: var(--canvas-selection-ring);
+}
+
+.hover {
+  box-shadow: var(--canvas-hover-ring);
+}

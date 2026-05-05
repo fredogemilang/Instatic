@@ -455,11 +455,111 @@ describe('publishPage', () => {
     expect(count).toBe(1) // deduplicated — not 3
   })
 
-  it('injects design tokens as :root CSS custom properties', () => {
+  it('does not emit ghost design tokens on a fresh project', () => {
+    // A brand-new project has no framework Color tokens, no framework
+    // typography, no framework spacing, and no fonts. The published
+    // `framework.css` body must therefore be empty — no `:root {}` block,
+    // no leftover `--color-*` declarations from any legacy default. The
+    // legacy `site.settings.colorTokens` field has been removed entirely;
+    // all color tokens now flow through `framework.colors` (managed by
+    // the editor's Colors panel).
     const page = makePage({ root: { moduleId: 'base.text', props: { text: 'Hi' } } })
     const { html } = publishPage(page, site, registry)
-    expect(html).toContain(':root {')
-    expect(html).toContain('--color-primary')
+    expect(html).not.toContain('--color-primary')
+    expect(html).not.toContain('--color-secondary')
+    expect(html).not.toContain('--color-accent')
+    expect(html).not.toContain('--color-surface')
+    expect(html).not.toContain('--color-on-surface')
+  })
+
+  it('ships the publisher reset before module CSS so canvas and front end agree', () => {
+    const page = makePage({ root: { moduleId: 'base.text', props: { text: 'Hi' } } })
+    const { html } = publishPage(page, site, registry)
+    // Reset rules — verify both core box-model and body baseline reach the page.
+    expect(html).toContain(':where(*, *::before, *::after) { box-sizing: border-box; }')
+    expect(html).toContain(':where(*) { margin: 0; padding: 0; }')
+    expect(html).toContain('font-family: system-ui')
+    // Cascade order: reset must appear before module CSS so module rules win.
+    const resetIndex = html.indexOf(':where(*, *::before, *::after)')
+    const moduleIndex = html.indexOf('h1 { color: black; }')
+    expect(resetIndex).toBeGreaterThan(-1)
+    expect(moduleIndex).toBeGreaterThan(resetIndex)
+  })
+
+  // ─── External CSS mode (per-site bundle served at /_pb/css/) ──────────────
+
+  it('emits three <link> tags pointing at the site bundle in external mode', () => {
+    const page = makePage({ root: { moduleId: 'base.text', props: { text: 'Hi' } } })
+    const cssBundle = {
+      reset: { bundle: 'reset' as const, filename: 'reset-aaaaaaaaaaaa.css', hash: 'aaaaaaaaaaaa', content: ':where(*) { margin: 0; }' },
+      framework: { bundle: 'framework' as const, filename: 'framework-bbbbbbbbbbbb.css', hash: 'bbbbbbbbbbbb', content: ':root { --x: 1; }' },
+      style: { bundle: 'style' as const, filename: 'style-cccccccccccc.css', hash: 'cccccccccccc', content: '.foo { color: red; }' },
+    }
+    const { html } = publishPage(page, site, registry, {
+      cssEmission: 'external',
+      cssBundle,
+    })
+
+    expect(html).toContain('<link rel="stylesheet" href="/_pb/css/reset-aaaaaaaaaaaa.css">')
+    expect(html).toContain('<link rel="stylesheet" href="/_pb/css/framework-bbbbbbbbbbbb.css">')
+    expect(html).toContain('<link rel="stylesheet" href="/_pb/css/style-cccccccccccc.css">')
+
+    // No inline <style> block for site-wide CSS in external mode.
+    expect(html).not.toMatch(/<style>\s*\n[^<]*:where\(\*\)/)
+
+    // Cascade order: reset → framework → style (last loaded wins ties).
+    const resetIdx = html.indexOf('reset-aaaaaaaaaaaa.css')
+    const frameworkIdx = html.indexOf('framework-bbbbbbbbbbbb.css')
+    const styleIdx = html.indexOf('style-cccccccccccc.css')
+    expect(resetIdx).toBeLessThan(frameworkIdx)
+    expect(frameworkIdx).toBeLessThan(styleIdx)
+  })
+
+  it('skips empty bundle files in external mode (no zero-byte <link> requests)', () => {
+    const page = makePage({ root: { moduleId: 'base.text', props: { text: 'Hi' } } })
+    const cssBundle = {
+      reset: { bundle: 'reset' as const, filename: 'reset-aaaaaaaaaaaa.css', hash: 'aaaaaaaaaaaa', content: ':where(*) { margin: 0; }' },
+      // Empty framework + style on a fresh site (no framework, no classes).
+      framework: { bundle: 'framework' as const, filename: 'framework-bbbbbbbbbbbb.css', hash: 'bbbbbbbbbbbb', content: '' },
+      style: { bundle: 'style' as const, filename: 'style-cccccccccccc.css', hash: 'cccccccccccc', content: '' },
+    }
+    const { html } = publishPage(page, site, registry, {
+      cssEmission: 'external',
+      cssBundle,
+    })
+
+    expect(html).toContain('reset-aaaaaaaaaaaa.css')
+    expect(html).not.toContain('framework-bbbbbbbbbbbb.css')
+    expect(html).not.toContain('style-cccccccccccc.css')
+  })
+
+  it('uses a custom cssAssetBaseUrl when provided', () => {
+    const page = makePage({ root: { moduleId: 'base.text', props: { text: 'Hi' } } })
+    const cssBundle = {
+      reset: { bundle: 'reset' as const, filename: 'reset-aaaaaaaaaaaa.css', hash: 'aaaaaaaaaaaa', content: 'x' },
+      framework: { bundle: 'framework' as const, filename: 'framework-bbbbbbbbbbbb.css', hash: 'bbbbbbbbbbbb', content: 'x' },
+      style: { bundle: 'style' as const, filename: 'style-cccccccccccc.css', hash: 'cccccccccccc', content: 'x' },
+    }
+    const { html } = publishPage(page, site, registry, {
+      cssEmission: 'external',
+      cssBundle,
+      cssAssetBaseUrl: 'https://cdn.example.com/css/',
+    })
+    expect(html).toContain('href="https://cdn.example.com/css/reset-aaaaaaaaaaaa.css"')
+  })
+
+  it('throws when external mode is requested without a bundle', () => {
+    const page = makePage({ root: { moduleId: 'base.text', props: { text: 'Hi' } } })
+    expect(() => publishPage(page, site, registry, { cssEmission: 'external' })).toThrow(
+      'cssEmission "external" requires options.cssBundle',
+    )
+  })
+
+  it('inline mode (default) still emits a <style> block and no link tags', () => {
+    const page = makePage({ root: { moduleId: 'base.text', props: { text: 'Hi' } } })
+    const { html } = publishPage(page, site, registry)
+    expect(html).toContain('<style>')
+    expect(html).not.toMatch(/<link\s+rel="stylesheet"\s+href="\/_pb\/css\//)
   })
 
   it('injects framework color variables and used generated utility CSS', () => {

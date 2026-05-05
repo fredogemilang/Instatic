@@ -47,7 +47,20 @@ export type Breakpoint = Static<typeof BreakpointSchema>
 // Dynamic template binding
 // ---------------------------------------------------------------------------
 
-export const DynamicBindingSourceSchema = Type.Literal('currentEntry')
+/**
+ * Source for a dynamic prop binding.
+ *
+ * - `currentEntry` — top of the publisher's entry stack. Inside a `base.loop`
+ *   subtree this is the iteration's item; outside any loop on a single-entry
+ *   template page this is the entry being viewed.
+ * - `parentEntry` — one frame below the top. Inside a loop nested in a
+ *   single-entry template, this lets a node refer to the outer template
+ *   entry (e.g. "Related to {parentEntry.title}").
+ */
+export const DynamicBindingSourceSchema = Type.Union([
+  Type.Literal('currentEntry'),
+  Type.Literal('parentEntry'),
+])
 export type DynamicBindingSource = Static<typeof DynamicBindingSourceSchema>
 
 export const DynamicBindingFormatSchema = Type.Union([
@@ -377,18 +390,21 @@ export const CSSClassSchema = Type.Object({
 export type CSSClass = Static<typeof CSSClassSchema>
 
 // ---------------------------------------------------------------------------
-// Default design-token values (source of truth)
+// Color tokens — REMOVED.
+//
+// The legacy `site.settings.colorTokens` field was the original raw design-token
+// shape (`{ '--color-primary': '#6366f1', ... }`) emitted into a `:root {}`
+// block in the published `framework.css`. It has been fully superseded by the
+// structured framework Color settings (`site.settings.framework.colors`), which
+// is what the editor's Colors panel reads from and writes to.
+//
+// Keeping both paths around silently injected ghost tokens into every fresh
+// project (the old `DEFAULT_COLOR_TOKENS` had seven `#6366f1`-family defaults)
+// that the user could not see or remove via the UI. Per CLAUDE.md ("we are
+// pre-release, don't leave both an old and new implementation side-by-side")
+// the legacy field has been removed entirely; persisted snapshots that still
+// carry a `colorTokens` key are silently dropped on parse.
 // ---------------------------------------------------------------------------
-
-export const DEFAULT_COLOR_TOKENS: Record<string, string> = {
-  '--color-primary': '#6366f1',
-  '--color-secondary': '#8b5cf6',
-  '--color-accent': '#ec4899',
-  '--color-surface': '#ffffff',
-  '--color-on-surface': '#0f172a',
-  '--color-border': '#e2e8f0',
-  '--color-muted': '#94a3b8',
-}
 
 // ---------------------------------------------------------------------------
 // SiteSettingsSchema
@@ -407,8 +423,6 @@ export const SiteSettingsSchema = Type.Object({
   faviconUrl: Type.Optional(Type.String()),
   fontImportUrl: Type.Optional(Type.String()),
   language: Type.Optional(Type.String()),
-  /** Global CSS custom property tokens (design tokens). Falls back to {} — handled in parseSiteSettings. */
-  colorTokens: Type.Record(Type.String(), Type.String()),
   /** Structured framework token settings — absent means framework disabled. */
   framework: Type.Optional(FrameworkSettingsSchema),
   /** Library of installed fonts — absent when no fonts added. */
@@ -420,7 +434,6 @@ export const SiteSettingsSchema = Type.Object({
 export type SiteSettings = Static<typeof SiteSettingsSchema>
 
 export const DEFAULT_SITE_SETTINGS: SiteSettings = {
-  colorTokens: DEFAULT_COLOR_TOKENS,
   shortcuts: {},
 }
 
@@ -490,7 +503,8 @@ export type SiteDocument = Static<typeof SiteDocumentSchema>
 function parseDynamicPropBinding(raw: unknown): DynamicPropBinding | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const r = raw as Record<string, unknown>
-  if (r.source !== 'currentEntry') return null
+  const VALID_SOURCES: DynamicBindingSource[] = ['currentEntry', 'parentEntry']
+  if (!VALID_SOURCES.includes(r.source as DynamicBindingSource)) return null
   if (typeof r.field !== 'string' || r.field.length === 0) return null
 
   const VALID_FORMATS: DynamicBindingFormat[] = ['plain', 'html', 'url', 'media']
@@ -505,7 +519,7 @@ function parseDynamicPropBinding(raw: unknown): DynamicPropBinding | null {
     : undefined
 
   return {
-    source: 'currentEntry',
+    source: r.source as DynamicBindingSource,
     field: r.field,
     ...(format !== undefined ? { format } : {}),
     ...(fallback !== undefined ? { fallback } : {}),
@@ -725,17 +739,18 @@ function parseSiteFile(raw: unknown): SiteFile | null {
   }
 }
 
-/** Parse SiteSettings, providing fallbacks for all resilient fields. */
+/**
+ * Parse SiteSettings, providing fallbacks for all resilient fields.
+ *
+ * Persisted snapshots from older versions may carry a top-level `colorTokens`
+ * field — that legacy data path was removed in favour of the structured
+ * framework Color settings (`framework.colors`). Any persisted `colorTokens`
+ * key is silently dropped here (no migration: per CLAUDE.md, the dev DB is
+ * disposable and there are no production users).
+ */
 function parseSiteSettings(raw: unknown): SiteSettings {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return DEFAULT_SITE_SETTINGS
   const r = raw as Record<string, unknown>
-
-  const colorTokens: Record<string, string> = {}
-  if (r.colorTokens && typeof r.colorTokens === 'object' && !Array.isArray(r.colorTokens)) {
-    for (const [k, v] of Object.entries(r.colorTokens as Record<string, unknown>)) {
-      if (typeof v === 'string') colorTokens[k] = v
-    }
-  }
 
   const shortcuts: Record<string, string> = {}
   if (r.shortcuts && typeof r.shortcuts === 'object' && !Array.isArray(r.shortcuts)) {
@@ -756,7 +771,6 @@ function parseSiteSettings(raw: unknown): SiteSettings {
     ...(typeof r.faviconUrl === 'string' ? { faviconUrl: r.faviconUrl } : {}),
     ...(typeof r.fontImportUrl === 'string' ? { fontImportUrl: r.fontImportUrl } : {}),
     ...(typeof r.language === 'string' ? { language: r.language } : {}),
-    colorTokens,
     framework,
     fonts,
     shortcuts,

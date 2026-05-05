@@ -16,17 +16,16 @@ import { resolveProps } from '../page-tree/selectors'
 import { resolveDynamicProps, type TemplateRenderDataContext } from '../templates/dynamicBindings'
 import { classNamesForClassIds } from '../page-tree/classNames'
 import { sanitizeModuleCSS, collectClassCSS } from './cssCollector'
-import { generateFrameworkColorRootCss } from '../framework/colors'
-import { generateFrameworkTypographyRootCss } from '../framework/typography'
-import { generateFrameworkSpacingRootCss } from '../framework/spacing'
-import { resolveFrameworkPreferences } from '../framework/preferences'
-import { generateFontsCss } from '../fonts/css'
+import { PUBLISHER_RESET_CSS } from './reset'
+import { buildSiteRootCss } from './rootCss'
+import type { SiteCssBundle } from './siteCssBundle'
 import { escapeHtml, isSafeUrl } from './utils'
 import type { PublishedPageRuntimeAssets } from '../site-runtime/schemas'
 import { hasPublishedRuntimeScripts, scriptTagsForRuntimeAssets } from '../site-runtime'
 import { sanitizeRichtext } from '../sanitize'
 import { instantiateVCAtRef, type InstantiatedVCNode } from '../visualComponents/instantiate'
 import type { VCNode } from '../visualComponents/schemas'
+import type { LoopFetchResult, LoopItem } from '../loops/types'
 
 // Re-export canonical utilities so existing imports from this file keep working
 // (render.test.ts imports escapeHtml / isSafeUrl from here)
@@ -286,8 +285,114 @@ function renderVisualComponentRef(node: PageNode, ctx: RenderContext): string {
 }
 
 // ---------------------------------------------------------------------------
+// base.loop renderer
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a `base.loop` node by iterating its resolved data and round-robining
+ * over the loop's children.
+ *
+ * For a loop with N children and M items, iteration `i` (0-indexed) renders
+ * the loop's child at index `i mod N` with the loop's `entryStack` extended
+ * by the iteration's item. Two children → alternating layouts; three →
+ * cycle of three; etc. After each iteration the entry stack is restored
+ * so the loop's siblings keep seeing the outer template entry (if any).
+ *
+ * Loops without resolved data (server pre-fetch failed, source unregistered,
+ * or no data context like in editor canvas tests) render an HTML comment so
+ * the page doesn't silently lose layout. Empty result sets render as empty
+ * string — author can wrap the loop in a Container to apply "if empty, hide
+ * the section" patterns later.
+ *
+ * Pagination:
+ *   - 'none': all rendered items emitted, no extra markup.
+ *   - 'infinite': items emitted, plus a `data-pb-loop-id` sentinel and the
+ *     loop's nodeId is added to `ctx.infiniteLoopIds` so the publisher can
+ *     inject the runtime script. The runtime fetches subsequent pages from
+ *     `/_pb/loop/<loopId>?page=N` and appends rendered HTML.
+ *
+ * The loop's own `classIds` are injected onto a wrapping `<div>` so author-
+ * applied classes (e.g. grid layout) actually take effect.
+ */
+function renderLoop(node: PageNode, ctx: RenderContext): string {
+  const loopId = node.id
+  const data = ctx.loopData?.get(loopId)
+  // No pre-fetched data — most likely an editor preview or a test that did
+  // not seed loopData. Emit a marker comment rather than an empty string so
+  // diagnostics in the rendered output are visible.
+  if (!data) {
+    return `<!-- pb: loop "${escapeHtml(loopId)}" has no resolved data -->`
+  }
+
+  const variants = node.children ?? []
+  if (variants.length === 0) {
+    return '<!-- pb: loop has no child template -->'
+  }
+  if (data.items.length === 0) {
+    return ''
+  }
+
+  // Make sure entryStack exists — bindings inside the loop body resolve
+  // against this stack. Mutating in place is fine because the publisher
+  // owns the context for this single render pass.
+  if (!ctx.templateContext) {
+    ctx.templateContext = { entryStack: [] }
+  }
+  const stack = ctx.templateContext.entryStack
+
+  let body = ''
+  data.items.forEach((item: LoopItem, i: number) => {
+    const variantId = variants[i % variants.length]
+    stack.push(item)
+    try {
+      body += renderNode(variantId, ctx)
+    } finally {
+      stack.pop()
+    }
+  })
+
+  // Pagination signals — pagination='infinite' attaches a sentinel and
+  // registers the loop's id so publishPage() can decide whether to emit
+  // the runtime script.
+  const props = node.props
+  const isInfinite = props.pagination === 'infinite'
+  let attrs = ` data-pb-loop="${escapeHtml(loopId)}"`
+  attrs += ` data-pb-loop-page="${data.pageNumber}"`
+  if (isInfinite) {
+    attrs += ` data-pb-loop-mode="infinite"`
+    attrs += ` data-pb-loop-has-more="${data.hasMore ? 'true' : 'false'}"`
+    attrs += ` data-pb-loop-page-size="${typeof props.pageSize === 'number' ? Math.floor(props.pageSize) : 10}"`
+    if (!ctx.infiniteLoopIds) ctx.infiniteLoopIds = new Set()
+    ctx.infiniteLoopIds.add(loopId)
+  }
+
+  let html = `<div${attrs}>${body}</div>`
+
+  // Inject the loop's own classIds onto the wrapper element.
+  if (node.classIds?.length) {
+    const classAttr = classNamesForClassIds(ctx.site.classes, node.classIds)
+      .map(escapeHtml)
+      .join(' ')
+    if (classAttr) html = injectClassIntoRootElement(html, classAttr)
+  }
+
+  return html
+}
+
+// ---------------------------------------------------------------------------
 // Recursive renderer
 // ---------------------------------------------------------------------------
+
+/**
+ * Resolved loop data for one `base.loop` node, produced by the server's
+ * `prefetchLoopData()` helper before publishing.
+ */
+export interface ResolvedLoopRenderData extends LoopFetchResult {
+  /** 1-indexed page number when the loop is in `infinite` mode. */
+  pageNumber: number
+  /** Whether more rows remain past the current page. */
+  hasMore: boolean
+}
 
 export interface RenderContext {
   page: Page
@@ -301,6 +406,18 @@ export interface RenderContext {
    * Decision #308: keying by moduleId is O(1); at 200 nodes saves ~60–80% CSS vs naive concat.
    */
   cssMap: Map<string, string>
+  /**
+   * Pre-fetched loop data, keyed by loop nodeId. Populated by
+   * `server/cms/loopPrefetch.ts` before `publishPage()` is called.
+   * Loops without an entry here render empty.
+   */
+  loopData?: Map<string, ResolvedLoopRenderData>
+  /**
+   * Set of loop nodeIds on the page that requested the infinite-scroll
+   * runtime. The publisher reads this after rendering to decide whether
+   * to inject the `loop-runtime.js` `<script>` tag.
+   */
+  infiniteLoopIds?: Set<string>
 }
 
 /**
@@ -327,6 +444,14 @@ export function renderNode(nodeId: string, ctx: RenderContext): string {
   // VC body comes from instantiateVCAtRef, not from page.nodes children.
   if (node.moduleId === 'base.visual-component-ref') {
     return renderVisualComponentRef(node, ctx)
+  }
+
+  // Special case: base.loop nodes iterate a registered LoopEntitySource.
+  // Like visual-component-ref, this intercept replaces the normal
+  // children-then-render flow because each iteration needs its own
+  // render pass with a different entry-stack frame.
+  if (node.moduleId === 'base.loop') {
+    return renderLoop(node, ctx)
   }
 
   // 1. Render children first (bottom-up) — pass their HTML to the parent
@@ -377,57 +502,87 @@ export interface PublishPageOptions {
   breakpointId?: string
   templateContext?: TemplateRenderDataContext
   runtimeAssets?: PublishedPageRuntimeAssets
+  /**
+   * Pre-fetched data for every `base.loop` node on the page, keyed by
+   * loop nodeId. Produced server-side by `prefetchLoopData()` before
+   * publishing. Loops without an entry here render an empty string in
+   * the published page (and an HTML comment in dev/preview).
+   */
+  loopData?: Map<string, ResolvedLoopRenderData>
+  /**
+   * Optional URL hint for the loop runtime — used to construct
+   * "Load more" endpoint URLs in `data-pb-loop-endpoint` attributes
+   * when the page contains an infinite-mode loop. Defaults to
+   * `/_pb/loop/`.
+   */
+  loopEndpointBaseUrl?: string
+  /**
+   * How site-wide CSS (reset, framework, user classes) is emitted into the
+   * published HTML.
+   *
+   * - `'inline'` (default): one `<style>` block in `<head>` containing reset +
+   *   framework root CSS + module CSS + user class CSS. Best for self-contained
+   *   exports, the iframe runtime preview, and tests.
+   * - `'external'`: emits three `<link rel="stylesheet">` tags pointing at the
+   *   pre-built site CSS bundle (`/_pb/css/<filename>`). The HTML stays small,
+   *   the bundles are content-hashed for `Cache-Control: immutable` reuse
+   *   across page navigations. Pass `cssBundle` + `cssAssetBaseUrl` to use this
+   *   mode.
+   *
+   * In external mode any per-page module CSS that would have been inlined is
+   * skipped here — it's assumed to live in `cssBundle.framework.content`,
+   * which is what `buildSiteCssBundle()` produces. This keeps every visitor's
+   * three CSS files cacheable.
+   */
+  cssEmission?: 'inline' | 'external'
+  /**
+   * Pre-built site CSS bundle. Required when `cssEmission === 'external'`.
+   * Computed once per published-snapshot via `buildSiteCssBundle(site, registry)`.
+   */
+  cssBundle?: SiteCssBundle
+  /**
+   * Base URL prepended to each bundle filename to form the `<link href>`
+   * value, e.g. `'/_pb/css/'`. Defaults to `'/_pb/css/'`.
+   */
+  cssAssetBaseUrl?: string
 }
 
 /**
- * Sanitize a CSS property value for safe injection inside a `<style>` block.
+ * Build the `<style>` block (inline mode) or `<link>` tags (external mode)
+ * that go into `<head>`.
  *
- * Strips `</style>` sequences to prevent breaking out of the style context
- * (same protection as sanitizeModuleCSS — applied to design-token values,
- * which are user-controlled site settings).  Also strips `{` and `}` to
- * prevent escaping the `:root {}` rule block (CSS injection, CWE-94).
+ * Cascade order is identical in both modes: reset → framework (root tokens +
+ * module CSS) → user class CSS. User class CSS loads last so it wins
+ * specificity ties — same behaviour as the previous in-`<style>` cascade.
  */
-function sanitizeCssTokenValue(value: string): string {
-  return value
-    .replace(/<\/style\s*>/gi, '')
-    .replace(/[{}]/g, '')
-}
+function buildStyleHead(
+  cssEmission: 'inline' | 'external',
+  options: PublishPageOptions,
+  site: SiteDocument,
+  cssMap: Map<string, string>,
+): string {
+  if (cssEmission === 'external') {
+    if (!options.cssBundle) {
+      throw new Error('publishPage: cssEmission "external" requires options.cssBundle')
+    }
+    const baseUrl = options.cssAssetBaseUrl ?? '/_pb/css/'
+    const links = [options.cssBundle.reset, options.cssBundle.framework, options.cssBundle.style]
+      // Skip empty bundles — emitting `<link>` to a 0-byte file is a wasted
+      // request. `framework.css` and `style.css` are routinely empty on a
+      // fresh site (no framework configured, no classes defined).
+      .filter((file) => file.content.length > 0)
+      .map((file) => `  <link rel="stylesheet" href="${escapeHtml(baseUrl + file.filename)}">`)
+      .join('\n')
+    return links ? `${links}\n` : ''
+  }
 
-/**
- * Valid CSS custom property name: `--` followed by one or more alphanumeric,
- * hyphen, or underscore characters.  Rejects keys containing `;`, `{`, `}`,
- * spaces, etc. that could escape the :root {} rule block (CWE-94 / CSS injection).
- * The built-in tokens (--type-base-size, --type-ratio) satisfy this pattern.
- * User-supplied colorToken keys that fail the check are silently dropped —
- * they are invalid CSS identifiers and cannot be safely emitted.
- */
-const CSS_CUSTOM_PROP_RE = /^--[a-zA-Z0-9_-]+$/
-
-/**
- * Generate the CSS :root block for site design tokens.
- * Injects color tokens and typography scale as CSS custom properties.
- * Token values are sanitized to prevent CSS injection (Constraint #228 / CWE-94).
- * Token keys are validated against CSS_CUSTOM_PROP_RE to prevent key-side injection.
- */
-function buildRootCss(site: SiteDocument): string {
-  const { colorTokens, framework, fonts } = site.settings
-  const declarations = Object.entries(colorTokens)
-    .filter(([k]) => CSS_CUSTOM_PROP_RE.test(k))
-    .map(([k, v]) => `  ${k}: ${sanitizeCssTokenValue(v)};`)
-    .join('\n')
-  const legacyRootCss = declarations ? `:root {\n${declarations}\n}` : ''
-  const preferences = resolveFrameworkPreferences(framework?.preferences)
-  // Fonts emit @font-face rules + --font-<slug> tokens. Emit first so any rule
-  // that references a font family resolves against an already-declared face.
-  // All `src` URLs are restricted to /uploads/fonts/ — no CDN linkage in the
-  // published page (Constraint: published HTML never reaches Google).
-  const fontsCss = generateFontsCss(fonts)
-  const frameworkColorCss = generateFrameworkColorRootCss(framework?.colors)
-  const frameworkTypographyCss = generateFrameworkTypographyRootCss(framework?.typography, preferences)
-  const frameworkSpacingCss = generateFrameworkSpacingRootCss(framework?.spacing, preferences)
-  return [fontsCss, legacyRootCss, frameworkColorCss, frameworkTypographyCss, frameworkSpacingCss]
+  const rootCss = buildSiteRootCss(site)
+  const moduleCss = Array.from(cssMap.values()).join('\n')
+  const classCss = collectClassCSS(site)
+  const allCss = [PUBLISHER_RESET_CSS, rootCss, moduleCss, classCss]
     .filter(Boolean)
     .join('\n')
+  return `  <style>\n${allCss}\n  </style>\n`
 }
 
 /**
@@ -469,6 +624,7 @@ export function publishPage(
       ? breakpointIdOrOptions
       : { breakpointId: breakpointIdOrOptions, templateContext }
   const { breakpointId, runtimeAssets } = options
+  const cssEmission = options.cssEmission ?? 'inline'
   const cssMap = new Map<string, string>()
   const ctx: RenderContext = {
     page,
@@ -477,16 +633,21 @@ export function publishPage(
     breakpointId,
     templateContext: options.templateContext,
     cssMap,
+    loopData: options.loopData,
+    infiniteLoopIds: undefined,
   }
 
-  // Render entire tree from root
+  // Render entire tree from root. The walker also accumulates module CSS
+  // into `cssMap`; in external mode that result is discarded because the
+  // same data is already in the pre-built `framework.css` bundle.
   const bodyHtml = renderNode(page.rootNodeId, ctx)
 
-  // Assemble deduplicated CSS: design tokens, module CSS, then class CSS (Phase C)
-  const rootCss = buildRootCss(site)
-  const moduleCss = Array.from(cssMap.values()).join('\n')
-  const classCss = collectClassCSS(site)
-  const allCss = [rootCss, moduleCss, classCss].filter(Boolean).join('\n')
+  // Build CSS head content based on emission mode.
+  //
+  // Cascade order (both modes): reset → framework (tokens + module CSS) →
+  // user class CSS. User classes load last so they win specificity ties on
+  // identically-specific selectors.
+  const styleHeadHtml = buildStyleHead(cssEmission, options, site, cssMap)
 
   const { settings } = site
   const pageTitle = escapeHtml(settings.metaTitle ?? page.title ?? site.name)
@@ -507,8 +668,18 @@ export function publishPage(
   const headRuntimeScripts = scriptTagsForRuntimeAssets(runtimeAssets, 'head')
   const bodyEndRuntimeScripts = scriptTagsForRuntimeAssets(runtimeAssets, 'body-end')
   const hasRuntimeScripts = hasPublishedRuntimeScripts(runtimeAssets)
-  const scriptSource = hasRuntimeScripts ? "'self'" : "'none'"
-  const workerSource = hasRuntimeScripts ? "'self' blob:" : "'none'"
+  const hasInfiniteLoops = (ctx.infiniteLoopIds?.size ?? 0) > 0
+  // Loop runtime is a self-hosted script bundle served at a known fixed
+  // path; only injected when at least one loop on the page uses
+  // pagination='infinite'. This keeps the "no JS by default" line for
+  // pages that don't need it.
+  const loopEndpointBaseUrl = options.loopEndpointBaseUrl ?? '/_pb/loop/'
+  const loopRuntimeScript = hasInfiniteLoops
+    ? `  <script type="module" src="/_pb/assets/loop-runtime.js" data-pb-loop-endpoint="${escapeHtml(loopEndpointBaseUrl)}" defer></script>`
+    : ''
+  const anyScriptTag = hasRuntimeScripts || hasInfiniteLoops
+  const scriptSource = anyScriptTag ? "'self'" : "'none'"
+  const workerSource = anyScriptTag ? "'self' blob:" : "'none'"
 
   // Constraint #227: every published page must carry a Content-Security-Policy meta tag.
   // Runtime-enabled pages only allow self-hosted external script assets.
@@ -529,12 +700,13 @@ export function publishPage(
     `  <meta charset="UTF-8">\n` +
     `  <meta name="viewport" content="width=device-width, initial-scale=1.0">${csp}\n` +
     `  <title>${pageTitle}</title>${metaDesc}${favicon}${fontImport}\n` +
-    `  <style>\n${allCss}\n  </style>\n` +
+    styleHeadHtml +
     `${headRuntimeScripts ? `${headRuntimeScripts}\n` : ''}` +
     `</head>\n` +
     `<body>\n` +
     `${bodyHtml}\n` +
     `${bodyEndRuntimeScripts ? `${bodyEndRuntimeScripts}\n` : ''}` +
+    `${loopRuntimeScript ? `${loopRuntimeScript}\n` : ''}` +
     `</body>\n` +
     `</html>`
 

@@ -1,43 +1,48 @@
 /**
- * NodeRenderer — canvas node wrapper and selection/hover ring styles.
- * Uses design tokens from globals.css (no hardcoded colours).
+ * NodeRenderer — canvas node wrapper.
+ *
+ * Layout-transparent wrapper
+ * ──────────────────────────
+ * The wrapper is `display: contents` so it produces NO layout box. Its DOM node
+ * still exists (carrying `data-node-id`, ARIA attributes, click/hover/keyboard
+ * handlers, focus target) but the rendered module element participates in the
+ * parent's layout exactly as it does in the published HTML. Without this, every
+ * node was a block-level `<div>` wrapper which broke inline flow (e.g. two
+ * `<a>` siblings stacked vertically in canvas instead of sitting side-by-side).
+ *
+ * Selection / hover rings
+ * ───────────────────────
+ * Because `display: contents` removes the box, the previous `::after` ring
+ * approach can't render. Rings live in a separate overlay component
+ * (`BreakpointSelectionOverlay`) that absolutely-positions a div over the
+ * actual rendered element using `getBoundingClientRect()`. See that file for
+ * details.
+ *
+ * Tokens come from globals.css — no hardcoded colours.
  */
 
-/* Fallback for unknown / unregistered module */
+/* Fallback for unknown / unregistered module — the only place we render visible
+ * chrome on the wrapper itself. Keeps the unknown-module dashed border outside
+ * the published box tree. */
 .unknownModule {
   outline: 1px dashed var(--editor-danger);
   padding: 4px;
 }
 
-/* NodeWrapper — click/hover target; position:relative required for rings */
+/* The wrapper has no layout box. data-node-id, role, aria-pressed, tabindex,
+ * and event handlers continue to work because display: contents only removes
+ * the box from layout, not from the DOM / event / accessibility trees. */
 .nodeWrapper {
-  position: relative;
-  isolation: isolate;
-}
-
-.nodeWrapper::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 2147483647;
-  box-sizing: border-box;
-  pointer-events: none;
-  border-radius: 1px;
+  display: contents;
 }
 
 /*
  * Embedded iframes have their own browsing context and consume wheel/pointer
  * input before the canvas gesture layer can see it. In the editor canvas they
- * are previews, so keep them visually present but pointer-transparent.
+ * are previews, so keep them visually present but pointer-transparent. The
+ * descendant selector still matches even though the wrapper itself is
+ * display: contents — display: contents only affects layout, not selectors.
  */
 .nodeWrapper iframe {
   pointer-events: none;
-}
-
-.nodeWrapper[aria-pressed='true']::after {
-  box-shadow: var(--canvas-selection-ring);
-}
-
-.nodeWrapper[data-hovered='true']::after {
-  box-shadow: var(--canvas-hover-ring);
 }

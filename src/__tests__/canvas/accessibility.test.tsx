@@ -29,6 +29,8 @@ import { NodeWrapper } from '../../editor/components/Canvas/NodeRenderer'
 afterEach(cleanup)
 
 const NODE_RENDERER_CSS_PATH = 'src/editor/components/Canvas/NodeRenderer.module.css'
+const SELECTION_OVERLAY_CSS_PATH =
+  'src/editor/components/Canvas/BreakpointSelectionOverlay.module.css'
 const GLOBALS_CSS_PATH = 'src/styles/globals.css'
 
 function extractCssCustomProperty(source: string, propertyName: string): string {
@@ -125,18 +127,15 @@ describe('NodeWrapper — selection ring', () => {
   })
 
   it('uses inset box-shadow rings so the 1px line stays inside the canvas edge', async () => {
-    const css = await Bun.file(NODE_RENDERER_CSS_PATH).text()
+    // Rings live in the BreakpointSelectionOverlay (not on .nodeWrapper anymore)
+    // because NodeWrapper is `display: contents` and has no layout box.
+    const css = await Bun.file(SELECTION_OVERLAY_CSS_PATH).text()
     const globals = await Bun.file(GLOBALS_CSS_PATH).text()
     const selectionRing = extractCssCustomProperty(globals, '--canvas-selection-ring')
     const hoverRing = extractCssCustomProperty(globals, '--canvas-hover-ring')
 
-    expect(css).toContain('.nodeWrapper::after')
     expect(css).toContain('box-shadow: var(--canvas-selection-ring)')
     expect(css).toContain('box-shadow: var(--canvas-hover-ring)')
-    expect(css).not.toMatch(/\.selectionRing\s*\{/)
-    expect(css).not.toMatch(/\.hoverRing\s*\{/)
-    expect(css).not.toMatch(/\.selectionRing[\s\S]*var\(--editor-accent-violet\)/)
-    expect(css).not.toMatch(/\.hoverRing[\s\S]*var\(--editor-accent-violet\)/)
     expect(selectionRing).toContain('inset 0 0 0 1px')
     expect(hoverRing).toContain('inset 0 0 0 1px')
     expect(selectionRing).not.toMatch(/rgba?\(\s*255\s*,\s*255\s*,\s*255/i)
@@ -146,11 +145,25 @@ describe('NodeWrapper — selection ring', () => {
   })
 
   it('keeps canvas rings above arbitrary module content stacking', async () => {
-    const css = await Bun.file(NODE_RENDERER_CSS_PATH).text()
-    const overlayZIndex = css.match(/\.nodeWrapper::after[\s\S]*?z-index:\s*(\d+)/)?.[1]
+    // Overlay layer (parent of every ring) carries the maximum z-index so that
+    // module content can never visually mask the selection / hover ring.
+    const css = await Bun.file(SELECTION_OVERLAY_CSS_PATH).text()
+    const overlayZIndex = css.match(/\.overlayLayer[\s\S]*?z-index:\s*(\d+)/)?.[1]
 
     expect(overlayZIndex).toBeDefined()
     expect(Number(overlayZIndex)).toBeGreaterThanOrEqual(2147483647)
+  })
+
+  it('NodeWrapper itself is display: contents so it produces no layout box', async () => {
+    // This is the architectural guarantee that canvas flow matches published
+    // HTML — the wrapper exists in the DOM (carries data-node-id, ARIA, focus,
+    // event handlers) but has no box, so inline content stays inline and flex
+    // children are the actual rendered elements rather than wrapper divs.
+    const css = await Bun.file(NODE_RENDERER_CSS_PATH).text()
+    expect(css).toMatch(/\.nodeWrapper\s*\{[\s\S]*?display:\s*contents/)
+    // The previous ::after-on-wrapper approach must not return — it requires a
+    // layout box, which would re-introduce the canvas-vs-published flow drift.
+    expect(css).not.toContain('.nodeWrapper::after')
   })
 })
 

@@ -29,7 +29,6 @@ function validSite(): SiteDocument {
       { id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' },
     ],
     settings: {
-      colorTokens: {},
       shortcuts: {},
     },
     pages: [
@@ -106,11 +105,20 @@ describe('validateSite — happy path', () => {
 
   it('fills defaults for missing settings sub-fields', () => {
     const p = validSite()
-    // @ts-expect-error — intentionally malformed
-    delete p.settings.colorTokens
+    // @ts-expect-error — intentionally malformed (drops the only required record-typed field)
+    delete p.settings.shortcuts
     const result = validateSite(p as unknown)
-    expect(result.settings.colorTokens).toEqual({})
     expect(result.settings.shortcuts).toEqual({})
+  })
+
+  it('silently drops the legacy colorTokens field from persisted snapshots', () => {
+    // Older sites stored color tokens at `settings.colorTokens`; that path was
+    // replaced by `settings.framework.colors` (managed by the editor's Colors
+    // panel). Per CLAUDE.md, no migration: parse just drops the legacy field.
+    const p = validSite()
+    const raw = { ...p, settings: { ...p.settings, colorTokens: { '--ghost': '#abc' } } }
+    const result = validateSite(raw)
+    expect((result.settings as unknown as Record<string, unknown>).colorTokens).toBeUndefined()
   })
 
   it('ignores unknown extra keys (forward-compat)', () => {

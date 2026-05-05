@@ -1,4 +1,5 @@
 import { bagToCSS } from '@core/publisher/classCss'
+import { scopedPublisherResetCss } from '@core/publisher/reset'
 import { generateFrameworkColorRootCss } from '@core/framework/colors'
 import { generateFrameworkTypographyRootCss } from '@core/framework/typography'
 import { generateFrameworkSpacingRootCss } from '@core/framework/spacing'
@@ -25,9 +26,18 @@ export function generateCanvasClassCSS(
 ): string {
   const blocks: string[] = []
   const preferences = resolveFrameworkPreferences(frameworkPreferences)
-  // Fonts go first so `@font-face` declarations exist before any rule that
-  // references the family — browsers tolerate the reverse order, but the
-  // ordering keeps generated CSS easier to inspect.
+
+  // Publisher reset, scoped to the breakpoint frame viewports. Mirrors what
+  // `publishPage()` injects into the published HTML so the design canvas and
+  // the iframe preview / front end agree on the box model, default font, list
+  // bullets, body margin, etc. The scope `[data-breakpoint-id]` matches the
+  // viewport `<div>` in BreakpointFrame; editor chrome (toolbars, panels) is
+  // outside that scope and continues to use the editor's own globals.css.
+  blocks.push(scopedPublisherResetCss('[data-breakpoint-id]'))
+
+  // Fonts go first (after the reset) so `@font-face` declarations exist before
+  // any rule that references the family — browsers tolerate the reverse order,
+  // but the ordering keeps generated CSS easier to inspect.
   const fontsCss = generateFontsCss(fonts)
   if (fontsCss) blocks.push(fontsCss)
   const frameworkColorCss = generateFrameworkColorRootCss(frameworkColors)
@@ -52,6 +62,27 @@ export function generateCanvasClassCSS(
   }
 
   return blocks.join('\n\n')
+}
+
+/**
+ * Generate a higher-specificity preview rule for a single class, used by
+ * the canvas style injector while a user is hovering a suggestion. The
+ * doubled class selector (`.foo.foo`) wins over any base / breakpoint
+ * rule emitted by `generateCanvasClassCSS`, without committing the
+ * change to the document or pushing a history entry.
+ */
+export function generatePreviewClassCSS(
+  cls: CSSClass,
+  preview: { breakpointId?: string | null; styles: Record<string, unknown> },
+): string {
+  const decls = bagToCSS(preview.styles)
+  if (!decls) return ''
+  const selector = cssClassSelector(cls)
+  const doubled = `${selector}${selector}`
+  if (!preview.breakpointId) {
+    return `${doubled} {\n${decls}\n}`
+  }
+  return `[data-breakpoint-id="${escapeCssAttribute(preview.breakpointId)}"] ${doubled} {\n${decls}\n}`
 }
 
 function escapeCssAttribute(value: string): string {
