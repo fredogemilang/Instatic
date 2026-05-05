@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import type { ContentEntry } from '@core/content/schemas'
 import type { CmsMediaAsset } from '@core/persistence/cmsMedia'
 import {
-  contentEntryToTemplateEntryData,
+  contentEntryToLoopItem,
   selectLatestTemplatePreviewEntry,
 } from '@core/templates/templatePreviewData'
 
@@ -51,14 +51,15 @@ describe('template preview data', () => {
     expect(selectLatestTemplatePreviewEntry([older, latest])?.id).toBe('latest')
   })
 
-  it('maps an editable content entry into dynamic template render data', () => {
-    const preview = contentEntryToTemplateEntryData(entry({
+  it('maps an editable content entry into a LoopItem', () => {
+    const item = contentEntryToLoopItem(entry({
       id: 'entry_2',
       title: 'Mapped Post',
       bodyMarkdown: 'Body',
     }))
 
-    expect(preview).toMatchObject({
+    expect(item.id).toBe('entry_2')
+    expect(item.fields).toMatchObject({
       id: 'entry_2',
       entryId: 'entry_2',
       collectionId: 'posts',
@@ -70,7 +71,7 @@ describe('template preview data', () => {
   })
 
   it('resolves an editable entry featured media id to a preview media path', () => {
-    const preview = contentEntryToTemplateEntryData(
+    const item = contentEntryToLoopItem(
       entry({
         featuredMediaId: 'media_cover',
       }),
@@ -82,11 +83,14 @@ describe('template preview data', () => {
       ],
     )
 
-    expect(preview.featuredMediaPath).toBe('/uploads/post-cover.png')
+    expect(item.fields.featuredMediaPath).toBe('/uploads/post-cover.png')
+    // Aliases all resolve to the same path
+    expect(item.fields.featuredMedia).toBe('/uploads/post-cover.png')
+    expect(item.fields.featuredMediaUrl).toBe('/uploads/post-cover.png')
   })
 
-  it('extracts the first inline body image as template preview data', () => {
-    const preview = contentEntryToTemplateEntryData(entry({
+  it('extracts the first inline body image as a preview field', () => {
+    const item = contentEntryToLoopItem(entry({
       bodyMarkdown: [
         'Intro paragraph',
         '',
@@ -96,6 +100,7 @@ describe('template preview data', () => {
       ].join('\n'),
     }))
 
-    expect(preview.firstImagePath).toBe('/uploads/body-hero.png')
+    expect(item.fields.firstImagePath).toBe('/uploads/body-hero.png')
+    expect(item.fields.firstImage).toBe('/uploads/body-hero.png')
   })
 })

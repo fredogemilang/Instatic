@@ -2,25 +2,34 @@ import { describe, expect, it } from 'bun:test'
 import { makeModule, makePage, makeRegistry, makeSite } from '../publisher/helpers'
 import { publishPage } from '@core/publisher/render'
 import { resolveDynamicProps } from '@core/templates/dynamicBindings'
+import type { LoopItem } from '@core/loops/types'
 import { ContentModule } from '../../modules/base/content'
 
-const currentEntry = {
+const currentEntry: LoopItem = {
   id: 'version_1',
-  entryId: 'entry_1',
-  collectionId: 'posts',
-  collectionSlug: 'posts',
-  collectionRouteBase: '/posts',
-  versionNumber: 1,
-  title: 'Dynamic Post',
-  slug: 'dynamic-post',
-  bodyMarkdown: '## Heading\n\nBody text',
-  featuredMediaId: 'media_1',
-  featuredMediaPath: '/uploads/cover.jpg',
-  firstImagePath: null,
-  seoTitle: 'SEO title',
-  seoDescription: 'SEO description',
-  publishedAt: '2026-05-01T10:00:00.000Z',
-  createdAt: '2026-05-01T10:00:00.000Z',
+  fields: {
+    id: 'version_1',
+    entryId: 'entry_1',
+    collectionId: 'posts',
+    collectionSlug: 'posts',
+    collectionRouteBase: '/posts',
+    versionNumber: 1,
+    title: 'Dynamic Post',
+    slug: 'dynamic-post',
+    body: '## Heading\n\nBody text',
+    bodyMarkdown: '## Heading\n\nBody text',
+    featuredMediaId: 'media_1',
+    featuredMedia: '/uploads/cover.jpg',
+    featuredMediaPath: '/uploads/cover.jpg',
+    featuredMediaUrl: '/uploads/cover.jpg',
+    firstImage: null,
+    firstImagePath: null,
+    firstImageUrl: null,
+    seoTitle: 'SEO title',
+    seoDescription: 'SEO description',
+    publishedAt: '2026-05-01T10:00:00.000Z',
+    createdAt: '2026-05-01T10:00:00.000Z',
+  },
 }
 
 describe('dynamic template rendering', () => {
@@ -28,7 +37,7 @@ describe('dynamic template rendering', () => {
     const props = resolveDynamicProps(
       { text: 'Static fallback' },
       { text: { source: 'currentEntry', field: 'title' } },
-      { currentEntry },
+      { entryStack: [currentEntry] },
     )
 
     expect(props.text).toBe('Dynamic Post')
@@ -38,7 +47,7 @@ describe('dynamic template rendering', () => {
     const props = resolveDynamicProps(
       { text: 'Static fallback' },
       { text: { source: 'currentEntry', field: 'missing' } },
-      { currentEntry },
+      { entryStack: [currentEntry] },
     )
 
     expect(props.text).toBe('Static fallback')
@@ -48,25 +57,52 @@ describe('dynamic template rendering', () => {
     const props = resolveDynamicProps(
       { src: '' },
       { src: { source: 'currentEntry', field: 'featuredMedia', format: 'media' } },
-      { currentEntry },
+      { entryStack: [currentEntry] },
     )
 
     expect(props.src).toBe('/uploads/cover.jpg')
   })
 
   it('resolves the first inline body image for media bindings', () => {
+    const itemWithBodyImage: LoopItem = {
+      ...currentEntry,
+      fields: {
+        ...currentEntry.fields,
+        bodyMarkdown: 'Intro\n\n![Hero](/uploads/body-hero.jpg)\n\n![Other](/uploads/other.jpg)',
+        firstImage: '/uploads/body-hero.jpg',
+        firstImagePath: '/uploads/body-hero.jpg',
+        firstImageUrl: '/uploads/body-hero.jpg',
+      },
+    }
     const props = resolveDynamicProps(
       { src: '' },
       { src: { source: 'currentEntry', field: 'firstImage', format: 'media' } },
-      {
-        currentEntry: {
-          ...currentEntry,
-          bodyMarkdown: 'Intro\n\n![Hero](/uploads/body-hero.jpg)\n\n![Other](/uploads/other.jpg)',
-        },
-      },
+      { entryStack: [itemWithBodyImage] },
     )
 
     expect(props.src).toBe('/uploads/body-hero.jpg')
+  })
+
+  it('resolves parentEntry from the frame below the stack top', () => {
+    const outer: LoopItem = {
+      id: 'outer',
+      fields: { title: 'Outer Post' },
+    }
+    const inner: LoopItem = {
+      id: 'inner',
+      fields: { title: 'Inner Post' },
+    }
+    const props = resolveDynamicProps(
+      { text: '', parentText: '' },
+      {
+        text: { source: 'currentEntry', field: 'title' },
+        parentText: { source: 'parentEntry', field: 'title' },
+      },
+      { entryStack: [outer, inner] },
+    )
+
+    expect(props.text).toBe('Inner Post')
+    expect(props.parentText).toBe('Outer Post')
   })
 
   it('renders dynamic values through publishPage while static pages stay unchanged', () => {
@@ -98,7 +134,9 @@ describe('dynamic template rendering', () => {
       },
     })
 
-    const dynamicHtml = publishPage(page, site, registry, undefined, { currentEntry }).html
+    const dynamicHtml = publishPage(page, site, registry, undefined, {
+      entryStack: [currentEntry],
+    }).html
     const staticHtml = publishPage(page, site, registry).html
 
     expect(dynamicHtml).toContain('<p>Dynamic Post</p>')

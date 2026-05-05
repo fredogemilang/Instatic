@@ -15,6 +15,7 @@ import './root'
 
 // Layout modules
 import './container'
+import './loop'
 
 // Typography modules
 import './text'

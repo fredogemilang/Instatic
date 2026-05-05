@@ -40,6 +40,16 @@ export interface DynamicBindingRenderContext {
   binding?: DynamicPropBinding
   onSet: (binding: DynamicPropBinding) => void
   onClear: () => void
+  /**
+   * Fields available on the closest enclosing scope's source (a loop's
+   * registered LoopEntitySource, or the page's content collection). When
+   * present, the binding picker generates options from these instead of
+   * the hard-coded content-entry option set. Field labels and id come from
+   * the source's `fields` declaration.
+   */
+  availableFields?: import('@core/loops/types').LoopSourceField[]
+  /** Optional human label for the binding source — shown in the picker. */
+  sourceLabel?: string
 }
 
 interface RenderControlOptions {
@@ -225,6 +235,8 @@ export function PropertyControlRenderer({
       binding={dynamicBinding.binding}
       onSet={dynamicBinding.onSet}
       onClear={dynamicBinding.onClear}
+      availableFields={dynamicBinding.availableFields}
+      sourceLabel={dynamicBinding.sourceLabel}
     >
       {inner}
     </DynamicBindingControl>

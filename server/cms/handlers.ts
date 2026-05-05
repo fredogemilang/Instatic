@@ -564,6 +564,7 @@ export async function handleCmsRequest(
         dependencyCache,
         breakpointId,
         templateContext,
+        db,
       })
 
       return jsonResponse({

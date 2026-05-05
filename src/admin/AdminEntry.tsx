@@ -21,6 +21,9 @@ import styles from './AdminEntry.module.css'
 // so the publisher / page-tree / sanitize stack only ships in the lazy admin
 // chunk, never on the login / setup cold path.
 import '../modules/base'
+// Register built-in loop sources so the Properties Panel + editor preview
+// can pick them up. Same lazy-chunk reasoning as the modules import above.
+import '@core/loops/sources'
 
 type AdminPhase = 'loading' | 'setup' | 'login' | 'editor'
 type AdminSection = AdminWorkspace

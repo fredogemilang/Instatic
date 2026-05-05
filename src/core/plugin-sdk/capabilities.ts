@@ -83,6 +83,13 @@ export const PLUGIN_CAPABILITIES: PluginCapability[] = [
     surfaces: ['editor', 'manifest'],
   },
   {
+    permission: 'loops.register',
+    label: 'Register loop entity sources',
+    description: 'Allows the plugin to register data sources for the base.loop module (e.g. external collections, custom queries).',
+    risk: 'medium',
+    surfaces: ['editor', 'server', 'manifest'],
+  },
+  {
     permission: 'hooks.register',
     label: 'Register CMS hooks and filters',
     description: 'Reserved for future CMS hook and filter APIs.',

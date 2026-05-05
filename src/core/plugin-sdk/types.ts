@@ -15,6 +15,7 @@ export const PLUGIN_PERMISSION_VALUES = [
   'editor.store.read',
   'editor.store.write',
   'modules.register',
+  'loops.register',
   'hooks.register',
   'unstable.internals',
 ] as const

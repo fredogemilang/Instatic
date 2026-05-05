@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Page } from '@core/page-tree'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import {
-  contentEntryToTemplateEntryData,
+  contentEntryToLoopItem,
   selectLatestTemplatePreviewEntry,
 } from '@core/templates/templatePreviewData'
 import { listCmsContentEntries } from '@core/persistence/cmsContent'
@@ -32,7 +32,7 @@ export function useTemplatePreviewContext(page: Page | null): TemplateRenderData
         setPreviewState({
           collectionId,
           context: latestEntry
-            ? { currentEntry: contentEntryToTemplateEntryData(latestEntry, mediaAssets) }
+            ? { entryStack: [contentEntryToLoopItem(latestEntry, mediaAssets)] }
             : undefined,
         })
       })

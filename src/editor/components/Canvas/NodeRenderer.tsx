@@ -16,13 +16,15 @@ import { memo, useCallback, useContext } from 'react'
 import { useEditorStore, selectActiveCanvasPage } from '@core/editor-store/store'
 import { resolveProps } from '@core/page-tree/selectors'
 import { registry } from '@core/module-engine/registry'
-import { resolveDynamicProps } from '@core/templates/dynamicBindings'
+import { resolveDynamicProps, type TemplateRenderDataContext } from '@core/templates/dynamicBindings'
+import type { PageNode } from '@core/page-tree/schemas'
 import { WarningDiamondIcon } from 'pixel-art-icons/icons/warning-diamond'
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { ModuleSandboxFrame } from './ModuleSandboxFrame'
 import { CanvasBreakpointContext, CanvasSelectionContext, CanvasTemplateContext } from './CanvasContexts'
 import { getCanvasNodeClassIds, getCanvasNodeClassName } from './canvasNodeClassName'
 import { findEnclosingComponentRef, type AnnotatedPageNode } from './canvasSelectionUtils'
+import { useLoopPreviewItems } from './useLoopPreviewItems'
 import styles from './NodeRenderer.module.css'
 
 // ---------------------------------------------------------------------------
@@ -142,10 +144,19 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     )
   }
 
-  // Render children recursively
-  const children = node.children.map((childId) => (
-    <NodeRenderer key={childId} nodeId={childId} />
-  ))
+  // Render children recursively. For `base.loop` nodes, delegate to a
+  // dedicated component (`LoopIterationsPreview`) that uses hooks to fetch
+  // real iteration data via the CMS API and round-robins variants across
+  // iterations. Each iteration pushes a real LoopItem onto the entry stack
+  // via a nested CanvasTemplateContext.Provider so dynamic bindings inside
+  // the loop body resolve against the iteration item — same semantics as
+  // the publisher's renderLoop().
+  const children =
+    node.moduleId === 'base.loop' && node.children.length > 0 ? (
+      <LoopIterationsPreview node={node} baseTemplateContext={templateContext} />
+    ) : (
+      node.children.map((childId) => <NodeRenderer key={childId} nodeId={childId} />)
+    )
 
   const ComponentType = definition.component
   const shouldRenderSandbox = Boolean(definition.editorRuntime?.sandbox && !definition.trusted)
@@ -202,6 +213,58 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     </NodeWrapper>
   )
 })
+
+// ---------------------------------------------------------------------------
+// Loop iteration preview
+// ---------------------------------------------------------------------------
+
+interface LoopIterationsPreviewProps {
+  node: PageNode
+  baseTemplateContext?: TemplateRenderDataContext
+}
+
+/**
+ * Render a `base.loop` node's children once per real iteration item.
+ *
+ * Mirrors the publisher's `renderLoop()` in `src/core/publisher/render.ts`:
+ *   - Round-robin children when N variants × M items.
+ *   - Augmented `templateContext` per iteration via Context.Provider, so
+ *     dynamic bindings inside the loop body resolve to the iteration's
+ *     `currentEntry`.
+ *
+ * Iteration data comes from `useLoopPreviewItems`, which dispatches per
+ * source: built-in sources (`content.entries`, `site.media`) fetch real
+ * data via the CMS API; in-memory sources (`site.pages`) read directly
+ * from the store; plugin sources fall back to their `preview()` method.
+ *
+ * Empty result (source not picked yet, no rows, fetch in flight) renders
+ * nothing — same as the publisher's empty-loop behaviour. Once data
+ * arrives the component re-renders with real iterations.
+ */
+function LoopIterationsPreview({ node, baseTemplateContext }: LoopIterationsPreviewProps) {
+  const items = useLoopPreviewItems(node)
+  if (items.length === 0) return null
+
+  const baseStack = baseTemplateContext?.entryStack ?? []
+  return (
+    <>
+      {items.map((item, i) => {
+        const variantId = node.children[i % node.children.length]
+        const augmentedContext: TemplateRenderDataContext = {
+          entryStack: [...baseStack, item],
+        }
+        return (
+          <CanvasTemplateContext.Provider
+            key={`${variantId}-${i}-${item.id}`}
+            value={augmentedContext}
+          >
+            <NodeRenderer nodeId={variantId} />
+          </CanvasTemplateContext.Provider>
+        )
+      })}
+    </>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // NodeWrapper — click/hover target, selection ring

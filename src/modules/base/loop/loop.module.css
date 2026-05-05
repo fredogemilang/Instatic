@@ -1,0 +1,26 @@
+/**
+ * base.loop — editor canvas styles.
+ * Achromatic tokens only (Constraint #376). No inline hex colors.
+ *
+ * The loop intentionally has NO default visual styling on its iteration
+ * wrapper. Whatever class the author assigns (grid, flex, columns, gap,
+ * etc.) lands on the same wrapper element via `mcClassName`, so the
+ * iterations get laid out exactly the way the author wants. Mirrors the
+ * publisher's output: `<div class="<user-classes>">…iterations…</div>`.
+ */
+
+.empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px dashed var(--editor-border-med);
+  border-radius: var(--editor-radius);
+  background: var(--editor-surface-2);
+  color: var(--editor-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  min-height: 40px;
+  box-sizing: border-box;
+  user-select: none;
+}

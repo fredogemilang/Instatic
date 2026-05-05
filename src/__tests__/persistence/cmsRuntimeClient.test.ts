@@ -35,7 +35,7 @@ describe('CMS runtime client', () => {
         site: { id: 'site_1' },
         pageId: 'page_1',
         breakpointId: 'mobile',
-        templateContext: { currentEntry: null },
+        templateContext: { entryStack: [] },
       },
       async (input, init) => {
         calls.push({ input, init })
@@ -57,7 +57,7 @@ describe('CMS runtime client', () => {
       site: { id: 'site_1' },
       pageId: 'page_1',
       breakpointId: 'mobile',
-      templateContext: { currentEntry: null },
+      templateContext: { entryStack: [] },
     }))
   })
 })

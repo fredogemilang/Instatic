@@ -32,7 +32,8 @@ import {
 } from '@core/editor-store/store'
 import { usePropertiesPanelAutoOpen } from './usePropertiesPanelAutoOpen'
 import { registry } from '@core/module-engine/registry'
-import { evaluateCondition, resolveProps } from '@core/page-tree/selectors'
+import { evaluateCondition, getAncestors, resolveProps } from '@core/page-tree/selectors'
+import { loopSourceRegistry } from '@core/loops/registry'
 import { isGeneratedClassLocked } from '@core/page-tree/classUtils'
 import { PropertyControlRenderer } from '../PropertyControls/PropertyControlRenderer'
 import type { PropertyControl } from '@core/module-engine/types'
@@ -49,6 +50,7 @@ import {
   getActiveStyleTab,
 } from './cssControlTypes'
 import { ComponentRefView } from './ComponentRefView'
+import { LoopPropertiesView } from './LoopPropertiesView'
 import { ParamPromotableRow } from './ParamPromotableRow'
 import { ComponentParamsOverview } from './ComponentParamsOverview'
 import { ConvertToComponentButton } from './ConvertToComponentButton'
@@ -157,7 +159,30 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
       ? site?.classes[activeClassId]
       : null
   const activePage = site?.pages.find((page) => page.id === activePageId) ?? null
-  const dynamicBindingsEnabled = activePage?.template?.context === 'entry'
+
+  // Dynamic bindings are available whenever the selected node sits inside a
+  // scope that produces a `currentEntry` at render time:
+  //   - on a single-entry template page (the page itself injects an entry), OR
+  //   - inside a `base.loop` subtree (the loop pushes an iteration item per render).
+  // For nodes with a `base.loop` ancestor we expose the same `currentEntry`
+  // bindings — they resolve to the loop's iteration item via the publisher's
+  // entry-stack semantics.
+  const ancestors = activePage && selectedNodeId
+    ? getAncestors(activePage, selectedNodeId)
+    : []
+  // Closest enclosing loop wins — that's the one whose source defines the
+  // available fields for `currentEntry` bindings inside this subtree.
+  const enclosingLoopNode = [...ancestors]
+    .reverse()
+    .find((a) => a.moduleId === 'base.loop')
+  const enclosingLoopSourceId =
+    enclosingLoopNode && typeof enclosingLoopNode.props.sourceId === 'string'
+      ? enclosingLoopNode.props.sourceId
+      : null
+  const enclosingLoopSource = enclosingLoopSourceId
+    ? loopSourceRegistry.get(enclosingLoopSourceId)
+    : undefined
+  const dynamicBindingsEnabled = activePage?.template?.context === 'entry' || !!enclosingLoopNode
 
   // ─── Prop change handler ───────────────────────────────────────────────────
   const handleChange = useCallback(
@@ -186,8 +211,24 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
     : 'Dock in right sidebar'
 
   // ── Module tab content — pre-rendered, passed to StyleSurface as a ReactNode
-  const moduleTabContent = definition && selectedNode && resolvedPropsForBreakpoint
-    ? (
+  //
+  // For `base.loop` we substitute the schema-driven control list with the
+  // dedicated `LoopPropertiesView` (source picker + dynamic filter UI). The
+  // loop's empty `schema` would otherwise leave this section blank. Crucially,
+  // we still render this *inside* the standard StyleSurface flow, which means
+  // the ClassPicker + style sections (display, layout, etc.) keep working —
+  // the user can assign classes to the loop wrapper to lay out iterations as
+  // a grid, flex row, columns, etc.
+  let moduleTabContent: React.ReactNode = null
+  if (selectedNode?.moduleId === 'base.loop' && selectedNodeId) {
+    moduleTabContent = (
+      <LoopPropertiesView
+        nodeId={selectedNodeId}
+        props={selectedNode.props as Record<string, unknown>}
+      />
+    )
+  } else if (definition && selectedNode && resolvedPropsForBreakpoint) {
+    moduleTabContent = (
       <>
         {Object.entries(definition.schema).map(([key, control]: [string, PropertyControl]) => {
           if (control.condition && !evaluateCondition(control.condition, resolvedPropsForBreakpoint)) {
@@ -227,13 +268,15 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
                   clearNodeDynamicBinding(selectedNodeId, key)
                   setStatusMessage(`${key} binding removed`)
                 },
+                availableFields: enclosingLoopSource?.fields,
+                sourceLabel: enclosingLoopSource?.label,
               } : undefined}
             />
           )
         })}
       </>
     )
-    : null
+  }
 
   return (
     <aside
