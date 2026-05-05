@@ -336,7 +336,7 @@ export interface VisualComponentsSlice {
    *   - Called while editing a visual component (activeDocument.kind === 'visualComponent')
    *   - No page is active in the editor (activeDocument === null && activePageId === null)
    *   - nodeId not found on the active page
-   *   - Source node is a base.visual-component-ref or base.root (cannot re-wrap)
+   *   - Source node is a base.visual-component-ref or base.body (cannot re-wrap)
    *   - nodeId is the page root
    */
   convertNodeToComponent(nodeId: string, name: string): string
@@ -369,7 +369,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
 
     const rootNode: VCNode = {
       id: rootNodeId,
-      moduleId: 'base.root',
+      moduleId: 'base.body',
       props: {},
       children: [],
       breakpointOverrides: {},
@@ -709,8 +709,8 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
     if (sourceNode.moduleId === 'base.visual-component-ref') {
       throw new Error('convertNodeToComponent: cannot convert a base.visual-component-ref node')
     }
-    if (sourceNode.moduleId === 'base.root') {
-      throw new Error('convertNodeToComponent: cannot convert a base.root node')
+    if (sourceNode.moduleId === 'base.body') {
+      throw new Error('convertNodeToComponent: cannot convert a base.body node')
     }
 
     // 4. Data integrity check: all VCs referenced in the subtree must exist
@@ -771,8 +771,8 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
         }
 
         if (!parentNode) {
-          // nodeId has no parent — it is the page root; cannot convert
-          throw new Error('convertNodeToComponent: cannot convert page root')
+          // nodeId has no parent — it is the page body; cannot convert
+          throw new Error('convertNodeToComponent: cannot convert page body')
         }
 
         // Replace source nodeId with the new VC-ref node id in the parent's children

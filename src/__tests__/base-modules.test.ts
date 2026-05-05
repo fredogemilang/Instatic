@@ -35,7 +35,7 @@ import { ImageModule } from '../modules/base/image'
 import { VideoModule } from '../modules/base/video'
 import { ListModule } from '../modules/base/list'
 import { LinkModule } from '../modules/base/link'
-import { RootModule } from '../modules/base/root'
+import { BodyModule } from '../modules/base/body'
 import { VisualComponentRefModule } from '../modules/base/visualComponentRef'
 import { SlotOutletModule } from '../modules/base/slotOutlet'
 
@@ -89,7 +89,7 @@ describe('base module registration', () => {
     // All base module settings should be content/structural, not visual/CSS.
     // Visual styling is handled via class assignment and the CSS editor.
     for (const mod of [
-      RootModule,
+      BodyModule,
       ContainerModule,
       TextModule,
       ListModule,

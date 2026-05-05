@@ -476,8 +476,11 @@ export function renderNode(nodeId: string, ctx: RenderContext): string {
   }
 
   // 6. Inject user-facing class names into the root HTML element.
+  //    base.body emits no wrapper element — its render returns naked children
+  //    HTML — so there's nothing to inject onto here. Root-level classIds are
+  //    applied to <body> by publishPage() instead.
   let html = output.html
-  if (node.classIds?.length) {
+  if (node.moduleId !== 'base.body' && node.classIds?.length) {
     const classAttr = classNamesForClassIds(ctx.site.classes, node.classIds)
       .map(escapeHtml)
       .join(' ')
@@ -642,6 +645,18 @@ export function publishPage(
   // same data is already in the pre-built `framework.css` bundle.
   const bodyHtml = renderNode(page.rootNodeId, ctx)
 
+  // Compute the <body> class attribute from the root node's classIds.
+  // base.body emits no wrapper element, so any user classes applied to the
+  // page root land on <body> directly — clean HTML, no freeloader <div>.
+  const rootNode = page.nodes[page.rootNodeId]
+  const bodyClassAttr =
+    rootNode?.classIds?.length
+      ? classNamesForClassIds(site.classes, rootNode.classIds)
+          .map(escapeHtml)
+          .join(' ')
+      : ''
+  const bodyOpenTag = bodyClassAttr ? `<body class="${bodyClassAttr}">` : '<body>'
+
   // Build CSS head content based on emission mode.
   //
   // Cascade order (both modes): reset → framework (tokens + module CSS) →
@@ -703,7 +718,7 @@ export function publishPage(
     styleHeadHtml +
     `${headRuntimeScripts ? `${headRuntimeScripts}\n` : ''}` +
     `</head>\n` +
-    `<body>\n` +
+    `${bodyOpenTag}\n` +
     `${bodyHtml}\n` +
     `${bodyEndRuntimeScripts ? `${bodyEndRuntimeScripts}\n` : ''}` +
     `${loopRuntimeScript ? `${loopRuntimeScript}\n` : ''}` +

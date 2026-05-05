@@ -10,8 +10,8 @@
  * Order matters only for module IDs that reference each other — keep alphabetical.
  */
 
-// Invisible page root (required — every new page starts with one)
-import './root'
+// Page body (required — every new page starts with one)
+import './body'
 
 // Layout modules
 import './container'

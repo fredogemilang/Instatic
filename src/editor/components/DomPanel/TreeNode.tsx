@@ -103,10 +103,10 @@ export const TreeNode = memo(function TreeNode({ nodeId, depth }: TreeNodeProps)
   const definition = registry.get(node.moduleId)
   const displayName = node.label || definition?.name || node.moduleId
   const hasChildren = node.children.length > 0
-  // The page root is the implicit body injected into every editor: it is the
-  // only top-level row in the tree, so collapsing it would just hide the
-  // entire document. Force it open and hide its chevron — the row is purely
-  // a label for "the page", with no expand/collapse affordance.
+  // The page body is the root of the page tree — the only top-level row, so
+  // collapsing it would just hide the entire document. Force it open and hide
+  // its chevron — the row is purely a label for "the page body", with no
+  // expand/collapse affordance.
   const expanded = isRoot ? true : isExpanded(nodeId)
   const isOpenContainerGroup = node.moduleId === 'base.container' && hasChildren && expanded && isSelected
   const dropPosition =
