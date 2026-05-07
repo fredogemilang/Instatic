@@ -324,7 +324,7 @@ interface DirectionInputProps {
 
 function DirectionInput({
   property,
-  icon: Icon,
+  icon: DirectionIcon,
   ariaLabel,
   storedValue,
   currentValue,
@@ -346,7 +346,7 @@ function DirectionInput({
       data-testid={`css-direction-input-${String(property)}`}
     >
       <span className={styles.directionIcon} aria-hidden="true">
-        <Icon size={14} />
+        <DirectionIcon size={14} />
       </span>
       <TokenAwareInput
         aria-label={ariaLabel}
