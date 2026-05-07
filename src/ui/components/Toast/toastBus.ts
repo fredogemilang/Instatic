@@ -97,25 +97,13 @@ export function dismissToast(id: string): void {
   notify()
 }
 
-/** Drop every toast — used when navigating between admin sections. */
-export function clearToasts(): void {
-  if (toasts.length === 0) return
-  toasts.length = 0
-  notify()
-}
-
 /**
  * Subscribe to bus updates. The listener is invoked synchronously with the
- * current snapshot on each push/dismiss/clear. Returns an unsubscribe fn.
+ * current snapshot on each push/dismiss. Returns an unsubscribe fn.
  */
 export function subscribeToasts(listener: Listener): () => void {
   listeners.add(listener)
   return () => {
     listeners.delete(listener)
   }
-}
-
-/** Read the current list — primarily for tests. */
-export function getToastsSnapshot(): ReadonlyArray<Toast> {
-  return toasts.slice()
 }

@@ -60,8 +60,6 @@ import { useCurrentAdminUser } from './sessionContext'
 import { canAccessWorkspace, hasAllCapabilities, hasCapability } from './access'
 import type { CmsCurrentUser } from '@core/persistence'
 
-export type { AdminWorkspace }
-
 interface AdminLayoutProps {
   workspace?: AdminWorkspace
   contentSidebar?: ReactNode
@@ -85,11 +83,15 @@ export default function AdminLayout({
   const currentUser = useCurrentAdminUser()
   const contentRightSidebarExpanded = workspace === 'content' && Boolean(contentRightPanel)
   const hasRightSidebar = contentRightSidebarExpanded || (workspace === 'site' && rightSidebarExpanded)
-  const canSaveDraftSite = !currentUser || hasAllCapabilities(currentUser, ['site.edit', 'pages.edit'])
+  const canEditDraftSite = !currentUser || hasAllCapabilities(currentUser, ['site.edit', 'pages.edit'])
   const canPublishPages = !currentUser || hasCapability(currentUser, 'pages.publish')
+  const requiresSiteDocument = workspace === 'site'
 
   // J12 — wire persistence: load, auto-save, toolbar Save, Cmd+S.
-  const persistence = usePersistence('default', cmsAdapter, { markNewSiteUnsaved: true })
+  const persistence = usePersistence('default', cmsAdapter, {
+    markNewSiteUnsaved: true,
+    enabled: requiresSiteDocument,
+  })
   useEditorLayoutPersistence()
   useInstalledEditorPlugins()
 
@@ -105,6 +107,8 @@ export default function AdminLayout({
   )
 
   const handleCanvasDragEnd = useCallback((event: DragEndEvent) => {
+    if (!canEditDraftSite) return
+
     const payload = event.active.data.current
     // Only handle visualComponentRef drags — ignore all other drag payloads
     // (e.g. DOM-panel tree node drags which live in their own nested context).
@@ -131,7 +135,7 @@ export default function AdminLayout({
     if (result === null) {
       console.warn('[component-system] insertComponentRef returned null — cycle prevented or empty componentId')
     }
-  }, [])
+  }, [canEditDraftSite])
 
   // UI density preference — `data-editor-density` on the editor root drives
   // CSS variables consumed by tree rows, toolbar buttons, and other density-
@@ -143,7 +147,7 @@ export default function AdminLayout({
   // on every render).
   const density = useEditorSelectPreference('density')
 
-  if (!site) {
+  if (requiresSiteDocument && !site) {
     if (persistence.saveStatus.state === 'error') {
       return (
         <main className={styles.bootstrapError} role="alert">
@@ -160,7 +164,7 @@ export default function AdminLayout({
     <div className={styles.shell} data-editor-density={density}>
       {/* ── Top toolbar (z-60, Guideline #374) ───────────────────────────── */}
       <Toolbar
-        onSave={canSaveDraftSite ? persistence.saveSite : undefined}
+        onSave={canEditDraftSite ? persistence.saveSite : undefined}
         saveStatus={persistence.saveStatus}
         publishEnabled={workspace === 'site' && canPublishPages}
         section={workspace}
@@ -191,7 +195,7 @@ export default function AdminLayout({
       <ConfirmDeleteProvider>
       <div className={styles.editorBody}>
         {workspace === 'site' ? (
-          <LeftSidebar workspace={workspace} contentPanel={contentLeftPanel} />
+          <LeftSidebar workspace={workspace} contentPanel={contentLeftPanel} editable={canEditDraftSite} />
         ) : (
           contentSidebar ?? null
         )}
@@ -203,9 +207,9 @@ export default function AdminLayout({
             {workspace === 'site' ? (
               <>
                 {/* Canvas — fills the remaining space between sidebars */}
-                <CanvasRoot />
+                <CanvasRoot editable={canEditDraftSite} />
                 {/* Properties can be unpinned into the floating draggable overlay. */}
-                {propertiesPanelMode === 'floating' && <PropertiesPanel variant="floating" />}
+                {canEditDraftSite && propertiesPanelMode === 'floating' && <PropertiesPanel variant="floating" />}
               </>
             ) : (
               contentCanvas
@@ -214,7 +218,7 @@ export default function AdminLayout({
         </div>
         <RightSidebar
           contentPanel={workspace === 'content' ? contentRightPanel : undefined}
-          suppressDefaultPanel={workspace !== 'site'}
+          suppressDefaultPanel={workspace !== 'site' || !canEditDraftSite}
         />
       </div>
       </ConfirmDeleteProvider>

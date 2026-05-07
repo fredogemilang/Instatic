@@ -1,0 +1,34 @@
+{
+  "$schema": "https://fallow.tools/schema/fallow.json",
+
+  // Additional entry points fallow can't infer from package.json:
+  //   - server/healthcheck.ts is invoked by the Dockerfile HEALTHCHECK and
+  //     compose.prod.yml's healthcheck block (Docker, not JS).
+  //   - scripts/build-google-fonts.ts is a manually-run dev script that
+  //     refreshes src/core/fonts/google-fonts.json.
+  "entry": [
+    "server/healthcheck.ts",
+    "scripts/build-google-fonts.ts"
+  ],
+
+  // Example plugins are zip-distributable user code that gets loaded at runtime
+  // via plugin.json — fallow can't see those manifest references. They are not
+  // part of the CMS import graph, so exclude them from analysis entirely.
+  "ignorePatterns": [
+    "examples/plugins/**",
+    "src/ui/icons/icon-browser.html",
+    "vendor/**",
+    ".tmp/**"
+  ],
+
+  // CSS-modules `:global(.cm-editor)` reaches into the CodeMirror runtime tree
+  // (CM6 stamps that class on the editor root). Fallow's CSS parser doesn't
+  // recognise `:global()` and would otherwise flag the class as an unused
+  // export.
+  "ignoreExports": [
+    {
+      "file": "src/editor/components/CodeEditor/CodeEditorPanel.module.css",
+      "exports": ["cm-editor"]
+    }
+  ]
+}

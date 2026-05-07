@@ -33,18 +33,6 @@
     min-width: 0;
 }
 
-.titleIcon {
-    display: grid;
-    flex: 0 0 auto;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    border: 1px solid var(--panel-border);
-    border-radius: 8px;
-    background: var(--editor-surface-2);
-    color: var(--editor-text);
-}
-
 .titleGroup h1 {
     margin: 0;
     font-size: 26px;

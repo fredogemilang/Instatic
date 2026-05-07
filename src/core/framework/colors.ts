@@ -8,7 +8,6 @@ import { formatCssVariableBlock } from './cssVariables'
 
 export type {
   FrameworkColorSettings,
-  FrameworkColorToken,
   FrameworkColorUtilityType,
 } from './schemas'
 
@@ -89,12 +88,6 @@ export function generateFrameworkColorRootCss(
   ]
     .filter(Boolean)
     .join('\n\n')
-}
-
-export function generateFrameworkColorThemeCss(
-  settings: FrameworkColorSettings | null | undefined,
-): string {
-  return formatFrameworkColorThemeCss(generateFrameworkColorVariableSets(settings))
 }
 
 export function formatFrameworkColorThemeCss(sets: FrameworkColorVariableSets): string {

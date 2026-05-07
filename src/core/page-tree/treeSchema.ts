@@ -27,7 +27,7 @@
  * Constraint #269: this module must not import from editor/ or editor-store/.
  */
 
-import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { Type } from '@core/utils/typeboxHelpers'
 import { BaseNodeSchema, type BaseNode } from './baseNode'
 
 /**
@@ -47,11 +47,6 @@ export const NodeTreeSchema = Type.Object({
   rootNodeId: Type.String(),
 })
 
-/**
- * Type-erased shape of the schema (BaseNode-typed). Prefer the generic
- * `NodeTree<TNode>` below when the caller knows the richer node subtype.
- */
-export type NodeTreeShape = Static<typeof NodeTreeSchema>
 
 /**
  * Generic NodeTree type. `TNode` defaults to BaseNode (the persistence-level

@@ -17,11 +17,7 @@
  * - `withFallback(schema, fallback)` — annotate a schema with a default value
  *   used when validation fails. Equivalent to Zod's `.catch()`.
  * - `parseValue(schema, value)` — strict parse; throws on invalid input.
- * - `parseValueOrFallback(schema, value, fallback)` — soft parse; returns
- *   fallback on invalid input.
  * - `safeParseValue(schema, value)` — discriminated-union result type.
- * - `parseWithFallbackAnnotation(schema, value)` — soft parse using the
- *   fallback annotation attached by `withFallback`.
  * - `Static<T>` — re-exported from TypeBox for type inference (mirror of
  *   `z.infer<T>`).
  */
@@ -60,13 +56,6 @@ export function withFallback<T extends TSchema>(schema: T, fallback: TBStatic<T>
 }
 
 /**
- * Read the fallback attached by `withFallback`, if any.
- */
-function getFallback<T extends TSchema>(schema: T): TBStatic<T> | undefined {
-  return (schema as T & SchemaWithFallback<T>)[FALLBACK]
-}
-
-/**
  * Strict parse. Throws if the value does not match the schema. Use at HTTP
  * boundaries where invalid input is genuinely an error.
  *
@@ -79,36 +68,6 @@ export function parseValue<T extends TSchema>(schema: T, value: unknown): TBStat
   // closest match to Zod's `.parse()` semantics — it both validates and
   // produces the canonical output shape.
   return Value.Parse(schema, value) as TBStatic<T>
-}
-
-/**
- * Soft parse. Returns the fallback if the value does not match the schema.
- * Use for best-effort reads of persisted data where corruption should not
- * brick the UI (localStorage, JSONB columns).
- */
-export function parseValueOrFallback<T extends TSchema>(
-  schema: T,
-  value: unknown,
-  fallback: TBStatic<T>,
-): TBStatic<T> {
-  if (Value.Check(schema, value)) {
-    return Value.Decode(schema, value) as TBStatic<T>
-  }
-  return fallback
-}
-
-/**
- * Soft parse using the fallback annotation attached by `withFallback`.
- * Returns the annotated fallback (or `undefined` if none was attached).
- */
-export function parseWithFallbackAnnotation<T extends TSchema>(
-  schema: T,
-  value: unknown,
-): TBStatic<T> | undefined {
-  if (Value.Check(schema, value)) {
-    return Value.Decode(schema, value) as TBStatic<T>
-  }
-  return getFallback(schema)
 }
 
 /**

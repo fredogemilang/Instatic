@@ -1,1 +1,1 @@
-export { ModuleIcon, type ModuleIconProps } from './ModuleIcon'
+export { ModuleIcon } from './ModuleIcon'

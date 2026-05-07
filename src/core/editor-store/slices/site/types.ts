@@ -9,7 +9,6 @@
 import type { StoreApi } from 'zustand'
 import type { Draft } from 'immer'
 import type {
-  CSSClass,
   FontEntry,
   SiteDocument,
   Page,
@@ -279,5 +278,3 @@ export interface SiteSliceHelpers {
   mutateSite: (fn: (site: SiteDocument) => void) => void
 }
 
-// Re-exported for action factory return types.
-export type { CSSClass }

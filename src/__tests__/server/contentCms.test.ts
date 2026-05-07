@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { DbResult } from '../../../server/db'
-import { migrations } from '../../../server/db/migrations-pg'
+import { pgMigrations } from '../../../server/db/migrations-pg'
 import {
   createContentCollection,
   getContentEntryRedirectByRoute,
@@ -46,7 +46,7 @@ const productCollectionFields = {
 
 describe('content CMS migrations', () => {
   it('creates content tables and seeds the default Posts collection', () => {
-    const sql = migrations.map((migration) => migration.sql).join('\n')
+    const sql = pgMigrations.map((migration) => migration.sql).join('\n')
 
     expect(sql).toContain('create table if not exists content_collections')
     expect(sql).toContain('create table if not exists content_entries')

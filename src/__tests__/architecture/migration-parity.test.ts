@@ -27,8 +27,8 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { migrations as pgMigrations } from '../../../server/db/migrations-pg'
-import { migrations as sqliteMigrations } from '../../../server/db/migrations-sqlite'
+import { pgMigrations } from '../../../server/db/migrations-pg'
+import { sqliteMigrations } from '../../../server/db/migrations-sqlite'
 
 describe('Migration parity — migrations-pg.ts ↔ migrations-sqlite.ts', () => {
   test('PG and SQLite have the same number of migrations', () => {

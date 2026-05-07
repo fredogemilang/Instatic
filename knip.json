@@ -20,13 +20,11 @@
   "ignoreDependencies": [
     "@fontsource-variable/geist",
     "@fontsource-variable/inter",
-    "depcheck",
     "dependency-cruiser",
     "jscpd",
     "knip",
     "madge",
     "secretlint",
-    "@secretlint/secretlint-rule-preset-recommend",
-    "ts-prune"
+    "@secretlint/secretlint-rule-preset-recommend"
   ]
 }

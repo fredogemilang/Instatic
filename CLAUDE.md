@@ -226,7 +226,7 @@ The 11 named tree-mutation store actions (`insertNode`, `deleteNode`, `updateNod
 - **Clear logic over clever logic.** Straight-line code beats a generic abstraction with two callers.
 - **Names must be honest.** A function called `renderPage` renders a page. Not "kind of, depending on flags."
 - **One reason per module.** Files in `server/cms/*` and `src/core/*` are organized by responsibility — keep them that way.
-- **No dead code.** Unused exports, parameters, types, files: delete them. `ts-prune`, `knip`, `depcheck`, `madge`, and `jscpd` are installed in devDependencies — use them when in doubt.
+- **No dead code.** Unused exports, parameters, types, files: delete them. `fallow` (`npx fallow dead-code`) is the canonical tool; `knip`, `madge`, and `jscpd` remain available for second-opinion checks.
 - **No `any` to escape a type problem.** Fix the type.
 - **No commented-out code.** Git remembers.
 - **Validate at the boundary, trust inside.** Every external input (HTTP, `JSON.parse`, plugin manifests, persisted data) goes through a TypeBox schema. Don't `as Foo` your way past it.

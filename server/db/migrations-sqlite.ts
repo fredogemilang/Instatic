@@ -15,7 +15,7 @@ import type { Migration } from './runMigrations'
  * Migration IDs and order are identical to migrations-pg.ts — enforced by the
  * architecture test downstream.
  */
-export const migrations: Migration[] = [
+export const sqliteMigrations: Migration[] = [
   {
     id: '001_cms_foundation',
     sql: `

@@ -172,17 +172,6 @@
   border: 0;
 }
 
-/* ── Empty state (legacy "Loading editor..." chrome — kept for non-CM
-      surfaces that still want a centered notice) ─────────────────────────── */
-.loading {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  color: var(--editor-text-subtle);
-}
-
 /* ── CodeMirror container fill ───────────────────────────────────────────── */
 /* Applied via data-codemirror-container attribute on the container div.
    Fills the editorBody flex container so CM6 takes up all available space. */
@@ -190,7 +179,12 @@
   height: 100%;
 }
 
-/* CodeMirror overrides — ensure the editor fills its container */
+/* CodeMirror overrides — ensure the editor fills its container.
+   `:global(.cm-editor)` reaches into the runtime CodeMirror tree (CM6 stamps
+   that class on the editor root); fallow's CSS-modules parser doesn't know
+   about `:global()` and would otherwise flag `cm-editor` as an unused class
+   export. The matching ignoreExports rule in `.fallowrc.jsonc` keeps that
+   silent. */
 .editorBody :global(.cm-editor) {
   height: 100%;
   overflow: auto;

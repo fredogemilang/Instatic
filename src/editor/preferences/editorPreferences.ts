@@ -51,13 +51,13 @@ for (const def of PREFERENCE_CATALOG) {
   }
 }
 
-export const EditorPrefsSchema = Type.Object(schemaFields, {
+const EditorPrefsSchema = Type.Object(schemaFields, {
   additionalProperties: true,
 })
 
-export type EditorPrefs = Static<typeof EditorPrefsSchema>
+type EditorPrefs = Static<typeof EditorPrefsSchema>
 
-export const DEFAULT_EDITOR_PREFS: Required<EditorPrefs> = (() => {
+const DEFAULT_EDITOR_PREFS: Required<EditorPrefs> = (() => {
   const acc: Record<string, boolean | string> = {}
   for (const def of PREFERENCE_CATALOG) {
     if (def.type === 'boolean') acc[def.id] = def.default
@@ -97,7 +97,7 @@ function writeEditorPrefs(next: EditorPrefs): void {
 // ---------------------------------------------------------------------------
 
 /** Read a single boolean preference, falling back to the catalog default. */
-export function readEditorPreference(id: BooleanPreferenceId): boolean {
+function readEditorPreference(id: BooleanPreferenceId): boolean {
   const prefs = readEditorPrefs() as Record<string, unknown>
   const value = prefs[id]
   return typeof value === 'boolean' ? value : defaultBooleanFor(id)
@@ -136,18 +136,6 @@ export function readAutoSavePreference(): boolean {
 }
 
 /**
- * Whether to apply transient hover-previews on the canvas while the user
- * hovers a class suggestion, design token, or variable autocomplete entry
- * in the Properties panel.
- *
- * Covers any "hover this and see the canvas update without committing"
- * interaction. Pre-rename: `readClassHoverPreviewPreference`.
- */
-export function readHoverPreviewPreference(): boolean {
-  return readEditorPreference('hoverPreview')
-}
-
-/**
  * Read the auto-save delay preference as milliseconds. The catalog stores the
  * delay in seconds (string) for UI presentation; this function does the
  * conversion to ms so callers don't repeat the parse logic.
@@ -161,7 +149,7 @@ export function readAutoSaveDelayMs(): number {
 // Event bus
 // ---------------------------------------------------------------------------
 
-export function notifyEditorPrefsChanged(): void {
+function notifyEditorPrefsChanged(): void {
   try {
     globalThis.window?.dispatchEvent(new Event(EDITOR_PREFS_CHANGED_EVENT))
   } catch {

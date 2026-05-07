@@ -49,12 +49,6 @@ export function readObject<T>(body: Record<string, unknown>, key: string): T | u
     : undefined
 }
 
-export function readNullableString(body: Record<string, unknown>, key: string): string | null {
-  const value = body[key]
-  if (value === null) return null
-  return typeof value === 'string' && value.trim() ? value.trim() : null
-}
-
 export function requestAuditContext(req: Request): { ipAddress: string | null; userAgent: string | null } {
   return {
     ipAddress: clientIp(req),

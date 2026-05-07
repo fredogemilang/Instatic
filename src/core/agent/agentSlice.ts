@@ -742,7 +742,3 @@ function toSerializableValue(value: unknown): unknown {
 
   return String(value)
 }
-
-// AgentToolCall is re-exported for tests/UI consumers that import it via
-// agentSlice indirectly. It still lives in ./types.
-export type { AgentToolCall }

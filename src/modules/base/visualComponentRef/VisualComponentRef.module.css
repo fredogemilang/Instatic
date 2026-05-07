@@ -3,27 +3,6 @@
  * Achromatic tokens only (Constraint #376). No inline hex colors.
  */
 
-.placeholder {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--editor-border-med);
-  border-radius: var(--editor-radius);
-  background: var(--editor-surface-2);
-  color: var(--editor-text-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-  min-height: 32px;
-  box-sizing: border-box;
-  user-select: none;
-}
-
-.label {
-  color: var(--editor-text);
-  font-size: 12px;
-}
-
 .unknown {
   display: flex;
   align-items: center;

@@ -72,13 +72,3 @@ export function loadFontPreviewWithVariants(family: string, variants: readonly s
   document.head.appendChild(link)
 }
 
-/**
- * Tear down every preview link injected this session. Useful from
- * test/storybook teardowns; the editor itself rarely needs to call it.
- */
-export function clearAllFontPreviews(): void {
-  if (typeof document === 'undefined') return
-  document.head
-    .querySelectorAll(`link[id^="${PREVIEW_LINK_PREFIX}"]`)
-    .forEach((node) => node.remove())
-}

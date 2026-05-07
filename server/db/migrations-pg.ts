@@ -1,6 +1,6 @@
 import type { Migration } from './runMigrations'
 
-export const migrations: Migration[] = [
+export const pgMigrations: Migration[] = [
   {
     id: '001_cms_foundation',
     sql: `

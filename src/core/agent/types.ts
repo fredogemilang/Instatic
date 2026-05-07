@@ -10,49 +10,13 @@
  */
 
 // ---------------------------------------------------------------------------
-// Agent actions — the page-builder operations Claude can request
+// Insert-tree input shape (consumed by the agent executor)
+//
+// Claude submits new subtrees through the `insertTree` MCP tool; the executor
+// recursively materialises them. Per-action discriminated-union types used to
+// live here, but the executor reads its inputs straight from the tool input
+// object, so the only public shape now is `InsertTreeNode`.
 // ---------------------------------------------------------------------------
-
-/**
- * The full set of page-builder write actions exposed as MCP tools to Claude.
- *
- * Each action is its own `mcp__page_builder__<name>` tool on the server-side
- * MCP. The server's tool handler emits a `toolRequest` stream event so the
- * browser bridge can apply the mutation against the Zustand editor store and
- * POST a result back to /api/agent/tool-result.
- */
-export type AgentActionType =
-  | 'insertNode'
-  | 'insertTree'
-  | 'deleteNode'
-  | 'updateNodeProps'
-  | 'moveNode'
-  | 'renameNode'
-  | 'createClass'
-  | 'updateClassStyles'
-  | 'assignClass'
-  | 'removeClass'
-  | 'addPage'
-
-interface InsertNodeAction {
-  type: 'insertNode'
-  moduleId: string
-  /** Existing parent node ID. */
-  parentId: string
-  /** 0-based insertion index among parent's children. Appends if omitted. */
-  index?: number
-  /** Initial prop values for the new node. */
-  props?: Record<string, unknown>
-  /** Optional CSS class IDs (or existing class names) to attach to the new node. */
-  classIds?: string[]
-}
-
-interface AgentTreeClassDefinition {
-  name: string
-  styles?: Record<string, string | number>
-  /** Per-breakpoint class styles keyed by configured Breakpoint.id. */
-  breakpointStyles?: Record<string, Record<string, string | number>>
-}
 
 export interface InsertTreeNode {
   moduleId: string
@@ -65,95 +29,6 @@ export interface InsertTreeNode {
   classIds?: string[]
   children?: InsertTreeNode[]
 }
-
-interface InsertTreeAction {
-  type: 'insertTree'
-  /** Existing parent node ID. */
-  parentId: string
-  /** 0-based insertion index among parent's children. Appends if omitted. */
-  index?: number
-  /** CSS classes to create/update before inserting the tree. */
-  classes?: AgentTreeClassDefinition[]
-  /** Root node of the tree to insert. */
-  tree: InsertTreeNode
-}
-
-interface DeleteNodeAction {
-  type: 'deleteNode'
-  nodeId: string
-}
-
-interface UpdateNodePropsAction {
-  type: 'updateNodeProps'
-  nodeId: string
-  /** Optional configured breakpoint ID. When set, writes a breakpoint prop override. */
-  breakpointId?: string
-  patch: Record<string, unknown>
-}
-
-interface MoveNodeAction {
-  type: 'moveNode'
-  nodeId: string
-  newParentId: string
-  /** 0-based position in newParent's children. */
-  newIndex: number
-}
-
-interface RenameNodeAction {
-  type: 'renameNode'
-  nodeId: string
-  label: string
-}
-
-interface CreateClassAction {
-  type: 'createClass'
-  name: string
-  styles?: Record<string, string | number>
-  /** Per-breakpoint class styles keyed by configured Breakpoint.id. */
-  breakpointStyles?: Record<string, Record<string, string | number>>
-}
-
-interface UpdateClassStylesAction {
-  type: 'updateClassStyles'
-  /** Class ID or existing class name. */
-  classId: string
-  /** Optional configured breakpoint ID. When set, writes class breakpoint styles. */
-  breakpointId?: string
-  patch: Record<string, string | number>
-}
-
-interface AssignClassAction {
-  type: 'assignClass'
-  nodeId: string
-  /** Class ID or existing class name. */
-  classId: string
-}
-
-interface RemoveClassAction {
-  type: 'removeClass'
-  nodeId: string
-  /** Class ID or existing class name. */
-  classId: string
-}
-
-interface AddPageAction {
-  type: 'addPage'
-  title: string
-  slug?: string
-}
-
-export type AgentAction =
-  | InsertNodeAction
-  | InsertTreeAction
-  | DeleteNodeAction
-  | UpdateNodePropsAction
-  | MoveNodeAction
-  | RenameNodeAction
-  | CreateClassAction
-  | UpdateClassStylesAction
-  | AssignClassAction
-  | RemoveClassAction
-  | AddPageAction
 
 // ---------------------------------------------------------------------------
 // Execution result
@@ -414,15 +289,6 @@ export interface AgentScreenshotContext {
   width?: number
   height?: number
   error?: string
-}
-
-export interface AgentRenderSnapshotContext {
-  breakpointId: string
-  label: string
-  width: number
-  capturedAt: number
-  screenshot: AgentScreenshotContext
-  layout: AgentLayoutReportContext
 }
 
 export interface AgentPageSummary {

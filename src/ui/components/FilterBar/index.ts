@@ -1,6 +1,2 @@
 export { FilterBar } from './FilterBar'
-export type {
-  FilterBarItem,
-  FilterBarProps,
-  FilterBarSearchProps,
-} from './FilterBar'
+export type { FilterBarItem } from './FilterBar'

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test'
-import { migrations } from '../../../server/db/migrations-pg'
-import { migrations as sqliteMigrations } from '../../../server/db/migrations-sqlite'
+import { pgMigrations } from '../../../server/db/migrations-pg'
+import { sqliteMigrations } from '../../../server/db/migrations-sqlite'
 import { SYSTEM_ROLES } from '../../../server/auth/capabilities'
 
 describe('CMS migrations', () => {
   it('creates the required CMS tables', () => {
-    const sql = migrations.map((m) => m.sql).join('\n')
+    const sql = pgMigrations.map((m) => m.sql).join('\n')
     expect(sql).toContain('create table if not exists site')
     expect(sql).toContain('create table if not exists users')
     expect(sql).toContain('create table if not exists roles')
@@ -18,18 +18,18 @@ describe('CMS migrations', () => {
   })
 
   it('stores draft and published page documents as jsonb', () => {
-    const sql = migrations.map((m) => m.sql).join('\n')
+    const sql = pgMigrations.map((m) => m.sql).join('\n')
     expect(sql).toContain('draft_document_json jsonb not null')
     expect(sql).toContain('snapshot_json jsonb not null')
   })
 
   it('stores page sort order for reconstructing the editor draft', () => {
-    const sql = migrations.map((m) => m.sql).join('\n')
+    const sql = pgMigrations.map((m) => m.sql).join('\n')
     expect(sql).toContain('sort_order integer not null default 0')
   })
 
   it('stores ownership metadata for pages, content, media, and published versions', () => {
-    const pgSql = migrations.map((m) => m.sql).join('\n')
+    const pgSql = pgMigrations.map((m) => m.sql).join('\n')
     const sqliteSql = sqliteMigrations.map((m) => m.sql).join('\n')
 
     for (const sql of [pgSql, sqliteSql]) {
@@ -46,14 +46,14 @@ describe('CMS migrations', () => {
   })
 
   it('does not keep retired single-admin schema names', () => {
-    const sql = migrations.map((m) => m.sql).join('\n')
+    const sql = pgMigrations.map((m) => m.sql).join('\n')
     expect(sql).not.toContain('admin_users')
     expect(sql).not.toContain('admin_user_id')
     expect(sql).not.toContain('site_singleton')
   })
 
   it('seeds the expected system roles in both dialects', () => {
-    const pgSql = migrations.map((m) => m.sql).join('\n')
+    const pgSql = pgMigrations.map((m) => m.sql).join('\n')
     const sqliteSql = sqliteMigrations.map((m) => m.sql).join('\n')
     for (const role of SYSTEM_ROLES) {
       expect(pgSql).toContain(`'${role.slug}'`)

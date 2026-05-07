@@ -3,7 +3,6 @@ import { rowToUser, type AuthUser } from '../repositories/users'
 import type { UserRow } from '../types'
 
 const SESSION_IDLE_TIMEOUT_MS = 1000 * 60 * 60 * 24 * 30
-const SESSION_ABSOLUTE_TIMEOUT_MS = 1000 * 60 * 60 * 24 * 90
 
 interface SessionUserRow extends UserRow {
   role_slug: string
@@ -13,11 +12,7 @@ interface SessionUserRow extends UserRow {
   role_capabilities_json: unknown
 }
 
-export function sessionAbsoluteExpiry(now = Date.now()): Date {
-  return new Date(now + SESSION_ABSOLUTE_TIMEOUT_MS)
-}
-
-export function sessionIdleCutoff(now = Date.now()): Date {
+function sessionIdleCutoff(now = Date.now()): Date {
   return new Date(now - SESSION_IDLE_TIMEOUT_MS)
 }
 

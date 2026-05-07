@@ -11,15 +11,6 @@
  * implementation.
  */
 
-export const SCALE_SIZES_INDEX = [
-  '25xs', '24xs', '23xs', '22xs', '21xs', '20xs', '19xs', '18xs', '17xs', '16xs',
-  '15xs', '14xs', '13xs', '12xs', '11xs', '10xs', '9xs', '8xs', '7xs', '6xs',
-  '5xs', '4xs', '3xs', '2xs', 'xs', 's', 'm', 'l', 'xl', '2xl', '3xl', '4xl',
-  '5xl', '6xl', '7xl', '8xl', '9xl', '10xl', '11xl', '12xl', '13xl', '14xl',
-  '15xl', '16xl', '17xl', '18xl', '19xl', '20xl', '21xl', '22xl', '23xl',
-  '24xl', '25xl',
-] as const
-
 export const TYPE_RATIO_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: '1.067', label: 'Minor Second (1.067)' },
   { value: '1.125', label: 'Major Second (1.125)' },
@@ -40,11 +31,11 @@ export const SPACING_RATIO_OPTIONS: ReadonlyArray<{ value: string; label: string
   { value: '2',     label: 'Perfect Octave (2)' },
 ]
 
-export const DEFAULT_ROOT_FONT_SIZE = 10
-export const DEFAULT_MIN_SCREEN_WIDTH = 320
-export const DEFAULT_MAX_SCREEN_WIDTH = 1400
-export const DEFAULT_IS_REM = true
-export const DEFAULT_TREE_SHAKE_GENERATED_FRAMEWORK_UTILITIES = true
+const DEFAULT_ROOT_FONT_SIZE = 10
+const DEFAULT_MIN_SCREEN_WIDTH = 320
+const DEFAULT_MAX_SCREEN_WIDTH = 1400
+const DEFAULT_IS_REM = true
+const DEFAULT_TREE_SHAKE_GENERATED_FRAMEWORK_UTILITIES = true
 
 export interface FrameworkPreferences {
   rootFontSize: number
@@ -67,15 +58,15 @@ export const DEFAULT_FRAMEWORK_PREFERENCES: FrameworkPreferences = {
  * Used everywhere a value flows into the rendered CSS string so output
  * does not drift between the editor preview and the published page.
  */
-export function round(value: number): number {
+function round(value: number): number {
   return Number(value.toFixed(2))
 }
 
-export function pxToRem(px: number, rootFontSize = 16): string {
+function pxToRem(px: number, rootFontSize = 16): string {
   return `${round(px / rootFontSize)}rem`
 }
 
-export function convertToDesiredUnit(
+function convertToDesiredUnit(
   value: number | string,
   unit: 'px' | 'rem',
   rootFontSize = 16,
@@ -86,7 +77,7 @@ export function convertToDesiredUnit(
 }
 
 /** Slugify a user-entered naming convention into a CSS-safe identifier root. */
-export function convertSafeCssName(input: string): string {
+function convertSafeCssName(input: string): string {
   return input.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-_]/g, '')
 }
 
@@ -108,7 +99,7 @@ export function getVariableName(namingConvention: string, step: string): string 
   return `--${namingConvention.replace(/\s/g, '-')}-${step}`
 }
 
-export interface Size {
+interface Size {
   size: number
   breakpoint: number
 }

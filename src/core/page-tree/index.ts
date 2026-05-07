@@ -6,28 +6,16 @@ export type {
   Breakpoint,
   SiteSettings,
   PageTemplateConfig,
-  TemplateCondition,
-  TemplateContext,
   DynamicPropBinding,
-  DynamicBindingFormat,
-  DynamicBindingSource,
 } from './schemas'
 
-export type {
-  FontEntry,
-  FontFile,
-  FontSource,
-  SiteFontsSettings,
-} from '../fonts/schemas'
+export type { FontEntry } from '../fonts/schemas'
 
 export type { BaseNode } from './baseNode'
 
-export type { NodeTree, NodeTreeShape } from './treeSchema'
-export { NodeTreeSchema } from './treeSchema'
+export type { NodeTree } from './treeSchema'
 
 export type {
-  FrameworkSettings,
-  FrameworkColorSettings,
   FrameworkColorToken,
   FrameworkColorUtilityType,
   FrameworkPreferencesSettings,
@@ -35,16 +23,8 @@ export type {
   FrameworkScaleMode,
   FrameworkSpacingClassGenerator,
   FrameworkSpacingGroup,
-  FrameworkSpacingSettings,
-  FrameworkTypographyBreakpointConfig,
   FrameworkTypographyClassGenerator,
   FrameworkTypographyGroup,
-  FrameworkTypographySettings,
-  FrameworkSpacingBreakpointConfig,
-  GeneratedClassMetadata,
-  GeneratedColorClassMetadata,
-  GeneratedSpacingClassMetadata,
-  GeneratedTypographyClassMetadata,
 } from '../framework/schemas'
 
 export {

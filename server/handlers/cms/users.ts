@@ -23,7 +23,7 @@ import {
   updateUser,
 } from '../../repositories/users'
 import type { UserStatus } from '../../types'
-import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, methodNotAllowed } from '../../http'
 import {
   CMS_API_PREFIX,
@@ -49,8 +49,6 @@ const UserPatchBodySchema = Type.Partial(Type.Object({
   status: UserStatusSchema,
 }))
 
-export type UserCreateBody = Static<typeof UserCreateBodySchema>
-export type UserPatchBody = Static<typeof UserPatchBodySchema>
 
 async function rejectsLastOwnerRemoval(
   db: DbClient,

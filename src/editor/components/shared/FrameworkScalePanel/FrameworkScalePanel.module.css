@@ -59,32 +59,9 @@
     gap: 8px;
 }
 
-/* Each field is a stacked label + control cell so long select labels don't truncate. */
-.fieldRow {
-    display: grid;
-    grid-template-rows: auto auto;
-    gap: 4px;
-    min-width: 0;
-}
-
 /* Wide fields span the entire row inside .baseSettings (e.g. Steps). */
 .fieldRowWide {
     grid-column: 1 / -1;
-}
-
-.fieldLabel {
-    color: var(--editor-text-muted);
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-
-.ratioRow {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 4px;
 }
 
 .ratioToggle {
@@ -260,10 +237,6 @@
     align-items: center;
 }
 
-.classGeneratorRowProperty {
-    grid-column: 1 / -1;
-}
-
 .previewBar {
     display: inline-block;
     height: 6px;
@@ -279,171 +252,6 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-}
-
-/* ─── Chart visualisation (used by the SpacingPanel) ──────────────────────── */
-
-.chart {
-    display: grid;
-    grid-template-rows: auto auto;
-    gap: 6px;
-    padding-top: 2px;
-}
-
-.chartRow {
-    display: grid;
-    grid-template-columns: minmax(34px, auto) minmax(0, 1fr);
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-}
-
-.chartRowValue {
-    color: var(--editor-text-muted);
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-    white-space: nowrap;
-}
-
-.segments {
-    --segment-count: 14;
-    display: grid;
-    grid-template-columns: repeat(var(--segment-count), minmax(0, 1fr));
-    gap: 3px;
-    width: 100%;
-    align-items: center;
-    min-width: 0;
-}
-
-.segment {
-    position: relative;
-    height: 6px;
-    border-radius: 999px;
-    background: var(--chart-segment-empty);
-    overflow: hidden;
-}
-
-.segment[data-fill="full"][data-series="min"] {
-    background: var(--chart-series-min);
-    box-shadow: 0 0 6px var(--chart-series-min-glow);
-}
-
-.segment[data-fill="full"][data-series="max"] {
-    background: var(--chart-series-max);
-    box-shadow: 0 0 6px var(--chart-series-max-glow);
-}
-
-.segment[data-fill="partial"] {
-    --seg-fill: 0%;
-}
-
-.segment[data-fill="partial"]::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    width: var(--seg-fill);
-    border-radius: 999px;
-}
-
-.segment[data-fill="partial"][data-series="min"]::after {
-    background: var(--chart-series-min);
-    box-shadow: 0 0 6px var(--chart-series-min-glow);
-}
-
-.segment[data-fill="partial"][data-series="max"]::after {
-    background: var(--chart-series-max);
-    box-shadow: 0 0 6px var(--chart-series-max-glow);
-}
-
-.chartLegend {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 14px;
-    padding: 10px 10px 4px;
-    color: var(--editor-text-muted);
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-
-.chartLegendItem {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.chartLegendDot {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    border-radius: 999px;
-}
-
-.chartLegendDot[data-series="min"] {
-    background: var(--chart-series-min);
-    box-shadow: 0 0 6px var(--chart-series-min-glow);
-}
-
-.chartLegendDot[data-series="max"] {
-    background: var(--chart-series-max);
-    box-shadow: 0 0 6px var(--chart-series-max-glow);
-}
-
-/* ─── Stream chart (single SVG showing the whole scale) ──────────────────── */
-
-.streamChartLabels {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    align-items: center;
-    color: var(--editor-text-muted);
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-
-.streamChartLabel {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.streamChartLabel:last-child {
-    justify-content: flex-end;
-}
-
-.streamChartSvg {
-    display: block;
-    width: 100%;
-    height: 130px;
-    color: var(--editor-text-muted);
-}
-
-.streamChartXAxis {
-    display: grid;
-    --axis-step-count: 1;
-    grid-template-columns: repeat(var(--axis-step-count), minmax(0, 1fr));
-    color: var(--editor-text-muted);
-    font-size: 9px;
-    font-variant-numeric: tabular-nums;
-    text-align: center;
-    letter-spacing: 0.04em;
-}
-
-.streamChartXLabel {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.streamChartXLabel[data-active="true"] {
-    color: var(--editor-text);
-    font-weight: 700;
 }
 
 /* ─── Bar chart (DIV-based, 1px = 1px) ──────────────────────────────────── */
@@ -708,58 +516,6 @@
 .barChartStepLabel[data-base="true"] {
     color: var(--editor-text);
     font-weight: 800;
-}
-
-.streamChartToolbar {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 0;
-    color: var(--editor-text-muted);
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-
-.streamChartToolbarGroup {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-}
-
-.streamChartToolbarLabel {
-    text-align: center;
-}
-
-.streamChartReadout {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    color: var(--editor-text-muted);
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-}
-
-.streamChartReadoutCell {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
-    gap: 6px;
-    padding: 4px 8px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.04);
-}
-
-.streamChartReadoutCell:last-child {
-    justify-content: flex-end;
-    text-align: right;
-}
-
-.streamChartReadoutValue {
-    color: var(--editor-text);
-    font-weight: 700;
 }
 
 .previewText {

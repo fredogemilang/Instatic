@@ -37,9 +37,6 @@ export interface TemplateRenderDataContext {
   entryStack: LoopItem[]
 }
 
-/** Empty context helper — used by call sites that have no template entry. */
-export const EMPTY_TEMPLATE_CONTEXT: TemplateRenderDataContext = { entryStack: [] }
-
 /**
  * Resolve a single binding against the entry stack.
  *

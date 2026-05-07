@@ -17,7 +17,7 @@ import {
   updateCustomRole,
 } from '../../repositories/roles'
 import { normalizeCapabilities } from '../../auth/capabilities'
-import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, methodNotAllowed } from '../../http'
 import {
   CMS_API_PREFIX,
@@ -40,8 +40,6 @@ const RolePatchBodySchema = Type.Partial(Type.Object({
   capabilities: Type.Array(Type.String()),
 }))
 
-export type RoleCreateBody = Static<typeof RoleCreateBodySchema>
-export type RolePatchBody = Static<typeof RolePatchBodySchema>
 
 export async function handleRolesRoutes(req: Request, db: DbClient): Promise<Response | null> {
   const url = new URL(req.url)
@@ -70,7 +68,7 @@ export async function handleRolesRoutes(req: Request, db: DbClient): Promise<Res
           action: 'role.create',
           targetType: 'role',
           targetId: role.id,
-          metadata: { slug: role.slug },
+          metadata: { slug: role.slug, name: role.name },
           ...requestAuditContext(req),
         })
         return jsonResponse({ role }, { status: 201 })
@@ -105,7 +103,7 @@ export async function handleRolesRoutes(req: Request, db: DbClient): Promise<Res
           action: 'role.update',
           targetType: 'role',
           targetId: role.id,
-          metadata: { slug: role.slug },
+          metadata: { slug: role.slug, name: role.name },
           ...requestAuditContext(req),
         })
         return jsonResponse({ role })
@@ -116,14 +114,14 @@ export async function handleRolesRoutes(req: Request, db: DbClient): Promise<Res
 
     if (req.method === 'DELETE') {
       try {
-        const deleted = await deleteCustomRole(db, roleId)
-        if (!deleted) return jsonResponse({ error: 'Role not found' }, { status: 404 })
+        const deletedRole = await deleteCustomRole(db, roleId)
+        if (!deletedRole) return jsonResponse({ error: 'Role not found' }, { status: 404 })
         await createAuditEvent(db, {
           actorUserId: actor.id,
           action: 'role.delete',
           targetType: 'role',
           targetId: roleId,
-          metadata: {},
+          metadata: { slug: deletedRole.slug, name: deletedRole.name },
           ...requestAuditContext(req),
         })
         return jsonResponse({ ok: true })

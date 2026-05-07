@@ -2,8 +2,8 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { createPostgresClient } from './postgres'
 import { createSqliteClient } from './sqlite'
-import { migrations as pgMigrations } from './migrations-pg'
-import { migrations as sqliteMigrations } from './migrations-sqlite'
+import { pgMigrations } from './migrations-pg'
+import { sqliteMigrations } from './migrations-sqlite'
 import type { DbClient, DbResult } from './client'
 import type { Migration } from './runMigrations'
 
@@ -24,7 +24,7 @@ export function isSqliteUrl(databaseUrl: string): boolean {
   )
 }
 
-export class UnsupportedDatabaseUrlError extends Error {
+class UnsupportedDatabaseUrlError extends Error {
   constructor(databaseUrl: string) {
     const prefix = /^[a-zA-Z][a-zA-Z0-9+\-.]*:/.exec(databaseUrl)?.[0] ?? databaseUrl
     super(

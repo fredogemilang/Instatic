@@ -346,43 +346,6 @@
     display: block;
 }
 
-.bindingMenu {
-    position: absolute;
-    z-index: 20;
-    top: calc(100% + 4px);
-    right: 0;
-    width: min(220px, 100%);
-    overflow: hidden;
-    border: 1px solid var(--editor-border);
-    border-radius: 8px;
-    background: var(--editor-surface-2);
-    box-shadow: 0 12px 28px rgb(0 0 0 / 28%);
-    padding: 4px;
-}
-
-.bindingMenuItem {
-    display: block;
-    width: 100%;
-    min-height: 28px;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--editor-text);
-    cursor: pointer;
-    font: inherit;
-    font-size: 12px;
-    letter-spacing: 0;
-    line-height: 1.2;
-    padding: 0 8px;
-    text-align: left;
-}
-
-.bindingMenuItem:hover,
-.bindingMenuItem:focus-visible {
-    background: var(--editor-surface);
-    outline: none;
-}
-
 .boundControlWrapper {
     display: grid;
     grid-template-columns: 100px 1fr;

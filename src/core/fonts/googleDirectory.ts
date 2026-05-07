@@ -14,10 +14,6 @@ import type { GoogleFontDirectory, GoogleFontFamily } from './types'
 
 const cast = directory as GoogleFontDirectory
 
-export function getGoogleFontDirectory(): GoogleFontDirectory {
-  return cast
-}
-
 export function listGoogleFonts(): GoogleFontFamily[] {
   return cast.families
 }

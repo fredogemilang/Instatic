@@ -23,9 +23,16 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
+      // `varsIgnorePattern` includes `Schema$` because TypeBox's idiom is
+      //   const FooSchema = Type.Object({ ... })
+      //   export type Foo = Static<typeof FooSchema>
+      // The schema MUST be a runtime value (the source of truth — `Static`
+      // reads it through `typeof`). Eslint's `no-unused-vars` does not count
+      // `typeof` references as a "use" of the value, so non-exported leaf
+      // schemas would otherwise trip the rule. We allow that pattern by name.
       '@typescript-eslint/no-unused-vars': ['error', {
         argsIgnorePattern: '^_',
-        varsIgnorePattern: '^_',
+        varsIgnorePattern: '(^_|Schema$)',
         caughtErrorsIgnorePattern: '^_',
         destructuredArrayIgnorePattern: '^_',
       }],

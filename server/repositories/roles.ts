@@ -37,7 +37,7 @@ function rowToRole(row: RoleRow): Role {
   }
 }
 
-export function slugFromRoleName(value: string): string {
+function slugFromRoleName(value: string): string {
   return value
     .trim()
     .toLowerCase()
@@ -54,21 +54,11 @@ export async function listRoles(db: DbClient): Promise<Role[]> {
   return rows.map(rowToRole)
 }
 
-export async function getRole(db: DbClient, roleId: string): Promise<Role | null> {
+async function getRole(db: DbClient, roleId: string): Promise<Role | null> {
   const { rows } = await db<RoleRow>`
     select id, slug, name, description, is_system, capabilities_json, created_at, updated_at
     from roles
     where id = ${roleId}
-    limit 1
-  `
-  return rows[0] ? rowToRole(rows[0]) : null
-}
-
-export async function getRoleBySlug(db: DbClient, slug: string): Promise<Role | null> {
-  const { rows } = await db<RoleRow>`
-    select id, slug, name, description, is_system, capabilities_json, created_at, updated_at
-    from roles
-    where slug = ${slug}
     limit 1
   `
   return rows[0] ? rowToRole(rows[0]) : null
@@ -132,9 +122,9 @@ export async function updateCustomRole(
   return rows[0] ? rowToRole(rows[0]) : null
 }
 
-export async function deleteCustomRole(db: DbClient, roleId: string): Promise<boolean> {
+export async function deleteCustomRole(db: DbClient, roleId: string): Promise<Role | null> {
   const current = await getRole(db, roleId)
-  if (!current) return false
+  if (!current) return null
   if (current.isSystem) throw new RoleMutationError('System roles cannot be deleted', 409)
 
   const { rows } = await db<{ count: number }>`
@@ -148,5 +138,5 @@ export async function deleteCustomRole(db: DbClient, roleId: string): Promise<bo
   }
 
   const result = await db`delete from roles where id = ${roleId}`
-  return result.rowCount > 0
+  return result.rowCount > 0 ? current : null
 }
