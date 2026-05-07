@@ -3,6 +3,9 @@
  *
  * - `listCmsGoogleFonts` returns the bundled directory snapshot via the server
  *   (rather than importing the JSON directly) so the editor stays a thin client.
+ * - `estimateCmsGoogleFont` returns the total woff2 download size for a
+ *   selection without committing files — used by the picker to show a live
+ *   "selected: 42 KB" hint before the user clicks Install.
  * - `installCmsGoogleFont` posts the user's chosen variants/subsets and returns
  *   a fully-shaped `FontEntry` to merge into `site.settings.fonts`.
  * - `deleteCmsFontFamily` removes the on-disk woff2 files for a family slug.
@@ -12,7 +15,9 @@ import { parseJsonResponse } from '@core/utils/jsonValidate'
 import type { FontEntry } from '@core/fonts/schemas'
 import { responseErrorMessage } from './httpErrors'
 import {
+  type CmsFontEstimateDto,
   CmsFontEntryEnvelopeSchema,
+  CmsFontEstimateEnvelopeSchema,
   CmsGoogleFontsEnvelopeSchema,
   type GoogleFontFamilyDto,
 } from './responseSchemas'
@@ -40,6 +45,31 @@ export interface InstallGoogleFontRequest {
   family: string
   variants: string[]
   subsets: string[]
+}
+
+/**
+ * Ask the server for the on-disk size that a (family × variants × subsets)
+ * selection would download. The server fetches the Google CSS2 stylesheet and
+ * HEADs each woff2 URL, so this is one round-trip per call from the client's
+ * point of view. Caller is responsible for debouncing rapid selection changes.
+ */
+export async function estimateCmsGoogleFont(
+  request: InstallGoogleFontRequest,
+  fetchImpl: FetchLike = defaultFetch,
+  basePath = '/api/cms',
+  init?: { signal?: AbortSignal },
+): Promise<CmsFontEstimateDto> {
+  const res = await fetchImpl(`${basePath}/fonts/estimate`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+    signal: init?.signal,
+  })
+  if (!res.ok) {
+    throw new Error(await responseErrorMessage(res, `Font estimate failed with ${res.status}`))
+  }
+  return parseJsonResponse(res, CmsFontEstimateEnvelopeSchema)
 }
 
 export async function installCmsGoogleFont(

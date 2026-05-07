@@ -45,7 +45,7 @@ import {
   listMediaAssets,
   renameMediaAsset,
 } from './mediaRepository'
-import { FontInstallError, installGoogleFont, uninstallFontFamily } from './fontsRepository'
+import { estimateGoogleFont, FontInstallError, installGoogleFont, uninstallFontFamily } from './fontsRepository'
 import { listGoogleFonts } from '@core/fonts/googleDirectory'
 import {
   createPluginRecord,
@@ -1068,6 +1068,7 @@ export async function handleCmsRequest(
 
   // ─── Fonts library ───────────────────────────────────────────────────────
   // GET  /api/cms/fonts/google         — bundled Google Fonts directory (no CDN hit)
+  // POST /api/cms/fonts/estimate       — sum woff2 `Content-Length` for a selection
   // POST /api/cms/fonts/install        — download woff2 files, return FontEntry
   // DELETE /api/cms/fonts/family/:family — remove on-disk font files for a family
   //
@@ -1080,6 +1081,34 @@ export async function handleCmsRequest(
     if (admin instanceof Response) return admin
     if (req.method !== 'GET') return methodNotAllowed()
     return jsonResponse({ families: listGoogleFonts() })
+  }
+
+  if (url.pathname === '/api/cms/fonts/estimate') {
+    const admin = await requireAdmin(req, db)
+    if (admin instanceof Response) return admin
+    if (req.method !== 'POST') return methodNotAllowed()
+
+    const body = await readJsonObject(req)
+    const family = readString(body, 'family')
+    const variants = Array.isArray(body.variants)
+      ? (body.variants as unknown[]).filter((v): v is string => typeof v === 'string')
+      : []
+    const subsets = Array.isArray(body.subsets)
+      ? (body.subsets as unknown[]).filter((s): s is string => typeof s === 'string')
+      : []
+
+    if (!family) return badRequest('Missing font family')
+    if (variants.length === 0) return badRequest('Pick at least one variant')
+    if (subsets.length === 0) return badRequest('Pick at least one subset')
+
+    try {
+      const estimate = await estimateGoogleFont({ family, variants, subsets })
+      return jsonResponse(estimate)
+    } catch (err) {
+      if (err instanceof FontInstallError) return badRequest(err.message)
+      console.error('[fonts:estimate]', err)
+      return jsonResponse({ error: 'Font estimate failed' }, { status: 500 })
+    }
   }
 
   if (url.pathname === '/api/cms/fonts/install') {

@@ -36,20 +36,50 @@ function isSafeFontPath(path: string): boolean {
  * One downloaded font file.  The `path` must be under `/uploads/fonts/`, end
  * with `.woff2`, and contain no traversal sequences — mirrors `isSafeFontPath`
  * in `validate.ts` (lines ~557–563).
+ *
+ * Google's CSS2 endpoint emits multiple `@font-face` blocks per (variant ×
+ * subset) request, each restricted to a different `unicode-range` slice of the
+ * subset (so browsers download only the slices they need at runtime). We
+ * preserve every slice as its own `FontFile` and round-trip the original
+ * `unicode-range` declaration; the publisher emits one `@font-face` per slice.
+ *
+ * `unicodeRange` is optional only because pre-slicing installs and
+ * `source: 'custom'` uploads may not have one — when missing, the publisher
+ * omits the `unicode-range:` declaration and the browser uses the file for
+ * any character (legacy single-file behavior).
  */
 export const FontFileSchema = Type.Object({
   variant: Type.String({ minLength: 1 }),
   subset: Type.String({ minLength: 1 }),
   path: Type.String({ pattern: FONT_PATH_PATTERN.source }),
   format: Type.Literal('woff2'),
+  unicodeRange: Type.Optional(Type.String({ minLength: 1 })),
 })
 
 export type FontFile = Static<typeof FontFileSchema>
 
+/**
+ * Allowed characters inside a `unicode-range:` value. The CSS spec accepts
+ * `U+`, hex digits, dashes, commas, and whitespace. We intentionally forbid
+ * anything that could break out of the declaration (`<`, `>`, `"`, `\\`,
+ * `;`, `{`, `}`, etc.) — the value is round-tripped verbatim into a `<style>`
+ * block so the same hardening rule applies as for paths and family names.
+ */
+const UNICODE_RANGE_PATTERN = /^[\sUu+0-9A-Fa-f,-]+$/
+
+function isSafeUnicodeRange(range: string): boolean {
+  return UNICODE_RANGE_PATTERN.test(range) && range.length <= 2048
+}
+
 // Composite check used by callers that want pattern + path-traversal in one go.
 export function checkFontFile(value: unknown): value is FontFile {
   if (!Value.Check(FontFileSchema, value)) return false
-  return isSafeFontPath((value as FontFile).path)
+  const file = value as FontFile
+  if (!isSafeFontPath(file.path)) return false
+  if (file.unicodeRange != null && !isSafeUnicodeRange(file.unicodeRange)) {
+    return false
+  }
+  return true
 }
 
 // ---------------------------------------------------------------------------

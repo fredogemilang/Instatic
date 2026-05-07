@@ -70,6 +70,63 @@ describe('generateSiteFontsCss', () => {
     expect(generateSiteFontsCss(undefined)).toBe('')
     expect(generateSiteFontsCss({ items: [] })).toBe('')
   })
+
+  it('emits one @font-face per slice with unicode-range when present', () => {
+    // Mirrors what Google's CSS2 endpoint returns for a single (variant, subset):
+    // multiple `@font-face` blocks each pinned to a different unicode-range.
+    const sliced: FontEntry = {
+      ...inter,
+      family: 'Roboto',
+      files: [
+        {
+          variant: '400',
+          subset: 'latin',
+          path: '/uploads/fonts/roboto/400-latin-0.woff2',
+          format: 'woff2',
+          unicodeRange: 'U+0000-00FF, U+0131',
+        },
+        {
+          variant: '400',
+          subset: 'latin',
+          path: '/uploads/fonts/roboto/400-latin-1.woff2',
+          format: 'woff2',
+          unicodeRange: 'U+0100-024F',
+        },
+      ],
+    }
+    const css = generateSiteFontsCss({ items: [sliced] })
+    expect(css.match(/@font-face/g)?.length ?? 0).toBe(2)
+    expect(css).toContain('unicode-range: U+0000-00FF, U+0131;')
+    expect(css).toContain('unicode-range: U+0100-024F;')
+    expect(css).toContain('url("/uploads/fonts/roboto/400-latin-0.woff2")')
+    expect(css).toContain('url("/uploads/fonts/roboto/400-latin-1.woff2")')
+  })
+
+  it('omits unicode-range when the file has none (legacy single-slice install)', () => {
+    const css = generateSiteFontsCss({ items: [inter] })
+    expect(css).not.toContain('unicode-range')
+  })
+
+  it('refuses to emit a CSS-injected unicode-range', () => {
+    const tainted: FontEntry = {
+      ...inter,
+      files: [
+        {
+          variant: '400',
+          subset: 'latin',
+          path: '/uploads/fonts/inter/400-latin-0.woff2',
+          format: 'woff2',
+          unicodeRange: 'U+0061; } </style><script>alert(1)</script>',
+        },
+      ],
+    }
+    const css = generateSiteFontsCss({ items: [tainted] })
+    // The unsafe range is dropped; the surrounding @font-face still emits.
+    expect(css).toContain('@font-face')
+    expect(css).not.toContain('unicode-range')
+    expect(css).not.toContain('</style>')
+    expect(css).not.toContain('<script>')
+  })
 })
 
 describe('generateFontFamilyTokensCss', () => {

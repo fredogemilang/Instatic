@@ -37,21 +37,55 @@ function escapeCssUrl(value: string): string {
 }
 
 /**
- * Build a single `@font-face` rule for one (variant, subset) tuple.
- * Returns `null` for unparseable variants — callers should skip them.
+ * Whitelist what's allowed inside a `unicode-range:` declaration. The CSS spec
+ * accepts `U+`, hex, dashes, commas, and whitespace — anything outside that
+ * set (especially `<`, `>`, `;`, `{`, `}`, or quotes) could break out of the
+ * `@font-face` block or the surrounding `<style>` tag. Mirrors
+ * `isSafeUnicodeRange` in `core/fonts/schemas`; we re-apply it at the CSS
+ * boundary so corrupted persisted data can't leak into the published HTML.
  */
-function fontFaceRule(family: string, variant: string, urlPath: string): string | null {
+const SAFE_UNICODE_RANGE_RE = /^[\sUu+0-9A-Fa-f,-]+$/
+
+function escapeCssUnicodeRange(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > 2048) return null
+  if (!SAFE_UNICODE_RANGE_RE.test(trimmed)) return null
+  return trimmed
+}
+
+/**
+ * Build a single `@font-face` rule for one slice (variant + optional
+ * unicode-range). Returns `null` for unparseable variants — callers should
+ * skip them.
+ *
+ * When `unicodeRange` is provided, the rule pins the slice to that range so
+ * the browser's font loader fetches it only when text in that range is used.
+ * This matches Google's CSS2 sharding 1:1; without the range, the file would
+ * cover all characters and the browser would download every slice for every
+ * page (defeating the point of the slicing).
+ */
+function fontFaceRule(
+  family: string,
+  variant: string,
+  urlPath: string,
+  unicodeRange?: string,
+): string | null {
   const parsed = parseVariant(variant)
   if (!parsed) return null
-  return [
+  const lines = [
     `@font-face {`,
     `  font-family: "${escapeCssString(family)}";`,
     `  font-style: ${parsed.italic ? 'italic' : 'normal'};`,
     `  font-weight: ${parsed.weight};`,
     `  font-display: swap;`,
     `  src: url("${escapeCssUrl(urlPath)}") format("woff2");`,
-    `}`,
-  ].join('\n')
+  ]
+  if (unicodeRange) {
+    const safe = escapeCssUnicodeRange(unicodeRange)
+    if (safe) lines.push(`  unicode-range: ${safe};`)
+  }
+  lines.push(`}`)
+  return lines.join('\n')
 }
 
 /**
@@ -72,7 +106,7 @@ export function generateSiteFontsCss(
       // Only emit files served from our own /uploads/fonts/ namespace —
       // never emit raw third-party URLs (see file's no-CDN guarantee).
       if (!file.path.startsWith('/uploads/fonts/')) continue
-      const rule = fontFaceRule(entry.family, file.variant, file.path)
+      const rule = fontFaceRule(entry.family, file.variant, file.path, file.unicodeRange)
       if (rule) blocks.push(rule)
     }
   }

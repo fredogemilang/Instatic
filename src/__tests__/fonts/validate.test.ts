@@ -122,4 +122,56 @@ describe('validateSite — fonts', () => {
     const site = validateSite(baseSite())
     expect(site.settings.fonts).toBeUndefined()
   })
+
+  it('round-trips per-slice unicodeRange and drops corrupted ranges', () => {
+    const site = validateSite(baseSite({
+      settings: {
+        colorTokens: {},
+        shortcuts: {},
+        fonts: {
+          items: [
+            {
+              id: 'f1',
+              source: 'google',
+              family: 'Roboto',
+              variants: ['400'],
+              subsets: ['latin'],
+              files: [
+                // Slice 0 — valid CSS unicode-range, kept verbatim.
+                {
+                  variant: '400',
+                  subset: 'latin',
+                  path: '/uploads/fonts/roboto/400-latin-0.woff2',
+                  format: 'woff2',
+                  unicodeRange: 'U+0000-00FF, U+0131',
+                },
+                // Slice 1 — no unicode-range (legacy / custom upload), still kept.
+                {
+                  variant: '400',
+                  subset: 'latin',
+                  path: '/uploads/fonts/roboto/400-latin-1.woff2',
+                  format: 'woff2',
+                },
+                // Slice 2 — injection attempt, must be dropped entirely by checkFontFile.
+                {
+                  variant: '400',
+                  subset: 'latin',
+                  path: '/uploads/fonts/roboto/400-latin-2.woff2',
+                  format: 'woff2',
+                  unicodeRange: 'U+0061; } </style><script>alert(1)</script>',
+                },
+              ],
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+        },
+      },
+    }))
+
+    const files = site.settings.fonts?.items[0].files ?? []
+    expect(files.length).toBe(2)
+    expect(files[0].unicodeRange).toBe('U+0000-00FF, U+0131')
+    expect(files[1].unicodeRange).toBeUndefined()
+  })
 })

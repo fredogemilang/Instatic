@@ -145,3 +145,17 @@ export const CmsGoogleFontsEnvelopeSchema = Type.Object({
 export const CmsFontEntryEnvelopeSchema = Type.Object({
   font: Type.Unknown(),
 })
+
+/**
+ * Pre-install size estimate for a (family × variants × subsets) request.
+ * The server fetches the Google CSS2 stylesheets for the selection and HEADs
+ * each woff2 URL, summing `Content-Length`. Some faces may not resolve (Google
+ * occasionally drops a subset for a given variant) — `fileCount` reports how
+ * many woff2 URLs actually contributed to `totalBytes`.
+ */
+export const CmsFontEstimateEnvelopeSchema = Type.Object({
+  totalBytes: Type.Number(),
+  fileCount: Type.Number(),
+})
+
+export type CmsFontEstimateDto = Static<typeof CmsFontEstimateEnvelopeSchema>

@@ -131,6 +131,40 @@
     background: var(--editor-surface-2);
 }
 
+/* Live download-size hint anchored to the left of the dialog actions row.
+ * The `margin-inline-end: auto` shoves the Back / Install buttons flush right
+ * while the hint sits next to the dialog's left padding. */
+.estimateHint,
+.estimateHintError {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-inline-end: auto;
+    color: var(--editor-text-muted);
+    font-size: 11px;
+    line-height: 1.2;
+    min-width: 0;
+}
+
+.estimateHintError {
+    color: var(--editor-danger);
+}
+
+.estimateValue {
+    color: var(--editor-text);
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.estimateMeta {
+    color: var(--editor-text-muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+}
+
 /* ─── Family picker ──────────────────────────────────────────────────── */
 
 .pickerSearch {
@@ -147,7 +181,7 @@
     align-content: start;
     list-style: none;
     margin: 0;
-    gap: 8px;
+    gap: 1px;
     overflow-y: auto;
 }
 
@@ -182,13 +216,12 @@
 
 .pickerItem:hover,
 .pickerItem:focus-visible {
-    border-color: var(--editor-text-subtle);
-    background: var(--editor-surface-2);
+    background: var(--editor-surface-3);
     outline: none;
 }
 
 .pickerItem:active {
-    transform: scale(0.99);
+    background: var(--editor-surface-4);
 }
 
 .pickerItem:disabled {
