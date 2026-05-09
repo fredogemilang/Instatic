@@ -1,311 +1,77 @@
+/**
+ * Plugin server-side runtime — orchestrates plugin lifecycle, route
+ * forwarding, and asset path safety.
+ *
+ * As of the worker-isolation refactor, plugin server modules
+ * (`entrypoints.server`) are loaded and executed in a separate Bun
+ * `Worker` (see `pluginWorkerHost.ts` + `pluginWorker.ts`). The host
+ * process never imports plugin code — eliminating the `bun --watch`
+ * race during upgrade cleanup, isolating plugin crashes from the host,
+ * and giving us a foundation to drop privileges (no fs / no env) inside
+ * the worker in a future hardening pass.
+ *
+ * This module is the thin orchestration layer between the rest of the
+ * CMS server and the worker host. It owns:
+ *   - Path-containment safety (`assertPluginPathWithin`)
+ *   - The plugin settings cache (read synchronously inside hook handlers
+ *     via the worker's local mirror — populated at activation)
+ *   - The HTTP entrypoint for `/admin/api/cms/plugins/:id/runtime/...`
+ *   - The boot-time activation loop
+ *
+ * Plugin canvas-module packs (`entrypoints.modules`) still load in the
+ * host process — the publisher's hot path calls `definition.render()`
+ * synchronously per page node and an RPC round-trip per call would be
+ * too expensive. Module packs use a data-URI import to sidestep the
+ * `bun --watch` watcher (the dev-mode race driver) without paying the
+ * worker RPC cost.
+ */
+
+import { readFile } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { nanoid } from 'nanoid'
 import type { DbClient } from '../db/client'
 import {
-  createPluginRecord,
-  deletePluginRecord,
+  getInstalledPlugin,
   listInstalledPlugins,
-  listPluginRecords,
-  updatePluginRecord,
+  recordPluginCrash,
+  setPluginLifecycleStatus,
 } from '../repositories/plugins'
-import {
-  findPluginResource,
-  validatePluginRecordData,
-} from '@core/plugins/manifest'
 import type {
   PluginManifest,
-  PluginMigrationContext,
   PluginModulesEntrypointModule,
-  RouteMethod,
-  ServerPluginApi,
-  ServerPluginLifecycleHook,
-  ServerPluginModule,
-  ServerPluginRouteHandler,
 } from '@core/plugin-sdk'
-import { assertPluginPermission } from '@core/plugin-sdk'
 import {
   activatePluginModulePack,
   resetPluginModulePacks,
 } from '@core/plugins/modulePackLoader'
-import {
-  validatePluginSettingsRecord,
-  type PluginSettingDefinition,
-} from '@core/plugin-sdk'
-import { jsonResponse, readJsonObject } from '../http'
-import { nanoid } from 'nanoid'
-import { isCoreCapability, type CoreCapability } from '../auth/capabilities'
-import { requireCapability } from '../auth/authz'
+import { jsonResponse } from '../http'
 import { hookBus } from '@core/plugins/hookBus'
-import { loopSourceRegistry } from '@core/loops/registry'
-import type { LoopEntitySource as HostLoopEntitySource } from '@core/loops/types'
-import { getInstalledPlugin, setPluginSettings } from '../repositories/plugins'
+import { requireCapability } from '../auth/authz'
+import {
+  clearPluginCrashCounter,
+  findPluginRouteCapability,
+  loadPluginInWorker,
+  resetPluginWorker,
+  runLifecycleInWorker,
+  runMigrateInWorker,
+  runRouteInWorker,
+  setCrashRecoveryHandler,
+  setPluginWorkerDbClient,
+  unloadPluginInWorker,
+} from './pluginWorkerHost'
+import { broadcastPluginEvent } from './eventBroadcaster'
 
-interface ServerPluginRoute {
-  pluginId: string
-  method: RouteMethod
-  path: string
-  capability: CoreCapability | null
-  handler: ServerPluginRouteHandler
-}
+// Re-export for callers that orchestrate manual restart (resets the
+// per-plugin crash counter so the next failure starts a fresh budget).
+export { clearPluginCrashCounter }
 
-class ServerPluginRuntime {
-  private routes = new Map<string, ServerPluginRoute>()
-  private loopSourcesByPlugin = new Map<string, Set<string>>()
-
-  reset(): void {
-    this.routes.clear()
-    for (const ids of this.loopSourcesByPlugin.values()) {
-      for (const id of ids) loopSourceRegistry.unregister(id)
-    }
-    this.loopSourcesByPlugin.clear()
-  }
-
-  registerRoute(route: ServerPluginRoute): void {
-    this.routes.set(this.routeKey(route.pluginId, route.method, route.path), route)
-  }
-
-  registerLoopSource(pluginId: string, source: HostLoopEntitySource): void {
-    loopSourceRegistry.registerOrReplace(source)
-    const ids = this.loopSourcesByPlugin.get(pluginId) ?? new Set<string>()
-    ids.add(source.id)
-    this.loopSourcesByPlugin.set(pluginId, ids)
-  }
-
-  unregisterPlugin(pluginId: string): void {
-    for (const key of this.routes.keys()) {
-      if (key.startsWith(`${pluginId}:`)) this.routes.delete(key)
-    }
-    const sourceIds = this.loopSourcesByPlugin.get(pluginId)
-    if (sourceIds) {
-      for (const id of sourceIds) loopSourceRegistry.unregister(id)
-      this.loopSourcesByPlugin.delete(pluginId)
-    }
-    hookBus.unregisterPlugin(pluginId)
-  }
-
-  findRoute(pluginId: string, method: string, path: string): ServerPluginRoute | null {
-    return this.routes.get(this.routeKey(pluginId, method.toUpperCase(), normalizeRoutePath(path))) ?? null
-  }
-
-  private routeKey(pluginId: string, method: string, path: string): string {
-    return `${pluginId}:${method}:${normalizeRoutePath(path)}`
-  }
-}
-
-export const serverPluginRuntime = new ServerPluginRuntime()
-
-function normalizeRoutePath(path: string): string {
-  const trimmed = path.trim()
-  if (!trimmed || trimmed === '/') return '/'
-  return `/${trimmed.replace(/^\/+|\/+$/g, '')}`
-}
-
-function createServerPluginApi(
-  manifest: PluginManifest,
-  db: DbClient,
-): ServerPluginApi {
-  function register(
-    method: RouteMethod,
-    path: string,
-    capability: string,
-    handler: ServerPluginRouteHandler,
-  ) {
-    assertPluginPermission(manifest, 'cms.routes')
-    if (!isCoreCapability(capability)) {
-      throw new Error(`Unknown plugin route capability: ${capability}`)
-    }
-    serverPluginRuntime.registerRoute({
-      pluginId: manifest.id,
-      method,
-      path: normalizeRoutePath(path),
-      capability,
-      handler,
-    })
-  }
-
-  function registerPublic(method: RouteMethod, path: string, handler: ServerPluginRouteHandler) {
-    assertPluginPermission(manifest, 'cms.routes')
-    serverPluginRuntime.registerRoute({
-      pluginId: manifest.id,
-      method,
-      path: normalizeRoutePath(path),
-      capability: null,
-      handler,
-    })
-  }
-
-  return {
-    plugin: {
-      id: manifest.id,
-      version: manifest.version,
-      permissions: manifest.grantedPermissions ?? [],
-      log: (...args) => {
-        console.info(`[plugin:${manifest.id}]`, ...args)
-      },
-    },
-    cms: {
-      routes: {
-        get: (path, capability, handler) => register('GET', path, capability, handler),
-        post: (path, capability, handler) => register('POST', path, capability, handler),
-        patch: (path, capability, handler) => register('PATCH', path, capability, handler),
-        delete: (path, capability, handler) => register('DELETE', path, capability, handler),
-        getPublic: (path, handler) => registerPublic('GET', path, handler),
-      },
-      storage: {
-        collection(resourceId) {
-          assertPluginPermission(manifest, 'cms.storage')
-          const resource = findPluginResource(manifest, resourceId)
-          return {
-            list: () => listPluginRecords(db, manifest.id, resourceId),
-            create: (data) => createPluginRecord(db, {
-              id: nanoid(),
-              pluginId: manifest.id,
-              resourceId,
-              data: resource ? validatePluginRecordData(resource, data) : data,
-            }),
-            update: (recordId, data) => updatePluginRecord(db, {
-              id: recordId,
-              pluginId: manifest.id,
-              resourceId,
-              data: resource ? validatePluginRecordData(resource, data) : data,
-            }),
-            delete: (recordId) => deletePluginRecord(db, {
-              id: recordId,
-              pluginId: manifest.id,
-              resourceId,
-            }),
-          }
-        },
-      },
-      hooks: {
-        on(event, listener) {
-          assertPluginPermission(manifest, 'cms.hooks')
-          // Cast through unknown — the SDK types narrow per-event but at the
-          // runtime boundary every payload is `unknown` until the host fires
-          // it with the documented shape.
-          hookBus.on(manifest.id, event as string, listener as (p: unknown) => void | Promise<void>)
-        },
-        filter(name, handler) {
-          assertPluginPermission(manifest, 'cms.hooks')
-          hookBus.filter(
-            manifest.id,
-            name as string,
-            handler as (v: unknown, ctx: { pluginId: string }) => unknown | Promise<unknown>,
-          )
-        },
-        async emit(event, payload) {
-          assertPluginPermission(manifest, 'cms.hooks')
-          await hookBus.emit(event as string, payload)
-        },
-      },
-      loops: {
-        registerSource(source) {
-          assertPluginPermission(manifest, 'loops.register')
-          if (!source.id?.startsWith(`${manifest.id}.`)) {
-            throw new Error(
-              `Loop source id "${source.id}" must start with the plugin id "${manifest.id}.".`,
-            )
-          }
-          serverPluginRuntime.registerLoopSource(manifest.id, source as HostLoopEntitySource)
-        },
-      },
-      settings: {
-        get<T extends string | number | boolean = string>(key: string): T | undefined {
-          const cached = pluginSettingsCache.get(manifest.id)
-          if (cached) return cached[key] as T | undefined
-          // Cache miss should not happen — `installApiSettingsCache` runs
-          // before activate(). Returning undefined is safe; the host
-          // populates defaults on install.
-          return undefined
-        },
-        getAll() {
-          return { ...(pluginSettingsCache.get(manifest.id) ?? {}) }
-        },
-        async replace(next) {
-          const declared = (manifest.settings ?? []) as PluginSettingDefinition[]
-          const cleaned = validatePluginSettingsRecord(declared, next)
-          await setPluginSettings(db, manifest.id, cleaned)
-          pluginSettingsCache.set(manifest.id, cleaned)
-          await hookBus.emit(`settings.changed`, {
-            pluginId: manifest.id,
-            settings: cleaned,
-          } as unknown as Record<string, unknown>)
-        },
-      },
-    },
-  }
-}
+// Re-export the host's setter so the server entry point can wire in the
+// DbClient at boot before any request arrives.
+export { setPluginWorkerDbClient }
 
 // ---------------------------------------------------------------------------
-// Settings cache — keyed by plugin id, populated on activation so plugins
-// can read settings synchronously inside `activate()` without an async hop.
-// Refreshed when the host PUTs new values via the settings route.
+// Path containment
 // ---------------------------------------------------------------------------
-
-const pluginSettingsCache = new Map<string, Record<string, string | number | boolean>>()
-
-/** Update the in-memory settings cache for one plugin. */
-export function updatePluginSettingsCache(
-  pluginId: string,
-  settings: Record<string, string | number | boolean>,
-): void {
-  pluginSettingsCache.set(pluginId, settings)
-}
-
-/** Drop a plugin's cached settings (on disable / uninstall). */
-export function clearPluginSettingsCache(pluginId: string): void {
-  pluginSettingsCache.delete(pluginId)
-}
-
-/**
- * Refresh a single plugin's cached settings from the DB. Called by the
- * settings PUT route after a successful update so subsequent reads from
- * inside the plugin server runtime see the new values without restart.
- */
-export async function refreshPluginSettingsCache(
-  db: DbClient,
-  pluginId: string,
-): Promise<void> {
-  const plugin = await getInstalledPlugin(db, pluginId)
-  if (!plugin) return
-  pluginSettingsCache.set(pluginId, plugin.settings)
-}
-
-export async function activateServerPlugin(
-  manifest: PluginManifest,
-  mod: ServerPluginModule,
-  db: DbClient,
-): Promise<void> {
-  await runServerPluginLifecycleHook(manifest, mod, db, 'activate')
-}
-
-export async function runServerPluginLifecycleHook(
-  manifest: PluginManifest,
-  mod: ServerPluginModule,
-  db: DbClient,
-  hook: Exclude<ServerPluginLifecycleHook, 'migrate'>,
-): Promise<void> {
-  const handler = mod[hook]
-  if (!handler) return
-  await handler(createServerPluginApi(manifest, db))
-}
-
-/**
- * Run the `migrate` hook on a plugin module. Separated from the generic
- * lifecycle runner because the signature differs — `migrate` takes a context
- * object with the previous version string in addition to the standard
- * `ServerPluginApi`.
- */
-export async function runServerPluginMigrateHook(
-  manifest: PluginManifest,
-  mod: ServerPluginModule,
-  db: DbClient,
-  ctx: PluginMigrationContext,
-): Promise<void> {
-  const handler = mod.migrate
-  if (!handler) return
-  await handler(ctx, createServerPluginApi(manifest, db))
-}
 
 /**
  * Defense-in-depth path containment. The schema-level pattern on
@@ -321,17 +87,135 @@ export function assertPluginPathWithin(uploadsDir: string, child: string): void 
   }
 }
 
-export async function loadServerPluginModule(
+// ---------------------------------------------------------------------------
+// Settings cache — used by the worker host to seed each loaded plugin's
+// in-worker `settings.get` mirror, and refreshed on PUTs through the admin
+// settings route.
+// ---------------------------------------------------------------------------
+
+const pluginSettingsCache = new Map<string, Record<string, string | number | boolean>>()
+
+export function getPluginSettingsSnapshot(
+  pluginId: string,
+): Record<string, string | number | boolean> {
+  return pluginSettingsCache.get(pluginId) ?? {}
+}
+
+export function updatePluginSettingsCache(
+  pluginId: string,
+  settings: Record<string, string | number | boolean>,
+): void {
+  pluginSettingsCache.set(pluginId, settings)
+}
+
+export function clearPluginSettingsCache(pluginId: string): void {
+  pluginSettingsCache.delete(pluginId)
+}
+
+export async function refreshPluginSettingsCache(
+  db: DbClient,
+  pluginId: string,
+): Promise<void> {
+  const plugin = await getInstalledPlugin(db, pluginId)
+  if (!plugin) return
+  pluginSettingsCache.set(pluginId, plugin.settings)
+}
+
+// ---------------------------------------------------------------------------
+// Plugin lifecycle helpers — wrappers around the worker host that resolve
+// the on-disk entrypoint path safely. Callers in `plugins.ts` use these
+// to load + run individual lifecycle hooks during install / upgrade /
+// disable / uninstall flows.
+// ---------------------------------------------------------------------------
+
+interface ResolvedEntrypoint {
+  entryPath: string
+}
+
+function resolvePluginServerEntrypoint(
   manifest: PluginManifest,
-  uploadsDir?: string,
-): Promise<ServerPluginModule | null> {
-  if (!uploadsDir || !manifest.assetBasePath || !manifest.entrypoints?.server) return null
+  uploadsDir: string,
+): ResolvedEntrypoint | null {
+  if (!manifest.assetBasePath || !manifest.entrypoints?.server) return null
   const relativeBase = manifest.assetBasePath.replace(/^\/uploads\/?/, '')
   const entryPath = join(uploadsDir, relativeBase, manifest.entrypoints.server)
   assertPluginPathWithin(uploadsDir, entryPath)
-  return await import(`${pathToFileURL(entryPath).href}?v=${Date.now()}`) as ServerPluginModule
+  return { entryPath }
 }
 
+/**
+ * Load a plugin's server entrypoint into the worker. Returns `false` if
+ * the plugin has no server entrypoint (declarative-only plugins are
+ * skipped). Throws if the worker reports a load error so callers can
+ * propagate the message into the lifecycle status row.
+ */
+export async function loadPluginServerEntrypoint(
+  manifest: PluginManifest,
+  uploadsDir?: string,
+): Promise<boolean> {
+  if (!uploadsDir) return false
+  const resolved = resolvePluginServerEntrypoint(manifest, uploadsDir)
+  if (!resolved) return false
+  const result = await loadPluginInWorker({
+    manifest,
+    entryFileUrl: resolved.entryPath,
+    settings: pluginSettingsCache.get(manifest.id) ?? {},
+  })
+  if (!result.ok) {
+    throw new Error(result.error ?? `Failed to load plugin "${manifest.id}" in worker`)
+  }
+  return true
+}
+
+/**
+ * Run a single lifecycle hook on a previously-loaded plugin. No-op if
+ * the hook isn't exported by the plugin module.
+ */
+export async function runPluginLifecycle(
+  pluginId: string,
+  hook: 'install' | 'activate' | 'deactivate' | 'uninstall',
+): Promise<void> {
+  await runLifecycleInWorker(pluginId, hook)
+}
+
+/**
+ * Run the `migrate` hook on a previously-loaded plugin. The host calls
+ * this in the upgrade flow between the old version's deactivate and the
+ * new version's activate.
+ */
+export async function runPluginMigrate(
+  pluginId: string,
+  fromVersion: string,
+): Promise<void> {
+  await runMigrateInWorker(pluginId, fromVersion)
+}
+
+/**
+ * Drop a plugin from the worker. Called after `deactivate` / `uninstall`
+ * lands. Forgets host-side route + hook + loop registrations as a side
+ * effect.
+ */
+export async function unloadPlugin(pluginId: string): Promise<void> {
+  pluginSettingsCache.delete(pluginId)
+  await unloadPluginInWorker(pluginId)
+}
+
+// ---------------------------------------------------------------------------
+// Module pack loader (canvas modules)
+// ---------------------------------------------------------------------------
+
+/**
+ * Load a plugin's canvas module pack. Uses a base64 data URI so the
+ * pack file isn't tracked by `bun --watch` (which would otherwise
+ * trigger a server reload when the file is deleted during plugin
+ * upgrade cleanup). Module packs are bundled to a single file by the
+ * plugin SDK build pipeline, so the lack of relative-import support
+ * inside data URIs is not a constraint.
+ *
+ * Module packs deliberately stay in the host process — the publisher's
+ * hot path calls `definition.render()` synchronously per page node and
+ * an RPC round-trip per call would be prohibitively expensive.
+ */
 export async function loadPluginModulePack(
   manifest: PluginManifest,
   uploadsDir?: string,
@@ -340,8 +224,14 @@ export async function loadPluginModulePack(
   const relativeBase = manifest.assetBasePath.replace(/^\/uploads\/?/, '')
   const entryPath = join(uploadsDir, relativeBase, manifest.entrypoints.modules)
   assertPluginPathWithin(uploadsDir, entryPath)
-  return await import(`${pathToFileURL(entryPath).href}?v=${Date.now()}`) as PluginModulesEntrypointModule
+  const code = await readFile(entryPath, 'utf-8')
+  const dataUrl = `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
+  return await import(dataUrl) as PluginModulesEntrypointModule
 }
+
+// ---------------------------------------------------------------------------
+// HTTP runtime forwarder — `/admin/api/cms/plugins/:id/runtime/...`
+// ---------------------------------------------------------------------------
 
 export async function handleServerPluginRuntimeRequest(
   req: Request,
@@ -352,31 +242,136 @@ export async function handleServerPluginRuntimeRequest(
   if (!match) return null
 
   const pluginId = decodeURIComponent(match[1])
-  const routePath = normalizeRoutePath(decodeURIComponent(match[2] ?? '/'))
-  const route = serverPluginRuntime.findRoute(pluginId, req.method, routePath)
+  const routePath = decodeURIComponent(match[2] ?? '/')
+
+  const route = findPluginRouteCapability(pluginId, req.method, routePath)
   if (!route) return jsonResponse({ error: 'Plugin route not found' }, { status: 404 })
 
+  // Capability check stays host-side. The plugin route handler in the
+  // worker still receives the validated user object so it can do
+  // additional fine-grained checks if needed.
   const user = route.capability ? await requireCapability(req, db, route.capability) : null
   if (user instanceof Response) return user
 
-  const body: Record<string, unknown> = req.method !== 'GET'
-    ? await readJsonObject(req)
-    : {}
-
-  const result = await route.handler({
-    req,
-    db,
-    body,
+  return await runRouteInWorker({
+    pluginId,
+    method: req.method,
+    path: routePath,
+    request: req,
     user: user
-      ? {
-        id: user.id,
-        email: user.email,
-        capabilities: user.capabilities,
-      }
+      ? { id: user.id, email: user.email, capabilities: user.capabilities }
       : null,
   })
-  if (result instanceof Response) return result
-  return jsonResponse(result ?? { ok: true })
+}
+
+// ---------------------------------------------------------------------------
+// Boot-time activation
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-load + re-activate a single plugin from disk. Used by the crash
+ * recovery handler (after a worker auto-respawn) and by the manual
+ * "Restart Plugin" admin endpoint.
+ */
+export async function reloadAndActivatePlugin(
+  db: DbClient,
+  pluginId: string,
+  uploadsDir?: string,
+): Promise<void> {
+  if (!uploadsDir) return
+  const plugin = await getInstalledPlugin(db, pluginId)
+  if (!plugin || !plugin.enabled) return
+  const manifest: PluginManifest = {
+    ...plugin.manifest,
+    grantedPermissions: plugin.grantedPermissions,
+  }
+  if (!manifest.assetBasePath) return
+  // Refresh the in-memory settings cache from the canonical row before the
+  // worker mirror gets seeded — keeps the worker in sync if settings drifted
+  // since the last activation.
+  pluginSettingsCache.set(manifest.id, plugin.settings)
+  if (manifest.entrypoints?.server) {
+    const loaded = await loadPluginServerEntrypoint(manifest, uploadsDir)
+    if (loaded) await runPluginLifecycle(manifest.id, 'activate')
+  }
+}
+
+/**
+ * Register the crash recovery handler with the worker host. Called from
+ * `activateInstalledServerPlugins` so the host has a live `db + uploadsDir`
+ * pair to reload plugins with after a crash. Each invocation replaces the
+ * previous handler (idempotent — safe to call on every boot / re-bind).
+ */
+function registerCrashRecoveryHandler(db: DbClient, uploadsDir: string): void {
+  setCrashRecoveryHandler(async ({ pluginId, reason, decision }) => {
+    const occurredAt = new Date().toISOString()
+
+    // Persist the crash event so the admin UI can show it. Best-effort —
+    // a DB error here shouldn't block the recovery flow.
+    try {
+      await recordPluginCrash(db, {
+        id: nanoid(),
+        pluginId,
+        reason,
+      })
+    } catch (err) {
+      console.error(`[plugin:${pluginId}] failed to record crash event:`, err)
+    }
+
+    // Tell every connected admin client about the crash so toasts + nav
+    // badge + open Plugins-page lists update in real time.
+    broadcastPluginEvent({
+      kind: 'crash',
+      pluginId,
+      reason,
+      recentCrashCount: decision.recentCrashCount,
+      occurredAt,
+    })
+
+    if (decision.kind === 'give-up') {
+      // Crash budget exceeded — park the plugin in error state. The site
+      // owner has to click "Restart Plugin" in the admin UI to reset the
+      // counter and try again.
+      console.error(
+        `[plugin:${pluginId}] crashed ${decision.recentCrashCount} times in the last 5 minutes; parking in error state`,
+      )
+      await setPluginLifecycleStatus(
+        db,
+        pluginId,
+        'error',
+        `Crash budget exceeded (${decision.recentCrashCount} crashes in 5 min). Last reason: ${reason}`,
+      )
+      broadcastPluginEvent({
+        kind: 'parked',
+        pluginId,
+        reason,
+        recentCrashCount: decision.recentCrashCount,
+        occurredAt,
+      })
+      return
+    }
+
+    // Within budget — auto-respawn. The worker host has already torn down
+    // the dead worker; reloading spawns a fresh one and re-runs activate.
+    console.warn(
+      `[plugin:${pluginId}] crash #${decision.recentCrashCount} in window — auto-respawning. Last reason: ${reason}`,
+    )
+    try {
+      await reloadAndActivatePlugin(db, pluginId, uploadsDir)
+      broadcastPluginEvent({
+        kind: 'recovered',
+        pluginId,
+        afterCrashCount: decision.recentCrashCount,
+        occurredAt: new Date().toISOString(),
+      })
+    } catch (err) {
+      // Re-activation itself failed. The next round-trip will record this
+      // as another crash event via the worker's normal error path; if the
+      // failure is repeatable the budget will be exceeded and the plugin
+      // will park in error state on its own. Log here for ops visibility.
+      console.error(`[plugin:${pluginId}] auto-respawn re-activation failed:`, err)
+    }
+  })
 }
 
 export async function activateInstalledServerPlugins(
@@ -384,9 +379,20 @@ export async function activateInstalledServerPlugins(
   uploadsDir?: string,
 ): Promise<void> {
   if (!uploadsDir) return
-  serverPluginRuntime.reset()
+
+  // Make sure the worker host can reach the DbClient — required before any
+  // worker-initiated `cms.storage.*` round-trip lands. Idempotent; safe to
+  // call on every boot.
+  setPluginWorkerDbClient(db)
+  registerCrashRecoveryHandler(db, uploadsDir)
+
+  // Reset existing in-process state so a re-bind (from `bun --watch`
+  // reload, dev-mode hot path, or a full restart) starts from a clean
+  // slate. Worker is terminated and respawned on next call.
+  await resetPluginWorker()
   resetPluginModulePacks()
   hookBus.reset()
+
   const plugins = await listInstalledPlugins(db)
   for (const plugin of plugins) {
     if (!plugin.enabled) continue
@@ -396,13 +402,19 @@ export async function activateInstalledServerPlugins(
     }
     if (!manifest.assetBasePath) continue
 
-    // Settings — load cache before `activate()` so plugins can read
-    // settings synchronously inside their server lifecycle hook.
+    // Settings cache must be populated BEFORE the worker loads the plugin
+    // — `loadPluginInWorker` reads from `pluginSettingsCache` to seed the
+    // worker's local `settings.get` mirror, which plugin code may consult
+    // synchronously during `activate()`.
     pluginSettingsCache.set(manifest.id, plugin.settings)
 
-    // Module pack — register first so server plugin lifecycle hooks (and
-    // anything they call) can already resolve the new modules.
-    if (manifest.entrypoints?.modules && plugin.grantedPermissions.includes('modules.register')) {
+    // Module pack first — registers canvas modules in the host registry so
+    // server-rendered (publisher) and editor-rendered (canvas) pages can
+    // use them immediately.
+    if (
+      manifest.entrypoints?.modules &&
+      plugin.grantedPermissions.includes('modules.register')
+    ) {
       try {
         const pack = await loadPluginModulePack(manifest, uploadsDir)
         if (pack) activatePluginModulePack(manifest, pack)
@@ -411,9 +423,14 @@ export async function activateInstalledServerPlugins(
       }
     }
 
+    // Server entrypoint — load into worker, then run activate.
     if (manifest.entrypoints?.server) {
-      const mod = await loadServerPluginModule(manifest, uploadsDir)
-      if (mod) await activateServerPlugin(manifest, mod, db)
+      try {
+        const loaded = await loadPluginServerEntrypoint(manifest, uploadsDir)
+        if (loaded) await runPluginLifecycle(manifest.id, 'activate')
+      } catch (err) {
+        console.error(`[plugin:${manifest.id}] server entrypoint activation failed`, err)
+      }
     }
   }
 }

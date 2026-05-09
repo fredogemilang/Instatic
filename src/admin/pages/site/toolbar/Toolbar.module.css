@@ -53,6 +53,21 @@
     font-weight: 700;
 }
 
+/* Plugins-error indicator dot — shown next to the Plugins nav label
+   whenever any plugin is currently in `lifecycle_status='error'`. Driven
+   by the live SSE-fed pluginIssuesStore so it lights up the moment a
+   plugin's worker exhausts its crash budget, even when the user is on
+   another admin page. */
+.pluginsErrorDot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 6px;
+    border-radius: 999px;
+    background: var(--editor-danger);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--editor-danger) 30%, transparent);
+}
+
 /* ── VC breadcrumb region ──────────────────────────────────────────────────── */
 /* Renders null when not in VC mode — no layout shift via conditional content. */
 .breadcrumbRegion {
@@ -67,9 +82,6 @@
     flex: 1;
     min-width: 0;
     gap: 2px;
-    opacity: 1;
-    animation: pbWorkspaceFadeIn 180ms ease both;
-    view-transition-name: admin-toolbar-controls;
 }
 
 .spacer {
@@ -330,16 +342,6 @@
 @keyframes pbSpin {
     to {
         transform: rotate(360deg);
-    }
-}
-
-@keyframes pbWorkspaceFadeIn {
-    from {
-        opacity: 0;
-    }
-
-    to {
-        opacity: 1;
     }
 }
 

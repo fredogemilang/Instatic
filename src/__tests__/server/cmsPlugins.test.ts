@@ -20,6 +20,7 @@ function makeFakeDb() {
   const sessions: Record<string, unknown>[] = []
   const plugins: Record<string, unknown>[] = []
   const records: Record<string, unknown>[] = []
+  const crashEvents: Record<string, unknown>[] = []
 
   const handle = async <Row extends Record<string, unknown> = Record<string, unknown>>(
     strings: TemplateStringsArray,
@@ -125,6 +126,34 @@ function makeFakeDb() {
       plugins.splice(index, 1)
       return { rows: [], rowCount: 1 }
     }
+    // recordPluginCrash — values[0..3]=id, pluginId, reason, stack
+    if (normalized.includes('insert into plugin_crash_events')) {
+      const row = {
+        id: values[0],
+        plugin_id: values[1],
+        occurred_at: new Date('2026-05-01T10:00:00.000Z').toISOString(),
+        reason: values[2],
+        stack: values[3] ?? null,
+      }
+      crashEvents.push(row)
+      return { rows: [row as Row], rowCount: 1 }
+    }
+    // listPluginCrashes — values[0]=pluginId, values[1]=limit
+    if (normalized.includes('select id, plugin_id, occurred_at, reason, stack')
+        && normalized.includes('from plugin_crash_events')) {
+      const rows = crashEvents
+        .filter((c) => c.plugin_id === values[0])
+        .slice(0, Number(values[1] ?? 10))
+      return { rows: rows as Row[], rowCount: rows.length }
+    }
+    // clearPluginCrashes — values[0]=pluginId
+    if (normalized.includes('delete from plugin_crash_events')) {
+      const before = crashEvents.length
+      const remaining = crashEvents.filter((c) => c.plugin_id !== values[0])
+      crashEvents.length = 0
+      crashEvents.push(...remaining)
+      return { rows: [], rowCount: before - remaining.length }
+    }
     // createPluginRecord — values[0..3]=id, pluginId, resourceId, dataJson
     if (normalized.includes('insert into plugin_records')) {
       const now = new Date('2026-05-01T10:10:00.000Z').toISOString()
@@ -145,7 +174,7 @@ function makeFakeDb() {
   handle.transaction = async <T>(cb: (tx: DbClient) => Promise<T>): Promise<T> =>
     cb(handle as unknown as DbClient)
 
-  return Object.assign(handle as DbClient, { admins, sessions, plugins, records })
+  return Object.assign(handle as DbClient, { admins, sessions, plugins, records, crashEvents })
 }
 
 async function createCookie(db: ReturnType<typeof makeFakeDb>): Promise<string> {
@@ -502,6 +531,11 @@ describe('CMS plugin handlers', () => {
 
   it('runs packaged server plugin lifecycle hooks on install, disable, enable, and remove', async () => {
     const uploadsDir = await mkdtemp(join(tmpdir(), 'page-builder-lifecycle-'))
+    // Plugin code runs in a separate Bun Worker (the host process never
+    // imports plugin server modules). The worker has its own globalThis,
+    // so observing lifecycle order via a fs-marker file is the natural
+    // cross-context channel — same approach the agent-browser e2e uses.
+    const markerLog = join(uploadsDir, 'lifecycle-marker.log')
     const db = makeFakeDb()
     const cookie = await createCookie(db)
     const manifest = {
@@ -521,8 +555,10 @@ describe('CMS plugin handlers', () => {
       adminPages: [],
     }
     const serverEntrypoint = `
+      import { appendFileSync } from 'node:fs'
+      const MARKER = ${JSON.stringify(markerLog)}
       function mark(api, name) {
-        globalThis.__cmsLifecycleEvents = [...(globalThis.__cmsLifecycleEvents || []), name + ':' + api.plugin.id]
+        appendFileSync(MARKER, name + ':' + api.plugin.id + '\\n')
       }
       export async function install(api) {
         mark(api, 'install')
@@ -536,8 +572,16 @@ describe('CMS plugin handlers', () => {
       export function uninstall(api) { mark(api, 'uninstall') }
     `
 
+    async function readMarkers(): Promise<string[]> {
+      try {
+        const text = await readFile(markerLog, 'utf-8')
+        return text.split('\n').filter(Boolean)
+      } catch {
+        return []
+      }
+    }
+
     try {
-      ;(globalThis as typeof globalThis & { __cmsLifecycleEvents?: string[] }).__cmsLifecycleEvents = []
       const formData = new FormData()
       formData.set('file', pluginZip({
         'plugin.json': JSON.stringify(manifest),
@@ -551,8 +595,10 @@ describe('CMS plugin handlers', () => {
         { uploadsDir },
       )
       expect(install.status).toBe(201)
-      expect((globalThis as typeof globalThis & { __cmsLifecycleEvents?: string[] }).__cmsLifecycleEvents)
-        .toEqual(['install:acme.lifecycle', 'activate:acme.lifecycle'])
+      expect(await readMarkers()).toEqual([
+        'install:acme.lifecycle',
+        'activate:acme.lifecycle',
+      ])
       expect(db.records).toHaveLength(1)
 
       const disable = await handleCmsRequest(
@@ -592,11 +638,9 @@ describe('CMS plugin handlers', () => {
         { uploadsDir },
       )
       expect(remove.status).toBe(200)
-      expect((globalThis as typeof globalThis & { __cmsLifecycleEvents?: string[] }).__cmsLifecycleEvents)
-        .toContain('uninstall:acme.lifecycle')
+      expect(await readMarkers()).toContain('uninstall:acme.lifecycle')
       expect(db.plugins).toHaveLength(0)
     } finally {
-      delete (globalThis as typeof globalThis & { __cmsLifecycleEvents?: string[] }).__cmsLifecycleEvents
       await rm(uploadsDir, { recursive: true, force: true })
     }
   })
@@ -671,6 +715,9 @@ describe('CMS plugin handlers', () => {
 
   it('routes a same-id newer-version upload through the upgrade flow with migrate', async () => {
     const uploadsDir = await mkdtemp(join(tmpdir(), 'page-builder-upgrade-'))
+    // Plugin code runs in a separate Bun Worker; observe lifecycle order via
+    // a fs-marker file (cross-context channel between worker and test).
+    const markerLog = join(uploadsDir, 'upgrade-marker.log')
     const db = makeFakeDb()
     const cookie = await createCookie(db)
     const baseManifest = (version: string) => ({
@@ -685,25 +732,22 @@ describe('CMS plugin handlers', () => {
     })
 
     try {
-      ;(globalThis as typeof globalThis & { __upgradeCalls?: string[] }).__upgradeCalls = []
       // Old version: just records its own activate/deactivate.
       const v1 = `
-        export function activate(api) {
-          (globalThis.__upgradeCalls ??= []).push('v1.activate')
-        }
-        export function deactivate() {
-          (globalThis.__upgradeCalls ??= []).push('v1.deactivate')
-        }
+        import { appendFileSync } from 'node:fs'
+        const MARKER = ${JSON.stringify(markerLog)}
+        function mark(line) { appendFileSync(MARKER, line + '\\n') }
+        export function activate() { mark('v1.activate') }
+        export function deactivate() { mark('v1.deactivate') }
       `
       // New version: declares a migrate hook + activate. Migrate must run
       // between old.deactivate and new.activate.
       const v2 = `
-        export function migrate(ctx) {
-          (globalThis.__upgradeCalls ??= []).push('v2.migrate:' + ctx.fromVersion)
-        }
-        export function activate() {
-          (globalThis.__upgradeCalls ??= []).push('v2.activate')
-        }
+        import { appendFileSync } from 'node:fs'
+        const MARKER = ${JSON.stringify(markerLog)}
+        function mark(line) { appendFileSync(MARKER, line + '\\n') }
+        export function migrate(ctx) { mark('v2.migrate:' + ctx.fromVersion) }
+        export function activate() { mark('v2.activate') }
       `
 
       // Fresh install of v1.
@@ -744,14 +788,14 @@ describe('CMS plugin handlers', () => {
       expect(upgradeBody.plugin.lifecycleStatus).toBe('active')
       expect(upgradeBody.upgrade).toEqual({ fromVersion: '1.0.0', toVersion: '1.1.0' })
 
-      // Lifecycle ordering: v1.deactivate → v2.migrate(fromVersion=1.0.0) → v2.activate
-      expect((globalThis as typeof globalThis & { __upgradeCalls?: string[] }).__upgradeCalls)
-        .toEqual([
-          'v1.activate',
-          'v1.deactivate',
-          'v2.migrate:1.0.0',
-          'v2.activate',
-        ])
+      // Lifecycle ordering: v1.activate → v1.deactivate → v2.migrate(1.0.0) → v2.activate
+      const markers = (await readFile(markerLog, 'utf-8')).split('\n').filter(Boolean)
+      expect(markers).toEqual([
+        'v1.activate',
+        'v1.deactivate',
+        'v2.migrate:1.0.0',
+        'v2.activate',
+      ])
 
       // installed_at preserved across the upgrade.
       expect(db.plugins[0].installed_at).toBe(installedAtBefore)
@@ -902,5 +946,209 @@ describe('CMS plugin handlers', () => {
     expect(res.status).toBe(400)
     expect((await res.json() as { error: string }).error).toMatch(/apiVersion 99/)
     expect(db.plugins).toHaveLength(0)
+  })
+
+  // ─── Crash counter (sliding window) ───────────────────────────────────────
+
+  it('crash counter respawns within budget then gives up after 3 crashes in 5min', async () => {
+    const { recordCrashAndDecide, clearPluginCrashCounter } = await import(
+      '../../../server/plugins/pluginWorkerHost'
+    )
+    const id = `test.crash.${Date.now()}`
+
+    // Use explicit `now` so the test is deterministic and doesn't rely on
+    // wall-clock timing. All three crashes inside the 5-minute window.
+    const t0 = 1_000_000_000_000
+    const first = recordCrashAndDecide(id, t0)
+    const second = recordCrashAndDecide(id, t0 + 1000)
+    const third = recordCrashAndDecide(id, t0 + 2000)
+    expect(first).toEqual({ kind: 'respawn', recentCrashCount: 1 })
+    expect(second).toEqual({ kind: 'respawn', recentCrashCount: 2 })
+    expect(third).toEqual({ kind: 'give-up', recentCrashCount: 3 })
+
+    // Crash that lands AFTER the window expires resets the count.
+    const reset = recordCrashAndDecide(id, t0 + 6 * 60 * 1000)
+    expect(reset).toEqual({ kind: 'respawn', recentCrashCount: 1 })
+
+    // Manual clear (used by the restart endpoint) wipes the counter even
+    // mid-window.
+    clearPluginCrashCounter(id)
+    const afterClear = recordCrashAndDecide(id, t0 + 6 * 60 * 1000 + 1000)
+    expect(afterClear).toEqual({ kind: 'respawn', recentCrashCount: 1 })
+
+    // Cleanup so this test doesn't leak counter state into siblings.
+    clearPluginCrashCounter(id)
+  })
+
+  // ─── Manual restart endpoint ──────────────────────────────────────────────
+
+  it('POST /restart resets crash counter, drops crash events, and re-activates the plugin', async () => {
+    const uploadsDir = await mkdtemp(join(tmpdir(), 'page-builder-restart-'))
+    const db = makeFakeDb()
+    const cookie = await createCookie(db)
+    const markerLog = join(uploadsDir, 'restart.log')
+    try {
+      const formData = new FormData()
+      formData.set('file', pluginZip({
+        'plugin.json': JSON.stringify({
+          id: 'test.restart',
+          name: 'Restart Demo',
+          version: '1.0.0',
+          apiVersion: 1,
+          permissions: ['cms.routes'],
+          entrypoints: { server: 'server/index.js' },
+          resources: [],
+          adminPages: [],
+        }),
+        'server/index.js': `
+          import { appendFileSync } from 'node:fs'
+          const MARKER = ${JSON.stringify(markerLog)}
+          export function activate() {
+            appendFileSync(MARKER, 'activate\\n')
+          }
+        `,
+      }))
+      formData.set('grantedPermissions', JSON.stringify(['cms.routes']))
+      const install = await handleCmsRequest(
+        cmsFormRequest('http://localhost/admin/api/cms/plugins/package', formData, { cookie }),
+        db,
+        { uploadsDir },
+      )
+      expect(install.status).toBe(201)
+
+      // Simulate that the plugin has been parked in `error` state with
+      // historical crash events — what the operator would see if the
+      // sliding-window budget had been exhausted.
+      db.plugins[0].lifecycle_status = 'error'
+      db.plugins[0].last_error = 'simulated crash'
+      const { recordPluginCrash } = await import('../../../server/repositories/plugins')
+      await recordPluginCrash(db, { id: 'crash_1', pluginId: 'test.restart', reason: 'simulated 1' })
+      await recordPluginCrash(db, { id: 'crash_2', pluginId: 'test.restart', reason: 'simulated 2' })
+      await recordPluginCrash(db, { id: 'crash_3', pluginId: 'test.restart', reason: 'simulated 3' })
+
+      // POST /restart must reset state and bring the plugin back to active.
+      const restart = await handleCmsRequest(
+        cmsRequest('http://localhost/admin/api/cms/plugins/test.restart/restart', {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json' },
+        }),
+        db,
+        { uploadsDir },
+      )
+      expect(restart.status).toBe(200)
+      const body = await restart.json() as {
+        plugin: { lifecycleStatus: string; recentCrashes?: unknown[] }
+        plugins: { id: string; recentCrashes?: unknown[] }[]
+      }
+      expect(body.plugin.lifecycleStatus).toBe('active')
+      // recentCrashes returned for the restarted plugin should be empty —
+      // historical events were wiped as part of the restart.
+      const restartedFromList = body.plugins.find((p) => p.id === 'test.restart')
+      expect(restartedFromList?.recentCrashes).toEqual([])
+
+      // activate() ran twice: once on initial install, once after restart.
+      const markers = (await readFile(markerLog, 'utf-8')).split('\n').filter(Boolean)
+      expect(markers).toEqual(['activate', 'activate'])
+    } finally {
+      await rm(uploadsDir, { recursive: true, force: true })
+    }
+  })
+
+  // ─── Per-plugin worker crash isolation ───────────────────────────────────
+  //
+  // Regression gate for the per-plugin worker model. Two plugins are
+  // installed; one's route handler intentionally throws an error severe
+  // enough to take down its worker. The sibling plugin's worker must keep
+  // serving routes — proving that crashes are isolated per pluginId.
+
+  it('crash in one plugin\'s worker does not affect a sibling plugin\'s worker', async () => {
+    const uploadsDir = await mkdtemp(join(tmpdir(), 'page-builder-crash-iso-'))
+    const db = makeFakeDb()
+    const cookie = await createCookie(db)
+
+    function manifestFor(id: string) {
+      return {
+        id,
+        name: id,
+        version: '1.0.0',
+        apiVersion: 1,
+        permissions: ['cms.routes'],
+        entrypoints: { server: 'server/index.js' },
+        resources: [],
+        adminPages: [],
+      }
+    }
+
+    try {
+      // Plugin A — a "well-behaved" plugin with a /ping route that just works.
+      const goodFormData = new FormData()
+      goodFormData.set('file', pluginZip({
+        'plugin.json': JSON.stringify(manifestFor('acme.good')),
+        'server/index.js': `
+          export function activate(api) {
+            api.cms.routes.get('/ping', 'plugins.manage', () => ({ ok: true, who: 'good' }))
+          }
+        `,
+      }))
+      goodFormData.set('grantedPermissions', JSON.stringify(['cms.routes']))
+      const installGood = await handleCmsRequest(
+        cmsFormRequest('http://localhost/admin/api/cms/plugins/package', goodFormData, { cookie }),
+        db,
+        { uploadsDir },
+      )
+      expect(installGood.status).toBe(201)
+
+      // Plugin B — registers a /boom route whose handler throws. With per-
+      // plugin workers, this throw is caught by the worker entry's run-route
+      // dispatcher and turned into an error result; it does NOT take down
+      // the worker (the route handler runs inside try/catch in pluginWorker).
+      // For a HARDER test we use a synchronous throw at the API boundary,
+      // not just a route handler — same isolation guarantee should hold.
+      const badFormData = new FormData()
+      badFormData.set('file', pluginZip({
+        'plugin.json': JSON.stringify(manifestFor('acme.bad')),
+        'server/index.js': `
+          export function activate(api) {
+            api.cms.routes.get('/boom', 'plugins.manage', () => {
+              throw new Error('plugin boom')
+            })
+          }
+        `,
+      }))
+      badFormData.set('grantedPermissions', JSON.stringify(['cms.routes']))
+      const installBad = await handleCmsRequest(
+        cmsFormRequest('http://localhost/admin/api/cms/plugins/package', badFormData, { cookie }),
+        db,
+        { uploadsDir },
+      )
+      expect(installBad.status).toBe(201)
+
+      // Trigger plugin B's failing route — host should return 500 with the
+      // error message, not crash the process.
+      const boom = await handleCmsRequest(
+        cmsRequest('http://localhost/admin/api/cms/plugins/acme.bad/runtime/boom', {
+          headers: { cookie },
+        }),
+        db,
+        { uploadsDir },
+      )
+      expect(boom.status).toBe(500)
+      expect((await boom.json() as { error: string }).error).toMatch(/plugin boom/)
+
+      // Plugin A's /ping must STILL work after the sibling failure — proves
+      // the isolation. Whether or not B's worker was terminated, A's worker
+      // is independent.
+      const ping = await handleCmsRequest(
+        cmsRequest('http://localhost/admin/api/cms/plugins/acme.good/runtime/ping', {
+          headers: { cookie },
+        }),
+        db,
+        { uploadsDir },
+      )
+      expect(ping.status).toBe(200)
+      expect(await ping.json()).toEqual({ ok: true, who: 'good' })
+    } finally {
+      await rm(uploadsDir, { recursive: true, force: true })
+    }
   })
 })

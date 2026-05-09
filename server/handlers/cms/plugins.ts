@@ -31,12 +31,14 @@ import { requireCapability } from '../../auth/authz'
 import type { AuthUser } from '../../repositories/users'
 import { createAuditEvent } from '../../repositories/audit'
 import {
+  clearPluginCrashes,
   createPluginRecord,
   deletePluginRecord,
   deletePlugin,
   getInstalledPlugin,
   installPlugin,
   listInstalledPlugins,
+  listPluginCrashes,
   listPluginRecords,
   setPluginLifecycleStatus,
   setPluginEnabled,
@@ -61,14 +63,19 @@ import { readPluginPackage } from '../../plugins/package'
 import {
   activateInstalledServerPlugins,
   assertPluginPathWithin,
+  clearPluginCrashCounter,
   handleServerPluginRuntimeRequest,
   loadPluginModulePack,
-  loadServerPluginModule,
+  loadPluginServerEntrypoint,
   refreshPluginSettingsCache,
-  runServerPluginLifecycleHook,
-  runServerPluginMigrateHook,
-  serverPluginRuntime,
+  reloadAndActivatePlugin,
+  runPluginLifecycle,
+  runPluginMigrate,
+  setPluginWorkerDbClient,
+  unloadPlugin,
+  updatePluginSettingsCache,
 } from '../../plugins/runtime'
+import { broadcastPluginEvent, subscribePluginEvents } from '../../plugins/eventBroadcaster'
 import {
   validatePluginSettingsRecord,
   maskSecretSettings,
@@ -99,8 +106,18 @@ import { nanoid } from 'nanoid'
 
 async function pluginsPayload(db: DbClient) {
   const plugins = await listInstalledPlugins(db)
+  // Attach recent crash events per plugin so the admin UI can render the
+  // "Recent issues" panel without an extra round trip per card. Cap at 10
+  // most recent — older events are still in the DB if needed but the UI
+  // shows only the recent slice.
+  const pluginsWithCrashes = await Promise.all(
+    plugins.map(async (plugin) => {
+      const recentCrashes = await listPluginCrashes(db, plugin.id, 10)
+      return { ...plugin, recentCrashes }
+    }),
+  )
   return {
-    plugins,
+    plugins: pluginsWithCrashes,
     adminPages: collectEnabledAdminPages(plugins),
   }
 }
@@ -131,10 +148,13 @@ function lifecycleErrorMessage(err: unknown): string {
 }
 
 /**
- * Wrapper used for the install / activate / deactivate / uninstall lifecycle
- * paths. The `migrate` hook is intentionally excluded — its signature differs
- * (takes a context object) and the upgrade flow handles it directly via
- * `runServerPluginMigrateHook`.
+ * Run a single lifecycle hook on a plugin via the worker. Handles the
+ * load-into-worker, run-hook, on-error rollback sequence; updates the
+ * lifecycle status row to reflect the outcome.
+ *
+ * Migrate is excluded — its signature differs (takes a context object) and
+ * the upgrade flow drives it directly through `runPluginMigrate` so it can
+ * place migrate between deactivate and activate atomically.
  */
 async function runPluginLifecycleHook(
   db: DbClient,
@@ -146,12 +166,19 @@ async function runPluginLifecycleHook(
   const manifest = pluginManifestWithGrants(plugin)
 
   try {
-    // On `activate`, also load the plugin's canvas module pack into the
-    // server-side registry so the publisher can render plugin modules
-    // immediately (without restart). On `deactivate` / `uninstall`, drop them.
-    if (hook === 'activate'
-      && manifest.entrypoints?.modules
-      && manifest.grantedPermissions?.includes('modules.register')) {
+    // Make sure the plugin's settings cache is current before the worker
+    // seeds them into its local mirror — the row carries the canonical
+    // values and any prior in-process cache may be stale (e.g. after a
+    // settings PUT).
+    updatePluginSettingsCache(plugin.id, plugin.settings)
+
+    // Canvas module pack — host-side, separate from worker. Activate when
+    // entering active state; deactivate when leaving.
+    if (
+      hook === 'activate' &&
+      manifest.entrypoints?.modules &&
+      manifest.grantedPermissions?.includes('modules.register')
+    ) {
       try {
         const pack = await loadPluginModulePack(manifest, options.uploadsDir)
         if (pack) activatePluginModulePack(manifest, pack)
@@ -163,66 +190,32 @@ async function runPluginLifecycleHook(
       deactivatePluginModulePack(plugin.id)
     }
 
-    const mod = await loadServerPluginModule(manifest, options.uploadsDir)
-    if (!mod?.[hook]) {
-      const updated = await setPluginLifecycleStatus(db, plugin.id, successStatus)
-      return { plugin: updated ?? plugin, ok: true }
+    // Server entrypoint — load into the worker (no-op for declarative
+    // plugins without `entrypoints.server`), then run the named hook.
+    const loaded = await loadPluginServerEntrypoint(manifest, options.uploadsDir)
+    if (loaded) {
+      await runPluginLifecycle(plugin.id, hook)
     }
 
-    await runServerPluginLifecycleHook(manifest, mod, db, hook)
+    // After deactivate / uninstall the plugin should not stay loaded in
+    // the worker — drop it so a subsequent re-activate gets a fresh
+    // module instance.
+    if (hook === 'deactivate' || hook === 'uninstall') {
+      await unloadPlugin(plugin.id)
+    }
+
     const updated = await setPluginLifecycleStatus(db, plugin.id, successStatus)
     return { plugin: updated ?? plugin, ok: true }
   } catch (err) {
+    // Activate failure leaves us in a half-loaded state — drop the worker
+    // entry and the canvas module pack so the next attempt starts clean.
     if (hook === 'activate') {
-      serverPluginRuntime.unregisterPlugin(plugin.id)
+      try { await unloadPlugin(plugin.id) } catch {/* noop */}
       deactivatePluginModulePack(plugin.id)
     }
     const updated = await setPluginLifecycleStatus(db, plugin.id, 'error', lifecycleErrorMessage(err))
     return { plugin: updated ?? plugin, ok: false }
   }
-}
-
-/**
- * Schedule deletion of a plugin's old version directory after the current
- * tick — fire-and-forget. Used by the upgrade flow's success and rollback
- * paths instead of an inline `await rm(...)` so the calling handler can
- * return its Response synchronously without waiting on filesystem cleanup.
- *
- * Why deferred? In dev (`bun --watch`) the runtime tracks dynamically-
- * imported plugin server files in its watch graph; deleting one triggers
- * a server reload. Done inline that reload races the in-flight HTTP
- * response and kills it mid-flush, leaving the client (e.g. the upgrade
- * dialog in the admin UI) hanging in an inconsistent state. Deferring the
- * `rm` past the response boundary is enough: the client receives its 200
- * (or 400 on rollback) before bun's watcher fires.
- *
- * In production (no `--watch`), there is no reload to race with — the
- * deferral is a harmless no-op delay.
- */
-function scheduleStaleVersionCleanup(
-  pluginId: string,
-  version: string,
-  uploadsDir: string,
-): void {
-  const target = join(uploadsDir, `plugins/${pluginId}/${version}`)
-  // Defense-in-depth — same containment check as `removePluginAssets`.
-  try {
-    assertPluginPathWithin(uploadsDir, target)
-  } catch (err) {
-    console.error(
-      `[plugin:${pluginId}] scheduleStaleVersionCleanup refused to delete escaping path:`,
-      err,
-    )
-    return
-  }
-  setTimeout(() => {
-    rm(target, { recursive: true, force: true }).catch((err: unknown) => {
-      console.error(
-        `[plugin:${pluginId}] cleanup of /uploads/plugins/${pluginId}/${version} failed:`,
-        err,
-      )
-    })
-  }, 0)
 }
 
 async function removePluginAssets(plugin: InstalledPlugin, uploadsDir?: string): Promise<void> {
@@ -366,6 +359,12 @@ async function handlePluginsCollection(
       const installed = await installPlugin(db, manifest, grantedPermissions)
       const plugin = await setPluginLifecycleStatus(db, installed.id, 'active') ?? installed
       await recordPluginAuditEvent(db, user, req, 'plugin.install', plugin.id)
+      broadcastPluginEvent({
+        kind: 'installed',
+        pluginId: plugin.id,
+        version: plugin.version,
+        occurredAt: new Date().toISOString(),
+      })
       return jsonResponse({ plugin, ...await pluginsPayload(db) }, { status: 201 })
     } catch (err) {
       return badRequest(err instanceof Error ? err.message : 'Invalid plugin manifest')
@@ -469,7 +468,11 @@ async function handleFreshPluginInstall(ctx: InstallContext): Promise<Response> 
     )
   }
 
-  serverPluginRuntime.unregisterPlugin(installed.id)
+  // Reset worker + host state so partial registrations from `install` don't
+  // leak into the activate cycle — `runPluginLifecycleHook` re-loads the
+  // plugin entrypoint as part of its setup, which idempotently clears
+  // prior host-side bookkeeping.
+  await unloadPlugin(installed.id)
   const activateLifecycle = await runPluginLifecycleHook(
     db,
     installLifecycle.plugin,
@@ -504,6 +507,12 @@ async function handleFreshPluginInstall(ctx: InstallContext): Promise<Response> 
 
   await recordPluginAuditEvent(db, user, req, 'plugin.install', activateLifecycle.plugin.id, {
     version: activateLifecycle.plugin.version,
+  })
+  broadcastPluginEvent({
+    kind: 'installed',
+    pluginId: activateLifecycle.plugin.id,
+    version: activateLifecycle.plugin.version,
+    occurredAt: new Date().toISOString(),
   })
   return jsonResponse(
     {
@@ -551,15 +560,16 @@ async function handlePluginUpgrade(ctx: UpgradeContext): Promise<Response> {
   try {
     const oldManifest = pluginManifestWithGrants(existing)
     if (oldManifest.entrypoints?.server) {
-      const oldMod = await loadServerPluginModule(oldManifest, options.uploadsDir)
-      if (oldMod?.deactivate) {
-        await runServerPluginLifecycleHook(oldManifest, oldMod, db, 'deactivate')
-      }
+      // Old version may not currently be loaded in the worker (e.g. server
+      // restarted but plugin row exists). loadPluginServerEntrypoint is
+      // idempotent and safe to call even on an already-loaded plugin.
+      await loadPluginServerEntrypoint(oldManifest, options.uploadsDir)
+      await runPluginLifecycle(pluginId, 'deactivate')
     }
   } catch (err) {
     console.error(`[plugin:${pluginId}] pre-upgrade deactivate failed`, err)
   }
-  serverPluginRuntime.unregisterPlugin(pluginId)
+  await unloadPlugin(pluginId)
   deactivatePluginModulePack(pluginId)
 
   // 2. Write new assets.
@@ -572,14 +582,18 @@ async function handlePluginUpgrade(ctx: UpgradeContext): Promise<Response> {
   // 3. Replace DB row. `installPlugin` upserts — settings_json + installed_at
   //    are preserved by the SET clause (it doesn't reference them).
   const upgraded = await installPlugin(db, newManifest, grantedPermissions)
+  // Refresh settings cache from the upserted row so the worker's
+  // `loadPluginServerEntrypoint` seeds the right values into the worker's
+  // local mirror.
+  updatePluginSettingsCache(pluginId, upgraded.settings)
 
   // 4 + 5. Try to migrate then activate. On any failure we restore the old
   //        version end-to-end.
   try {
     const upgradedManifest = pluginManifestWithGrants(upgraded)
-    const newMod = await loadServerPluginModule(upgradedManifest, options.uploadsDir)
-    if (newMod?.migrate) {
-      await runServerPluginMigrateHook(upgradedManifest, newMod, db, { fromVersion })
+    const loaded = await loadPluginServerEntrypoint(upgradedManifest, options.uploadsDir)
+    if (loaded) {
+      await runPluginMigrate(pluginId, fromVersion)
     }
     if (
       upgradedManifest.entrypoints?.modules
@@ -592,8 +606,8 @@ async function handlePluginUpgrade(ctx: UpgradeContext): Promise<Response> {
         console.error(`[plugin:${pluginId}] post-upgrade module pack load failed`, err)
       }
     }
-    if (newMod?.activate) {
-      await runServerPluginLifecycleHook(upgradedManifest, newMod, db, 'activate')
+    if (loaded) {
+      await runPluginLifecycle(pluginId, 'activate')
     }
     await setPluginLifecycleStatus(db, pluginId, 'active')
   } catch (err) {
@@ -610,18 +624,15 @@ async function handlePluginUpgrade(ctx: UpgradeContext): Promise<Response> {
     )
   }
 
-  // 6. Drop the old version's assets — DEFERRED. In dev (`bun --watch`)
-  //    the runtime tracks dynamically-imported plugin files in its watch
-  //    graph, and deleting one triggers a server reload. If we awaited the
-  //    `rm` here, the reload would race the response write: the in-flight
-  //    HTTP response would get killed mid-flush and the admin client would
-  //    see an aborted connection (catch block fires → `setPendingInstall`
-  //    never clears → upgrade dialog sticks). Scheduling the cleanup with
-  //    `setTimeout(_, 0)` returns the response synchronously after this
-  //    function ends; bun's reload (if it happens) fires after the client
-  //    has its 200. In production (no `--watch`), this is just a tiny
-  //    bookkeeping deferral — no reload to worry about.
-  scheduleStaleVersionCleanup(pluginId, fromVersion, options.uploadsDir)
+  // 6. Drop the old version's assets. With worker isolation, plugin server
+  //    files no longer live in the host process's `bun --watch` graph
+  //    (they're imported inside the worker), so deleting them here doesn't
+  //    race the response write — straightforward `await rm` is safe in
+  //    both dev and production.
+  await rm(join(options.uploadsDir, `plugins/${pluginId}/${fromVersion}`), {
+    recursive: true,
+    force: true,
+  })
 
   // Re-fetch so the response carries the post-activation row (settings,
   // lifecycle = 'active', etc.).
@@ -645,6 +656,13 @@ async function handlePluginUpgrade(ctx: UpgradeContext): Promise<Response> {
   await recordPluginAuditEvent(db, user, req, 'plugin.update', pluginId, {
     fromVersion,
     toVersion: newVersion,
+  })
+  broadcastPluginEvent({
+    kind: 'updated',
+    pluginId,
+    fromVersion,
+    toVersion: newVersion,
+    occurredAt: new Date().toISOString(),
   })
   return jsonResponse(
     {
@@ -687,21 +705,24 @@ async function rollbackUpgrade(args: {
     existing.grantedPermissions,
   )
 
-  // Drop new version assets — the upgrade didn't take. Same dev-watch
-  // hazard as the success-path cleanup: deleting an imported plugin file
-  // races the response write under `bun --watch`. Defer with the shared
-  // helper so the 400 lands on the client first.
+  // Drop new version assets — the upgrade didn't take. With worker
+  // isolation, plugin server files no longer live in the host's `bun
+  // --watch` graph; plain `await rm` is safe.
   if (options.uploadsDir) {
-    scheduleStaleVersionCleanup(pluginId, newManifest.version, options.uploadsDir)
+    await rm(join(options.uploadsDir, `plugins/${pluginId}/${newManifest.version}`), {
+      recursive: true,
+      force: true,
+    })
   }
 
   // Re-activate prior version. Best-effort: a rollback that crashes during
   // re-activation leaves the plugin disabled-with-error, which is still a
   // safer state than half-upgraded.
-  serverPluginRuntime.unregisterPlugin(pluginId)
+  await unloadPlugin(pluginId)
   deactivatePluginModulePack(pluginId)
   try {
     const restoredManifest = pluginManifestWithGrants(restored)
+    updatePluginSettingsCache(pluginId, restored.settings)
     if (
       restoredManifest.entrypoints?.modules
       && restoredManifest.grantedPermissions?.includes('modules.register')
@@ -710,10 +731,8 @@ async function rollbackUpgrade(args: {
       if (pack) activatePluginModulePack(restoredManifest, pack)
     }
     if (restoredManifest.entrypoints?.server) {
-      const restoredMod = await loadServerPluginModule(restoredManifest, options.uploadsDir)
-      if (restoredMod?.activate) {
-        await runServerPluginLifecycleHook(restoredManifest, restoredMod, db, 'activate')
-      }
+      const loaded = await loadPluginServerEntrypoint(restoredManifest, options.uploadsDir)
+      if (loaded) await runPluginLifecycle(pluginId, 'activate')
     }
     await setPluginLifecycleStatus(
       db,
@@ -797,7 +816,7 @@ async function setPluginEnabledFromRequest(
   const updated = await setPluginEnabled(db, pluginId, enabled)
   if (!updated) return PLUGIN_NOT_FOUND
 
-  serverPluginRuntime.unregisterPlugin(pluginId)
+  await unloadPlugin(pluginId)
   const lifecycle = await runPluginLifecycleHook(
     db,
     updated,
@@ -813,6 +832,11 @@ async function setPluginEnabledFromRequest(
     await activateInstalledServerPlugins(db, options.uploadsDir)
   }
 
+  broadcastPluginEvent({
+    kind: enabled ? 'enabled' : 'disabled',
+    pluginId,
+    occurredAt: new Date().toISOString(),
+  })
   await recordPluginAuditEvent(
     db,
     user,
@@ -851,10 +875,15 @@ async function handlePluginItem(
 
     const deleted = await deletePlugin(db, pluginId)
     if (!deleted) return PLUGIN_NOT_FOUND
-    serverPluginRuntime.unregisterPlugin(pluginId)
+    await unloadPlugin(pluginId)
     await removePluginAssets(current, options.uploadsDir)
     await activateInstalledServerPlugins(db, options.uploadsDir)
     await recordPluginAuditEvent(db, user, req, 'plugin.delete', pluginId)
+    broadcastPluginEvent({
+      kind: 'uninstalled',
+      pluginId,
+      occurredAt: new Date().toISOString(),
+    })
     return jsonResponse({ ok: true })
   }
 
@@ -961,6 +990,131 @@ async function handlePluginSettings(
   return methodNotAllowed()
 }
 
+/**
+ * `POST /admin/api/cms/plugins/:id/restart`
+ *
+ * Manual restart for a plugin parked in `lifecycle_status='error'` after
+ * its crash budget was exhausted (or whenever the operator wants to bounce
+ * it). Resets the per-plugin sliding-window crash counter so the next
+ * failure starts fresh, drops any stale crash events, then re-loads the
+ * entrypoint into a new worker and runs `activate`.
+ *
+ * If activate succeeds the lifecycle row flips back to `active`. If it
+ * fails the worker host's normal crash path takes over and the row stays
+ * in `error` with the new failure recorded.
+ */
+async function handlePluginRestart(
+  req: Request,
+  db: DbClient,
+  options: CmsHandlerOptions,
+  user: AuthUser,
+  pluginId: string,
+): Promise<Response> {
+  if (req.method !== 'POST') return methodNotAllowed()
+  const plugin = await getInstalledPlugin(db, pluginId)
+  if (!plugin) return PLUGIN_NOT_FOUND
+  if (!plugin.enabled) return badRequest('Cannot restart a disabled plugin — enable it first.')
+
+  // Reset the crash counter + clear historical crash events so the UI starts
+  // fresh after the operator's intervention. Keeping old events around after
+  // an explicit restart would muddy the "did the restart work?" signal.
+  clearPluginCrashCounter(pluginId)
+  await clearPluginCrashes(db, pluginId)
+
+  // Fully unload first so the existing (possibly half-dead) worker is
+  // terminated. Then reload + activate.
+  await unloadPlugin(pluginId)
+  try {
+    await reloadAndActivatePlugin(db, pluginId, options.uploadsDir)
+    await setPluginLifecycleStatus(db, pluginId, 'active')
+  } catch (err) {
+    const message = lifecycleErrorMessage(err)
+    await setPluginLifecycleStatus(db, pluginId, 'error', message)
+    return badRequest(`Restart failed: ${message}`)
+  }
+
+  await recordPluginAuditEvent(db, user, req, 'plugin.enable', pluginId, { restart: true })
+  broadcastPluginEvent({
+    kind: 'restarted',
+    pluginId,
+    occurredAt: new Date().toISOString(),
+  })
+  const finalRow = (await getInstalledPlugin(db, pluginId)) ?? plugin
+  return jsonResponse({ plugin: finalRow, ...await pluginsPayload(db) })
+}
+
+/**
+ * `GET /admin/api/cms/plugins/events` — Server-Sent Events stream of plugin
+ * lifecycle events.
+ *
+ * Wired so each connected admin tab gets `crash`, `recovered`, `parked`,
+ * `restarted`, `installed`, `updated`, `uninstalled`, `enabled`, and
+ * `disabled` events in real time. The admin client uses these to:
+ *   - re-fetch the plugins list (live update of the Plugins page),
+ *   - push a toast on crash / parked events (visible from any admin route),
+ *   - bump a red badge on the nav link when any plugin is in error state.
+ *
+ * Behaviour:
+ *   - The auth gate (`plugins.manage`) is applied by the dispatcher above
+ *     before we reach this handler.
+ *   - Initial `event: ping` keeps proxies (vite, nginx) from idle-closing
+ *     the long-lived connection. Followed by a periodic heartbeat every
+ *     30s for the same reason.
+ *   - On `req.signal` abort (tab closed, EventSource paused), we
+ *     unsubscribe from the broadcaster and stop the heartbeat. No leaks.
+ *   - The stream never ends voluntarily — clients reconnect via the
+ *     standard EventSource auto-reconnect on transport errors.
+ */
+function handlePluginEventsStream(req: Request): Response {
+  if (req.method !== 'GET') return methodNotAllowed()
+  const encoder = new TextEncoder()
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      function send(payload: string): void {
+        try {
+          controller.enqueue(encoder.encode(payload))
+        } catch {
+          // Stream already closed (client gone). Listeners + heartbeat
+          // are torn down via the abort handler below.
+        }
+      }
+
+      // Initial ping so the client sees a successful connection immediately,
+      // even before the first real event arrives.
+      send(`event: ping\ndata: connected\n\n`)
+
+      // Subscribe to the broadcaster — every event becomes one SSE message.
+      // SSE requires `data:` lines + a terminating blank line.
+      const unsubscribe = subscribePluginEvents((event) => {
+        send(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`)
+      })
+
+      // Heartbeat keeps proxies + the EventSource itself happy. SSE comments
+      // (`: heartbeat`) are ignored by the client but reset idle timers.
+      const heartbeat = setInterval(() => {
+        send(`: heartbeat\n\n`)
+      }, 30_000)
+
+      // Tear down when the client disconnects.
+      req.signal.addEventListener('abort', () => {
+        unsubscribe()
+        clearInterval(heartbeat)
+        try { controller.close() } catch {/* already closed */}
+      })
+    },
+  })
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-store',
+      'x-accel-buffering': 'no',
+    },
+  })
+}
+
 async function handlePluginRecordsCollection(
   req: Request,
   db: DbClient,
@@ -1046,6 +1200,8 @@ const PLUGIN_RECORD_ITEM_PATTERN = /^\/admin\/api\/cms\/plugins\/([^/]+)\/resour
 const PLUGIN_RUNTIME_PATTERN = /^\/admin\/api\/cms\/plugins\/([^/]+)\/runtime(?:\/.*)?$/
 const PLUGIN_PACK_INSTALL_PATTERN = /^\/admin\/api\/cms\/plugins\/([^/]+)\/pack\/install$/
 const PLUGIN_SETTINGS_PATTERN = /^\/admin\/api\/cms\/plugins\/([^/]+)\/settings$/
+const PLUGIN_RESTART_PATTERN = /^\/admin\/api\/cms\/plugins\/([^/]+)\/restart$/
+const PLUGIN_EVENTS_PATH = '/admin/api/cms/plugins/events'
 
 // ---------------------------------------------------------------------------
 // Dispatcher
@@ -1058,6 +1214,14 @@ export async function handlePluginsRoutes(
 ): Promise<Response | null> {
   const url = new URL(req.url)
   const { pathname } = url
+
+  // Make sure the plugin worker host knows the current DbClient before any
+  // worker-initiated `cms.storage.*` round-trip lands. Idempotent; the host
+  // just stores the reference. Required because `activateInstalledServerPlugins`
+  // (the canonical setter) only runs at boot and after disable/enable cycles —
+  // without this call, a fresh install or upgrade would see api dispatches
+  // fail with "no DbClient configured" until the next boot.
+  setPluginWorkerDbClient(db)
 
   // Plugin runtime is a pass-through to the plugin's own server module — its
   // capability gating lives inside `handleServerPluginRuntimeRequest` because
@@ -1094,6 +1258,15 @@ export async function handlePluginsRoutes(
   const settingsMatch = pathname.match(PLUGIN_SETTINGS_PATTERN)
   if (settingsMatch) {
     return handlePluginSettings(req, db, user, decodeURIComponent(settingsMatch[1]))
+  }
+
+  const restartMatch = pathname.match(PLUGIN_RESTART_PATTERN)
+  if (restartMatch) {
+    return handlePluginRestart(req, db, options, user, decodeURIComponent(restartMatch[1]))
+  }
+
+  if (pathname === PLUGIN_EVENTS_PATH) {
+    return handlePluginEventsStream(req)
   }
 
   const recordItemMatch = pathname.match(PLUGIN_RECORD_ITEM_PATTERN)

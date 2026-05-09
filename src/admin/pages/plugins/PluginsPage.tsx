@@ -10,6 +10,7 @@ import {
   getEditorActivationErrors,
   subscribeEditorActivationErrors,
 } from "./hooks/editorPluginActivationErrors";
+import { subscribePluginEvents } from "./utils/pluginEventStream";
 import type {
   CmsPluginsPayload,
   InstalledPlugin,
@@ -29,10 +30,11 @@ import {
   installCmsPluginPack,
   listCmsPlugins,
   removeCmsPlugin,
+  restartCmsPlugin,
   setCmsPluginEnabled,
 } from "@core/persistence";
-import AdminLayout from "@admin/AdminLayout";
-import { SettingsButton } from "@site/toolbar/SettingsButton";
+import { ReloadIcon } from "pixel-art-icons/icons/reload";
+import { AdminPageLayout } from "@admin/layouts";
 import { notifyCmsPluginsChanged } from "./utils/pluginEvents";
 import { CMS_SITE_RELOAD_EVENT } from "@site/hooks/usePersistence";
 import { PluginSettingsDialog } from "./components/PluginSettingsDialog/PluginSettingsDialog";
@@ -127,6 +129,18 @@ export function PluginsPage() {
       void loadPlugins();
     }, 0);
     return () => window.clearTimeout(timer);
+  }, []);
+
+  // Live refresh — when ANY plugin event arrives (crash, recovered, parked,
+  // restarted, installed, updated, uninstalled, enabled, disabled), re-fetch
+  // the list so the user sees the latest state without leaving the page. The
+  // EventSource is shared across consumers (PluginsNavBadge, toast bridge)
+  // so we don't open one socket per subscriber.
+  useEffect(() => {
+    const unsubscribe = subscribePluginEvents(() => {
+      void loadPlugins();
+    });
+    return unsubscribe;
   }, []);
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -233,6 +247,32 @@ export function PluginsPage() {
     }
   }
 
+  /**
+   * Manually restart a plugin parked in `error` state. Resets the host's
+   * crash budget for this plugin, clears its historical crash events, then
+   * re-loads + re-activates. Used from the "Restart" button on the plugin
+   * card.
+   */
+  async function restartPlugin(plugin: InstalledPlugin) {
+    setBusyPluginId(plugin.id);
+    setError(null);
+    try {
+      const result = await restartCmsPlugin(plugin.id);
+      if (result.plugins.length > 0) {
+        setPayload({ plugins: result.plugins, adminPages: result.adminPages });
+      } else if (result.plugin) {
+        setPayload((current) =>
+          updatePlugin(current, result.plugin as InstalledPlugin),
+        );
+      }
+      notifyCmsPluginsChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not restart plugin");
+    } finally {
+      setBusyPluginId(null);
+    }
+  }
+
   async function installPluginPack(plugin: InstalledPlugin) {
     setBusyPluginId(plugin.id);
     setError(null);
@@ -291,62 +331,47 @@ export function PluginsPage() {
   }
 
   const toolbarRightSlot = (
-    <>
-      <Button
-        variant="primary"
-        size="sm"
-        disabled={uploading}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        <UploadIcon size={14} aria-hidden="true" />
-        <span>{uploading ? "Uploading" : "Upload Plugin"}</span>
-      </Button>
-      <SettingsButton />
-    </>
+    <Button
+      variant="primary"
+      size="sm"
+      disabled={uploading}
+      onClick={() => fileInputRef.current?.click()}
+    >
+      <UploadIcon size={14} aria-hidden="true" />
+      <span>{uploading ? "Uploading" : "Upload Plugin"}</span>
+    </Button>
   );
 
   return (
-    <AdminLayout
+    <AdminPageLayout
       workspace="plugins"
+      title="Plugins"
+      titleId="plugins-title"
+      description="Install admin extensions and control what they add to the CMS."
       toolbarRightSlot={toolbarRightSlot}
-      contentCanvas={
-        <main
-          className={styles.pluginsCanvas}
-          data-testid="plugins-admin-canvas"
-        >
-          <section
-            className={styles.pluginsShell}
-            aria-labelledby="plugins-title"
+      actions={(
+        <>
+          <Button
+            variant="primary"
+            size="md"
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
           >
-            <header className={styles.pluginsHeader}>
-              <div className={styles.titleGroup}>
-                <div>
-                  <h1 id="plugins-title">Plugins</h1>
-                  <p>
-                    Install admin extensions and control what they add to the
-                    CMS.
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="primary"
-                size="md"
-                disabled={uploading}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <UploadIcon size={15} aria-hidden="true" />
-                <span>{uploading ? "Uploading" : "Upload Plugin"}</span>
-              </Button>
-              <input
-                ref={fileInputRef}
-                className={styles.fileInput}
-                aria-label="Plugin file"
-                type="file"
-                accept="application/json,.json,.plugin.json,.pbplugin,.zip,application/zip"
-                onChange={(event) => void handleUpload(event)}
-              />
-            </header>
-
+            <UploadIcon size={15} aria-hidden="true" />
+            <span>{uploading ? "Uploading" : "Upload Plugin"}</span>
+          </Button>
+          <input
+            ref={fileInputRef}
+            className={styles.fileInput}
+            aria-label="Plugin file"
+            type="file"
+            accept="application/json,.json,.plugin.json,.pbplugin,.zip,application/zip"
+            onChange={(event) => void handleUpload(event)}
+          />
+        </>
+      )}
+    >
+      <div className={styles.pluginsBody} data-testid="plugins-admin-canvas">
             {error && (
               <p className={styles.error} role="alert">
                 {error}
@@ -440,6 +465,12 @@ export function PluginsPage() {
                             />
                           )}
                           <h2>{plugin.name}</h2>
+                          <span
+                            className={styles.pluginVersionPill}
+                            aria-label={`Version ${plugin.version}`}
+                          >
+                            v{plugin.version}
+                          </span>
                           <span data-status={status.status}>
                             {status.label}
                           </span>
@@ -512,6 +543,23 @@ export function PluginsPage() {
                             Editor: {editorActivationErrors[plugin.id]}
                           </p>
                         )}
+                        {plugin.recentCrashes && plugin.recentCrashes.length > 0 && (
+                          <details className={styles.pluginCrashLog}>
+                            <summary>
+                              Recent issues ({plugin.recentCrashes.length})
+                            </summary>
+                            <ul>
+                              {plugin.recentCrashes.map((crash) => (
+                                <li key={crash.id}>
+                                  <time dateTime={crash.occurredAt}>
+                                    {new Date(crash.occurredAt).toLocaleString()}
+                                  </time>
+                                  <span> — {crash.reason}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
                         {plugin.manifest.pack &&
                           plugin.grantedPermissions.includes("visualComponents.register") && (
                             <p className={styles.pluginPackHint}>
@@ -560,6 +608,18 @@ export function PluginsPage() {
                               <span>Re-sync pack</span>
                             </Button>
                           )}
+                        {plugin.enabled && plugin.lifecycleStatus === "error" && (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            disabled={busyPluginId === plugin.id}
+                            onClick={() => void restartPlugin(plugin)}
+                            aria-label={`Restart ${plugin.name}`}
+                          >
+                            <ReloadIcon size={14} aria-hidden="true" />
+                            <span>Restart</span>
+                          </Button>
+                        )}
                         <Button
                           variant="secondary"
                           size="sm"
@@ -618,9 +678,7 @@ export function PluginsPage() {
                 }}
               />
             )}
-          </section>
-        </main>
-      }
-    />
+      </div>
+    </AdminPageLayout>
   );
 }

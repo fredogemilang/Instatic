@@ -371,4 +371,67 @@ export const sqliteMigrations: Migration[] = [
         add column settings_json text not null default '{}';
     `,
   },
+  {
+    id: '013_auth_lockout',
+    sql: `
+      alter table users
+        add column failed_login_count integer not null default 0;
+
+      alter table users
+        add column locked_until text;
+
+      create table if not exists login_attempts (
+        id text primary key,
+        attempted_at text not null default current_timestamp,
+        email_norm text,
+        ip_address text,
+        user_id text references users(id) on delete set null,
+        result text not null
+          constraint login_attempts_result_check
+          check (result in ('success', 'bad_password', 'no_user', 'account_disabled', 'locked', 'rate_limited'))
+      );
+
+      create index if not exists login_attempts_ip_idx
+        on login_attempts (ip_address, attempted_at desc);
+
+      create index if not exists login_attempts_email_idx
+        on login_attempts (email_norm, attempted_at desc)
+        where email_norm is not null;
+    `,
+  },
+  {
+    id: '014_session_devices_and_mfa',
+    sql: `
+      alter table sessions
+        add column device_label text not null default '';
+
+      alter table sessions
+        add column mfa_passed_at text;
+
+      alter table sessions
+        add column step_up_expires_at text;
+
+      create index if not exists sessions_user_active_idx
+        on sessions (user_id, expires_at)
+        where revoked_at is null;
+
+      alter table users
+        add column avatar_media_id text references media_assets(id) on delete set null;
+    `,
+  },
+  {
+    id: '015_plugin_crash_events',
+    sql: `
+      create table if not exists plugin_crash_events (
+        id text primary key,
+        plugin_id text not null,
+        occurred_at text not null default current_timestamp,
+        reason text not null,
+        stack text
+      );
+
+      create index if not exists plugin_crash_events_plugin_idx
+        on plugin_crash_events (plugin_id, occurred_at desc);
+    `,
+  },
 ]

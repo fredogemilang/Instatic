@@ -1,50 +1,10 @@
-.pluginsCanvas {
-    position: absolute;
-    inset: 0;
-    overflow: auto;
-    padding: 82px 24px 40px;
-    background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 180px),
-        var(--editor-bg);
-    color: var(--editor-text);
-    user-select: text;
-}
-
-.pluginsShell {
+/* Plugins page body — laid out by AdminPageLayout so this just adds the
+   gap rhythm between the permission-review banner, the list, and the
+   eventual modals. The layout provides the scroll container, max-width,
+   padding, and page header. */
+.pluginsBody {
     display: grid;
     gap: 18px;
-    width: min(980px, 100%);
-    margin: 0 auto;
-}
-
-.pluginsHeader {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 16px;
-    padding-bottom: 14px;
-    border-bottom: 1px solid var(--panel-border);
-}
-
-.titleGroup {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
-}
-
-.titleGroup h1 {
-    margin: 0;
-    font-size: 26px;
-    line-height: 1.1;
-    letter-spacing: 0;
-}
-
-.titleGroup p {
-    margin: 5px 0 0;
-    color: var(--editor-text-muted);
-    font-size: 13px;
-    line-height: 1.45;
 }
 
 .fileInput {
@@ -59,11 +19,8 @@
 
 .error,
 .emptyState,
-.emptyPluginPage p,
 .pluginMeta p,
-.pluginMeta small,
-.pluginPageHeader span,
-.pluginPageHeader p {
+.pluginMeta small {
     margin: 0;
     font-size: 12px;
     line-height: 1.5;
@@ -83,7 +40,7 @@
 
 .pluginsList {
     display: grid;
-    gap: 10px;
+    gap: 1px;
 }
 
 .permissionReview {
@@ -149,9 +106,13 @@
     align-items: center;
     gap: 16px;
     padding: 14px;
-    border: 1px solid var(--panel-border);
-    border-radius: 8px;
-    background: var(--editor-surface);
+    border-radius: 16px;
+    background: var(--editor-surface-2);
+    transition: background 0.3s;
+}
+
+.pluginCard:hover {
+    background: var(--editor-surface-3);
 }
 
 .pluginMeta {
@@ -268,6 +229,16 @@ a.pluginAttributionItem:hover {
     color: var(--editor-accent);
 }
 
+/* Version pill — sits between the heading and the status badge so the
+   reader's eye gets "Plugin Name · v1.2.3 · Active" in one line. Inherits
+   the generic .pluginNameRow span pill chrome (border, radius, muted
+   text). Mono font so version numbers align neatly when comparing two
+   cards at a glance. */
+.pluginNameRow .pluginVersionPill {
+    font-family: var(--font-mono);
+    font-weight: 600;
+}
+
 .pluginMeta p {
     color: var(--editor-text-muted);
 }
@@ -282,6 +253,36 @@ a.pluginAttributionItem:hover {
     font-size: 12px;
     color: var(--editor-text-muted);
     line-height: 1.4;
+}
+
+.pluginCrashLog {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--editor-text-muted);
+}
+
+.pluginCrashLog summary {
+    cursor: pointer;
+    color: var(--editor-danger);
+    font-weight: 700;
+}
+
+.pluginCrashLog ul {
+    list-style: none;
+    margin: 6px 0 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.pluginCrashLog li {
+    line-height: 1.4;
+}
+
+.pluginCrashLog time {
+    font-family: var(--font-mono);
+    color: var(--editor-text);
 }
 
 .pageLinks {
@@ -308,34 +309,12 @@ a.pluginAttributionItem:hover {
     gap: 8px;
 }
 
-.pluginPage {
+/* Plugin admin page body — same gap rhythm as the Plugins list. The
+   layout provides the page header (title + plugin name as description)
+   so the inner content goes straight to the substantive UI. */
+.pluginPageBody {
     display: grid;
     gap: 18px;
-    width: min(980px, 100%);
-    margin: 0 auto;
-}
-
-.pluginPageHeader {
-    display: grid;
-    gap: 6px;
-}
-
-.pluginPageHeader p {
-    color: var(--editor-text-muted);
-    font-weight: 750;
-    text-transform: uppercase;
-}
-
-.pluginPageHeader h1,
-.emptyPluginPage h1 {
-    margin: 0;
-    font-size: 30px;
-    line-height: 1.1;
-    letter-spacing: 0;
-}
-
-.pluginPageHeader span {
-    color: var(--editor-text-muted);
 }
 
 .mapSurface {
@@ -430,18 +409,6 @@ a.pluginAttributionItem:hover {
     overflow: auto;
 }
 
-.emptyPluginPage {
-    display: grid;
-    gap: 8px;
-    width: min(520px, 100%);
-    margin: 12vh auto 0;
-    text-align: center;
-}
-
-.emptyPluginPage p {
-    color: var(--editor-text-muted);
-}
-
 .resourceLayout {
     display: grid;
     grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
@@ -528,11 +495,6 @@ a.pluginAttributionItem:hover {
 }
 
 @media (max-width: 720px) {
-    .pluginsCanvas {
-        padding: 74px 14px 28px;
-    }
-
-    .pluginsHeader,
     .pluginCard {
         grid-template-columns: 1fr;
         align-items: stretch;

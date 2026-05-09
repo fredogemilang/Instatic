@@ -96,6 +96,21 @@ function makeFakeDb() {
       )
       return { rows: rows as Row[], rowCount: rows.length }
     }
+    // Plugin crash events — list/insert/delete. The cms handler's
+    // `pluginsPayload` calls `listPluginCrashes` for every plugin, so the
+    // fake DB has to recognise these queries even when the test never
+    // simulates a worker crash.
+    if (normalized.includes('insert into plugin_crash_events')) {
+      return { rows: [], rowCount: 1 }
+    }
+    if (normalized.includes('select id, plugin_id, occurred_at, reason, stack')
+        && normalized.includes('from plugin_crash_events')) {
+      return { rows: [] as Row[], rowCount: 0 }
+    }
+    if (normalized.includes('delete from plugin_crash_events')) {
+      return { rows: [], rowCount: 0 }
+    }
+
     // createPluginRecord — values[0..3]=id, pluginId, resourceId, dataJson
     if (normalized.includes('insert into plugin_records')) {
       const now = new Date('2026-05-01T10:10:00.000Z').toISOString()
