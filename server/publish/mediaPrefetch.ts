@@ -4,10 +4,10 @@
  * Walks a page tree, finds every prop whose module-schema control type is
  * `image` or `media`, collects the local `/uploads/<storage>` paths, batch-
  * fetches the matching `media_assets` rows, and returns a map keyed by
- * `public_path` → asset. The publisher attaches the resolved asset to each
- * node's `props._resolvedMedia` before calling `render()` so the pure render
- * function can emit responsive markup (srcset / sizes / BlurHash) without
- * any I/O of its own.
+ * `public_path` → asset. The publisher attaches the resolved assets to each
+ * node's `props._resolvedMediaByKey` (keyed by prop key) before calling
+ * `render()` so the pure render function can emit responsive markup
+ * (srcset / sizes / BlurHash) without any I/O of its own.
  *
  * Why look up by `public_path`, not asset id?
  *   - The module prop stores the raw path (e.g. `/uploads/abc-hero.png`)

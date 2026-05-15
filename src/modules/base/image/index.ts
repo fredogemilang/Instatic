@@ -39,11 +39,11 @@ interface ImageProps extends Record<string, unknown> {
   decoding: 'async' | 'sync' | 'auto'
   /**
    * Internal: attached by the publisher's `prefetchMediaAssets` pass.
-   * Not user-editable — declared here so render() picks it up without a
-   * cast and TypeScript stays happy. NOT in the schema (so the picker
-   * doesn't show it as a control row).
+   * Map of prop key → resolved media. Not user-editable — declared here
+   * so render() picks it up without a cast and TypeScript stays happy.
+   * NOT in the schema (so the picker doesn't show it as a control row).
    */
-  _resolvedMedia?: RenderResolvedMedia
+  _resolvedMediaByKey?: Record<string, RenderResolvedMedia>
 }
 
 /**
@@ -191,7 +191,8 @@ export const ImageModule: ModuleDefinition<ImageProps> = {
     // fallback comes straight from the resolved-media payload and IS raw,
     // so we escape it ourselves only on the fallback path.
     const moduleAlt = String(props.alt ?? '').trim()
-    const libraryAltRaw = props._resolvedMedia?.altText?.trim() ?? ''
+    const media = props._resolvedMediaByKey?.src
+    const libraryAltRaw = media?.altText?.trim() ?? ''
     const alt = moduleAlt || escapeAttr(libraryAltRaw)
 
     const loading = props.loading === 'eager' ? 'eager' : 'lazy'
@@ -200,7 +201,6 @@ export const ImageModule: ModuleDefinition<ImageProps> = {
       ? 'high'
       : props.fetchPriority === 'low' ? 'low' : 'auto'
 
-    const media = props._resolvedMedia
     // `buildSrcset` already runs each variant path through `safeUrl`
     // (which HTML-escapes + sanitises). No extra escape needed.
     const srcset = media ? buildSrcset(media) : null

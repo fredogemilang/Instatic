@@ -317,8 +317,8 @@ function CurrentPickedTile({ asset, mediaKind, currentValue }: CurrentPickedTile
   // Surface the library's saved alt-text + dimensions so the author can
   // see what will be published (and decide whether to override via the
   // sibling Alt text field). Image modules ship the library alt as a
-  // render-time fallback — see `_resolvedMedia.altText` in the Image
-  // module's render().
+  // render-time fallback — see `_resolvedMediaByKey.src.altText` in the
+  // Image module's render().
   const libraryAlt = asset.altText.trim()
   const dimensions = asset.width && asset.height ? `${asset.width} × ${asset.height}` : null
   const subParts = [

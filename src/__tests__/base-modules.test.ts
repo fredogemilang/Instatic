@@ -353,12 +353,15 @@ describe('base.image — render() specifics', () => {
 // ---------------------------------------------------------------------------
 
 describe('base.video — render() specifics', () => {
-  it('has only source and playback behavior module settings', () => {
+  it('exposes the v3 schema (source, playback, poster, perf hints)', () => {
     expect(Object.keys(VideoModule.schema).sort()).toEqual([
       'autoplay',
       'controls',
       'loop',
       'muted',
+      'playsinline',
+      'poster',
+      'preload',
       'source',
       'videoUrl',
       'youtubeId',

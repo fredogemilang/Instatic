@@ -400,11 +400,11 @@ export interface ResolvedLoopRenderData extends LoopFetchResult {
 
 /**
  * Resolved media-asset payload attached to a prop at render time. The pure
- * render function reads `props._resolvedMedia` (one asset per node — the
- * primary image/media prop) and uses it to emit responsive markup with
- * `srcset` / `sizes` / BlurHash / intrinsic dimensions. Falls back to the
- * raw prop string when undefined, so non-CMS URLs or pages built before
- * `prefetchMediaAssets` ran still render correctly.
+ * render function reads `props._resolvedMediaByKey[<propKey>]` to get the
+ * variant ladder / BlurHash / intrinsic dimensions for any of its
+ * image/media-typed props, and uses it to emit responsive markup. Falls
+ * back to the raw prop string when undefined, so non-CMS URLs or pages
+ * built before `prefetchMediaAssets` ran still render correctly.
  */
 export interface RenderResolvedMedia {
   publicPath: string
@@ -504,25 +504,25 @@ export function renderNode(nodeId: string, ctx: RenderContext): string {
   // 3. Escape all string props (Constraint #211) before calling render()
   const safeProps = escapeProps(resolvedProps)
 
-  // 3b. Attach the resolved media asset for the node's first image/media
-  // prop, if the publisher pre-fetched one. The escape step preserves
+  // 3b. Attach every resolved media asset on this node, keyed by prop key,
+  // so modules with multiple media props (e.g. base.video with `videoUrl`
+  // + `poster`) can read each one independently. The escape step preserves
   // non-string values, so this object survives the boundary untouched.
-  // Render functions read `props._resolvedMedia` and fall back to the
-  // raw prop string when it's absent — for non-CMS URLs, pages built
-  // before the prefetch ran, or the editor canvas preview that doesn't
-  // run the prefetch.
+  // Render functions read `props._resolvedMediaByKey?.<propKey>` and fall
+  // back to the raw prop string when it's absent — for non-CMS URLs, pages
+  // built before the prefetch ran, or the editor canvas preview that
+  // doesn't run the prefetch.
   if (ctx.mediaAssets && ctx.mediaAssets.size > 0) {
+    const byKey: Record<string, RenderResolvedMedia> = {}
     for (const [propKey, control] of Object.entries(def.schema)) {
       if (control.type !== 'image' && control.type !== 'media') continue
       const value = resolvedProps[propKey]
       if (typeof value !== 'string') continue
       const resolved = ctx.mediaAssets.get(value)
-      if (resolved) {
-        ;(safeProps as Record<string, unknown>)._resolvedMedia = resolved
-        break  // Only one auto-resolved media prop per module — see
-               // mediaPrefetch.ts. Multi-media modules can iterate
-               // `props._resolvedMediaByKey` if/when that lands.
-      }
+      if (resolved) byKey[propKey] = resolved
+    }
+    if (Object.keys(byKey).length > 0) {
+      ;(safeProps as Record<string, unknown>)._resolvedMediaByKey = byKey
     }
   }
 
