@@ -16,8 +16,8 @@
  * commands. Used for keyboard-navigation index tracking and rendering.
  */
 
-import type { Command, CommandContext, SpotlightProvider } from './types'
-import { rankCommands } from './matcher'
+import type { Command, CommandContext, CommandGroup, SpotlightProvider } from './types'
+import { rankCommands, type ScoredCommand } from './matcher'
 import { filterCommands, getAllCommands, getScope } from './commandRegistry'
 import { readRecentCommands } from './recentStore'
 
@@ -56,8 +56,44 @@ function getCommandsForScope(scopeId: string | undefined): Command[] {
 }
 
 /**
+ * Reorder a flat scored list to match the grouped visual layout:
+ * commands sharing the same `CommandGroup` are kept together, groups
+ * appear in the order each first appears in the scored list, and
+ * within each group the score order is preserved.
+ *
+ * Critical for keyboard navigation: the rendered list is grouped by
+ * `CommandGroup`, so the linear arrow-key index MUST follow the same
+ * visual order. Otherwise pressing Down on the last item of group A
+ * (which has a lower score than the first item of group B) would jump
+ * to group B then back to group A, since the raw score order
+ * interleaves groups whenever scores differ.
+ */
+export function orderScoredByVisualGroup(
+  scored: ScoredCommand[],
+): ScoredCommand[] {
+  const map = new Map<CommandGroup, ScoredCommand[]>()
+  for (const item of scored) {
+    const g = item.command.group
+    const existing = map.get(g)
+    if (existing) {
+      existing.push(item)
+    } else {
+      map.set(g, [item])
+    }
+  }
+  const out: ScoredCommand[] = []
+  for (const items of map.values()) {
+    out.push(...items)
+  }
+  return out
+}
+
+/**
  * Get the capped list of scored commands for a given query + context + scope.
  * Pure function — no React hooks, no side effects.
+ *
+ * Results are ordered to match the grouped visual layout so that the
+ * keyboard-navigation index is in sync with the rendered row order.
  *
  * Phase 2: accepts optional `scopeId`; defaults to 'root' (all commands).
  */
@@ -70,7 +106,13 @@ export function getCappedResults(
   const filtered = commandContext ? filterCommands(commands, commandContext) : commands
   const recentIds = readRecentCommands()
   const scored = rankCommands(filtered, query, commandContext ?? makeFallbackCtx(), recentIds)
-  return scored.slice(0, PHASE1_CAP)
+  // Take top N by score first (so the most relevant commands win), then
+  // reorder for visual grouping. Reordering after the slice keeps the
+  // "top-N most relevant" semantics intact while making the linear list
+  // match the rendered row order — which keeps arrow-key navigation in
+  // sync with what the user sees.
+  const capped = scored.slice(0, PHASE1_CAP)
+  return orderScoredByVisualGroup(capped)
 }
 
 /**
