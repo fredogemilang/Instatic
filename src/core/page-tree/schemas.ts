@@ -669,59 +669,76 @@ function parseBreakpoint(raw: unknown): Breakpoint | null {
   }
 }
 
+/**
+ * Narrow `raw` to a plain object record, or return null if it is null,
+ * not an object, or an array. Used by every tolerant parser in this file
+ * to start "is this a parseable record?" checks before reaching for fields.
+ */
+function asPlainObject(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  return raw as Record<string, unknown>
+}
+
+/** Parse a CSSClass scope (currently only `{ type: 'node', nodeId, role: 'module-style' }`). */
+function parseCSSClassScope(raw: unknown): CSSClass['scope'] {
+  const s = asPlainObject(raw)
+  if (!s) return undefined
+  if (s.type !== 'node' || typeof s.nodeId !== 'string' || s.role !== 'module-style') return undefined
+  return { type: 'node', nodeId: s.nodeId, role: 'module-style' }
+}
+
+/** Parse a styles bag — any plain object becomes a `Record<string, unknown>`, else `{}`. */
+function parseStylesBag(raw: unknown): Record<string, unknown> {
+  return asPlainObject(raw) ?? {}
+}
+
+/** Parse a breakpoint → styles map. Skips entries whose value is not a plain object. */
+function parseBreakpointStylesBag(raw: unknown): Record<string, Record<string, unknown>> {
+  const outer = asPlainObject(raw)
+  if (!outer) return {}
+  const out: Record<string, Record<string, unknown>> = {}
+  for (const [k, v] of Object.entries(outer)) {
+    const inner = asPlainObject(v)
+    if (inner) out[k] = inner
+  }
+  return out
+}
+
+/** Parse a tag list — keeps only string entries; absent/invalid arrays yield undefined. */
+function parseStringArrayField(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return raw.filter((t): t is string => typeof t === 'string')
+}
+
+/** Parse a numeric timestamp — non-numeric values fall back to `Date.now()`. */
+function parseTimestamp(raw: unknown): number {
+  return typeof raw === 'number' ? raw : Date.now()
+}
+
 /** Parse a CSSClass, providing fallbacks for resilient fields. */
 function parseCSSClass(raw: unknown): CSSClass | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-  const r = raw as Record<string, unknown>
+  const r = asPlainObject(raw)
+  if (!r) return null
   if (typeof r.id !== 'string') return null
   if (typeof r.name !== 'string') return null
 
-  // scope: required shape, silently dropped if invalid
-  let scope: CSSClass['scope'] = undefined
-  const s = r.scope
-  if (s && typeof s === 'object' && !Array.isArray(s)) {
-    const so = s as Record<string, unknown>
-    if (so.type === 'node' && typeof so.nodeId === 'string' && so.role === 'module-style') {
-      scope = { type: 'node', nodeId: so.nodeId, role: 'module-style' }
-    }
-  }
-
-  const styles: Record<string, unknown> =
-    r.styles && typeof r.styles === 'object' && !Array.isArray(r.styles)
-      ? (r.styles as Record<string, unknown>)
-      : {}
-
-  const breakpointStyles: Record<string, Record<string, unknown>> = {}
-  if (r.breakpointStyles && typeof r.breakpointStyles === 'object' && !Array.isArray(r.breakpointStyles)) {
-    for (const [k, v] of Object.entries(r.breakpointStyles as Record<string, unknown>)) {
-      if (v && typeof v === 'object' && !Array.isArray(v)) {
-        breakpointStyles[k] = v as Record<string, unknown>
-      }
-    }
-  }
-
-  const tags = Array.isArray(r.tags)
-    ? r.tags.filter((t): t is string => typeof t === 'string')
-    : undefined
-
+  const scope = parseCSSClassScope(r.scope)
+  const tags = parseStringArrayField(r.tags)
   const generated = Value.Check(GeneratedClassMetadataSchema, r.generated)
     ? (r.generated as CSSClass['generated'])
     : undefined
-
-  const createdAt = typeof r.createdAt === 'number' ? r.createdAt : Date.now()
-  const updatedAt = typeof r.updatedAt === 'number' ? r.updatedAt : Date.now()
 
   return {
     id: r.id,
     name: r.name,
     ...(typeof r.description === 'string' ? { description: r.description } : {}),
     ...(scope !== undefined ? { scope } : {}),
-    styles,
-    breakpointStyles,
+    styles: parseStylesBag(r.styles),
+    breakpointStyles: parseBreakpointStylesBag(r.breakpointStyles),
     ...(tags !== undefined ? { tags } : {}),
     ...(generated !== undefined ? { generated } : {}),
-    createdAt,
-    updatedAt,
+    createdAt: parseTimestamp(r.createdAt),
+    updatedAt: parseTimestamp(r.updatedAt),
   }
 }
 
