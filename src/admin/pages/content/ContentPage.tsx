@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { Suspense, lazy, useEffect, useId, useState } from 'react'
 import { createHeadingBlock, createParagraphBlock, serializeMarkdownBlocks } from '@core/markdown/blockModel'
 import { readTitleCell } from '@core/data/cells'
 import type {
@@ -23,7 +23,15 @@ import { ContentExplorerPanel } from './components/ContentExplorerPanel/ContentE
 import { ContentSettingsPanel } from './components/ContentSettingsPanel/ContentSettingsPanel'
 import { ContentSidebar, type ContentPanelId } from './components/ContentSidebar/ContentSidebar'
 import { ContentToolbar } from './components/ContentToolbar/ContentToolbar'
-import { MediaPickerDialog } from './components/MediaPickerDialog/MediaPickerDialog'
+// Lazy-load the WordPress-style fullscreen media picker. Pulls in the full
+// Media-page workspace (folder tree + canvas grid + upload queue), so we
+// only pay for it the first time the user opens the picker — typing in the
+// content editor doesn't need it.
+const MediaPickerModal = lazy(() =>
+  import('@admin/pages/media/components/MediaPickerModal/MediaPickerModal').then(
+    (m) => ({ default: m.MediaPickerModal }),
+  ),
+)
 import { useContentEntryDraft } from './hooks/useContentEntryDraft'
 import { useContentMediaPicker } from './hooks/useContentMediaPicker'
 import { useContentWorkspace } from './hooks/useContentWorkspace'
@@ -98,6 +106,7 @@ export function ContentPage() {
     featuredMediaId: draft.featuredMediaId,
     setFeaturedMediaId: draft.setFeaturedMediaId,
     setBlocks: draft.setBlocks,
+    entries: workspace.entries,
   })
 
   const publicPath = workspace.selectedCollection && draft.slug
@@ -447,6 +456,7 @@ export function ContentPage() {
                 canManageCollections={canManageCollections}
                 canEditEntry={(entry) => canEditContentEntry(permissionUser, entry)}
                 canPublishEntry={(entry) => canPublishContentEntry(permissionUser, entry)}
+                getFeaturedMediaAssetForEntry={mediaPicker.getFeaturedMediaAssetForEntry}
                 onSelectCollection={workspace.selectCollection}
                 onSelectEntry={handleSelectEntry}
                 onCreateCollection={() => setCollectionDialogOpen(true)}
@@ -505,8 +515,6 @@ export function ContentPage() {
             seoDescription={draft.seoDescription}
             seoDescriptionId={seoDescriptionId}
             publicPath={publicPath}
-            mediaAssets={mediaPicker.mediaAssets}
-            mediaLoading={mediaPicker.mediaLoading}
             mediaError={mediaPicker.mediaError}
             featuredMediaId={draft.featuredMediaId}
             featuredMediaAsset={mediaPicker.featuredMediaAsset}
@@ -526,14 +534,17 @@ export function ContentPage() {
       />
 
       {mediaPicker.mediaPicker && (
-        <MediaPickerDialog
-          mediaPicker={mediaPicker.mediaPicker}
-          mediaLoading={mediaPicker.mediaLoading}
-          mediaError={mediaPicker.mediaError}
-          mediaAssets={mediaPicker.filteredMediaAssets}
-          onInsertMedia={mediaPicker.insertMedia}
-          onClose={mediaPicker.closeMediaPicker}
-        />
+        <Suspense fallback={null}>
+          <MediaPickerModal
+            open
+            onClose={mediaPicker.closeMediaPicker}
+            mediaKind="any"
+            currentValue={mediaPicker.mediaPicker.kind === 'featured'
+              ? (mediaPicker.featuredMediaAsset?.publicPath ?? null)
+              : null}
+            onPick={mediaPicker.pickMedia}
+          />
+        </Suspense>
       )}
 
       {collectionDialogOpen && (

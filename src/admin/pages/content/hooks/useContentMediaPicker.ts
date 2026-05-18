@@ -3,8 +3,10 @@ import {
   listCmsMediaAssets,
   type CmsMediaAsset,
 } from '@core/persistence'
-import { createMediaBlock } from '@core/content/markdown'
-import type { ContentBlock } from '@core/content/schemas'
+import { createMediaBlock } from '@core/markdown/blockModel'
+import type { ContentBlock } from '@core/markdown/blockModel'
+import { readFeaturedMediaCell } from '@core/data/cells'
+import type { DataRow } from '@core/data/schemas'
 import { mediaTypeFromAsset } from '@content/utils/contentEntryUtils'
 
 export type MediaPickerKind = 'media' | 'featured'
@@ -18,60 +20,103 @@ interface UseContentMediaPickerOptions {
   featuredMediaId: string | null
   setFeaturedMediaId: (mediaId: string | null) => void
   setBlocks: (updater: (blocks: ContentBlock[]) => ContentBlock[]) => void
+  /**
+   * Entries currently shown in the sidebar list. Any entry with a non-null
+   * `featuredMedia` cell triggers the asset list to load so the explorer can
+   * render the featured image as a row thumbnail.
+   */
+  entries: readonly DataRow[]
 }
 
+/**
+ * Coordinates the content-page media picker. The picker UI itself is the
+ * full WordPress-style `MediaPickerModal` (folder tree + canvas grid + upload
+ * queue) — this hook owns only the open/close state and the post-pick
+ * routing (set featured media vs insert/replace a body block).
+ *
+ * We still fetch the CMS media list locally so the right-rail settings panel
+ * can render the picked featured media (thumbnail + filename). The modal
+ * mounts its own workspace when opened, so it doesn't share this asset list.
+ */
 export function useContentMediaPicker({
   featuredMediaId,
   setFeaturedMediaId,
   setBlocks,
+  entries,
 }: UseContentMediaPickerOptions) {
   const [mediaAssets, setMediaAssets] = useState<CmsMediaAsset[]>([])
   const [mediaAssetsLoaded, setMediaAssetsLoaded] = useState(false)
-  const [mediaLoading, setMediaLoading] = useState(false)
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [mediaPicker, setMediaPicker] = useState<MediaPickerState | null>(null)
 
-  const featuredMediaAsset = mediaAssets.find((asset) => asset.id === featuredMediaId) ?? null
+  const assetsById = useMemo(() => {
+    const map = new Map<string, CmsMediaAsset>()
+    for (const asset of mediaAssets) map.set(asset.id, asset)
+    return map
+  }, [mediaAssets])
 
-  const filteredMediaAssets = useMemo(() => {
-    if (!mediaPicker) return []
-    return mediaAssets.filter((asset) =>
-      asset.mimeType.startsWith('image/') || asset.mimeType.startsWith('video/'),
-    )
-  }, [mediaAssets, mediaPicker])
+  const featuredMediaAsset = featuredMediaId ? assetsById.get(featuredMediaId) ?? null : null
 
-  const loadMediaAssets = useCallback(async () => {
-    try {
-      const assets = await listCmsMediaAssets()
-      setMediaAssets(assets)
-      return assets
-    } finally {
-      setMediaAssetsLoaded(true)
-    }
+  // True when at least one shown entry references a featured media asset, so
+  // the explorer list can render a thumbnail. Combined with the active entry's
+  // own `featuredMediaId` so the right-rail preview also triggers a load.
+  const needsAssetList = featuredMediaId !== null
+    || entries.some((entry) => readFeaturedMediaCell(entry.cells) !== null)
+
+  // Fetch the asset list once the page actually needs to resolve a featured
+  // media reference — either for the right-rail preview of the selected entry
+  // or for thumbnails in the sidebar list. The picker modal mounts its own
+  // workspace, so we don't need to eagerly load assets just to open the picker.
+  useEffect(() => {
+    if (!needsAssetList || mediaAssetsLoaded) return
+    let cancelled = false
+    listCmsMediaAssets()
+      .then((assets) => {
+        if (!cancelled) {
+          setMediaAssets(assets)
+          setMediaError(null)
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : 'Could not load media'
+          setMediaError(message)
+          console.error('[ContentPage] load media list error:', err)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMediaAssetsLoaded(true)
+      })
+    return () => { cancelled = true }
+  }, [needsAssetList, mediaAssetsLoaded])
+
+  const getFeaturedMediaAssetForEntry = useCallback(
+    (entry: DataRow): CmsMediaAsset | null => {
+      const mediaId = readFeaturedMediaCell(entry.cells)
+      if (!mediaId) return null
+      return assetsById.get(mediaId) ?? null
+    },
+    [assetsById],
+  )
+
+  const openMediaPicker = useCallback((kind: MediaPickerKind, targetBlockId?: string) => {
+    setMediaPicker({ kind, targetBlockId })
   }, [])
 
-  useEffect(() => {
-    if (!featuredMediaId || mediaAssetsLoaded) return
-    void loadMediaAssets().catch(() => {})
-  }, [featuredMediaId, mediaAssetsLoaded, loadMediaAssets])
+  const closeMediaPicker = useCallback(() => {
+    setMediaPicker(null)
+  }, [])
 
-  const openMediaPicker = useCallback(async (kind: MediaPickerKind, targetBlockId?: string) => {
-    setMediaPicker({ kind, targetBlockId })
-    setMediaLoading(true)
-    setMediaError(null)
-    try {
-      await loadMediaAssets()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not load media'
-      setMediaError(message)
-      console.error('[ContentPage] load media picker error:', err)
-    } finally {
-      setMediaLoading(false)
-    }
-  }, [loadMediaAssets])
-
-  const insertMedia = useCallback((asset: CmsMediaAsset) => {
+  const pickMedia = useCallback((asset: CmsMediaAsset) => {
     if (!mediaPicker) return
+
+    // Keep the local asset cache in sync so the featured-media preview can
+    // render the freshly picked asset's thumbnail without re-fetching the
+    // whole list.
+    setMediaAssets((current) => {
+      if (current.some((a) => a.id === asset.id)) return current
+      return [asset, ...current]
+    })
 
     if (mediaPicker.kind === 'featured') {
       setFeaturedMediaId(asset.id)
@@ -103,14 +148,12 @@ export function useContentMediaPicker({
   }, [mediaPicker, setBlocks, setFeaturedMediaId])
 
   return {
-    mediaAssets,
-    mediaLoading,
     mediaError,
     mediaPicker,
     featuredMediaAsset,
-    filteredMediaAssets,
+    getFeaturedMediaAssetForEntry,
     openMediaPicker,
-    closeMediaPicker: () => setMediaPicker(null),
-    insertMedia,
+    closeMediaPicker,
+    pickMedia,
   }
 }

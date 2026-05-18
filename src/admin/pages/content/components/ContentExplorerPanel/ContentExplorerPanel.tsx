@@ -12,8 +12,11 @@ import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
 import { MoveIcon } from 'pixel-art-icons/icons/move'
 import { Settings2SolidIcon } from 'pixel-art-icons/icons/settings-2-solid'
 import { UploadIcon } from 'pixel-art-icons/icons/upload'
-import type { ContentCollection, ContentEntry, UpdateContentCollectionInput } from '@core/content/schemas'
+import { readTitleCell } from '@core/data/cells'
+import type { CmsMediaAsset } from '@core/persistence'
+import type { DataTable, DataRow, UpdateDataTableInput } from '@core/data/schemas'
 import { ExplorerItemContextMenu, type ExplorerContextMenuItem } from '@site/explorer-actions'
+import { pickVariantUrl } from '@admin/pages/media/utils/variants'
 import explorerStyles from '../../../site/panels/SiteExplorerPanel/SiteExplorerPanel.module.css'
 import { Panel } from '@admin/shared/Panel'
 import { ContentCollectionSettingsDialog } from '@content/components/ContentCollectionSettingsDialog/ContentCollectionSettingsDialog'
@@ -25,8 +28,8 @@ import styles from '../../ContentPage.module.css'
 import { publicContentPath } from '@content/utils/contentEntryUtils'
 
 type ContentExplorerContextTarget =
-  | { kind: 'collection'; collection: ContentCollection }
-  | { kind: 'entry'; entry: ContentEntry }
+  | { kind: 'collection'; collection: DataTable }
+  | { kind: 'entry'; entry: DataRow }
 
 interface ContextMenuState {
   x: number
@@ -37,28 +40,35 @@ interface ContextMenuState {
 interface ContentExplorerPanelProps {
   loading: boolean
   error: string | null
-  collections: ContentCollection[]
-  entries: ContentEntry[]
-  selectedCollection: ContentCollection | null
+  collections: DataTable[]
+  entries: DataRow[]
+  selectedCollection: DataTable | null
   selectedCollectionId: string | null
   selectedEntryId: string | null
   canCreateCollection: boolean
   canCreateEntry: boolean
   canManageCollections: boolean
-  canEditEntry: (entry: ContentEntry) => boolean
-  canPublishEntry: (entry: ContentEntry) => boolean
-  onSelectCollection: (collectionId: string) => void
-  onSelectEntry: (entry: ContentEntry) => void
+  canEditEntry: (entry: DataRow) => boolean
+  canPublishEntry: (entry: DataRow) => boolean
+  /**
+   * Resolves the entry's `featuredMedia` cell to a loaded media asset, when
+   * one is available. Returns `null` while the asset list hasn't loaded yet,
+   * when the cell is empty, or when the referenced asset can't be found —
+   * the row falls back to the default file icon in any of those cases.
+   */
+  getFeaturedMediaAssetForEntry: (entry: DataRow) => CmsMediaAsset | null
+  onSelectCollection: (tableId: string) => void
+  onSelectEntry: (entry: DataRow) => void
   onCreateCollection: () => void
   onCreateEntry: () => void
-  onUpdateCollection: (collection: ContentCollection, input: UpdateContentCollectionInput) => void | Promise<void>
-  onDeleteCollection: (collection: ContentCollection) => void | Promise<void>
-  onRenameEntry: (entry: ContentEntry, input: ContentItemRenamePayload) => void | Promise<void>
-  onPublishEntry: (entry: ContentEntry) => void | Promise<void>
-  onConvertEntryToDraft: (entry: ContentEntry) => void | Promise<void>
-  onDeleteEntry: (entry: ContentEntry) => void | Promise<void>
-  onDuplicateEntry: (entry: ContentEntry) => void | Promise<void>
-  onMoveEntryToCollection: (entry: ContentEntry, collectionId: string) => void | Promise<void>
+  onUpdateCollection: (collection: DataTable, input: UpdateDataTableInput) => void | Promise<void>
+  onDeleteCollection: (collection: DataTable) => void | Promise<void>
+  onRenameEntry: (entry: DataRow, input: ContentItemRenamePayload) => void | Promise<void>
+  onPublishEntry: (entry: DataRow) => void | Promise<void>
+  onConvertEntryToDraft: (entry: DataRow) => void | Promise<void>
+  onDeleteEntry: (entry: DataRow) => void | Promise<void>
+  onDuplicateEntry: (entry: DataRow) => void | Promise<void>
+  onMoveEntryToCollection: (entry: DataRow, tableId: string) => void | Promise<void>
   onClose: () => void
 }
 
@@ -70,7 +80,7 @@ function keyboardMenuPosition(element: HTMLElement) {
   }
 }
 
-function entryAuthorLabel(entry: ContentEntry): string {
+function entryAuthorLabel(entry: DataRow): string {
   if (entry.author?.displayName) return entry.author.displayName
   if (entry.author?.email) return entry.author.email
   return 'Unknown author'
@@ -89,6 +99,7 @@ export function ContentExplorerPanel({
   canManageCollections,
   canEditEntry,
   canPublishEntry,
+  getFeaturedMediaAssetForEntry,
   onSelectCollection,
   onSelectEntry,
   onCreateCollection,
@@ -105,13 +116,13 @@ export function ContentExplorerPanel({
 }: ContentExplorerPanelProps) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [renameTarget, setRenameTarget] = useState<ContentExplorerContextTarget | null>(null)
-  const [settingsTarget, setSettingsTarget] = useState<ContentCollection | null>(null)
+  const [settingsTarget, setSettingsTarget] = useState<DataTable | null>(null)
   const entryListLabel = selectedCollection?.pluralLabel || 'Entries'
   const singularLabel = selectedCollection?.singularLabel || 'entry'
   const newEntryLabel = `New ${singularLabel.toLowerCase()}`
 
-  function collectionForEntry(entry: ContentEntry): ContentCollection | null {
-    return collections.find((collection) => collection.id === entry.collectionId) ?? selectedCollection
+  function collectionForEntry(entry: DataRow): DataTable | null {
+    return collections.find((collection) => collection.id === entry.tableId) ?? selectedCollection
   }
 
   function openContextMenu(target: ContentExplorerContextTarget, event: MouseEvent<HTMLButtonElement>) {
@@ -127,7 +138,7 @@ export function ContentExplorerPanel({
     setContextMenu({ ...keyboardMenuPosition(event.currentTarget), target })
   }
 
-  async function copyEntryUrl(entry: ContentEntry) {
+  async function copyEntryUrl(entry: DataRow) {
     const collection = collectionForEntry(entry)
     if (!collection) return
     const url = `${window.location.origin}${publicContentPath(collection.routeBase, entry.slug)}`
@@ -141,7 +152,7 @@ export function ContentExplorerPanel({
   function moveSubmenuItem(target: ContentExplorerContextTarget): ExplorerContextMenuItem | null {
     if (target.kind !== 'entry') return null
     if (!canEditEntry(target.entry)) return null
-    const others = collections.filter((collection) => collection.id !== target.entry.collectionId)
+    const others = collections.filter((collection) => collection.id !== target.entry.tableId)
     if (others.length === 0) return null
     return {
       kind: 'submenu',
@@ -149,7 +160,7 @@ export function ContentExplorerPanel({
       icon: <MoveIcon size={13} />,
       width: 220,
       items: others.map((collection) => ({
-        kind: 'action',
+        kind: 'action' as const,
         label: collection.name,
         icon: <BookOpenSolidIcon size={13} />,
         action: () => {
@@ -349,9 +360,9 @@ export function ContentExplorerPanel({
                     onContextMenu={(event) => openContextMenu({ kind: 'entry', entry }, event)}
                     onKeyDown={(event) => openKeyboardContextMenu({ kind: 'entry', entry }, event)}
                   >
-                    <FileTextSolidIcon size={14} aria-hidden="true" />
+                    <EntryRowPreview asset={getFeaturedMediaAssetForEntry(entry)} />
                     <span className={styles.entryTitleStack}>
-                      <span className={styles.entryTitle}>{entry.title}</span>
+                      <span className={styles.entryTitle}>{readTitleCell(entry.cells)}</span>
                       <span className={styles.entryAuthor} aria-hidden="true">{entryAuthorLabel(entry)}</span>
                     </span>
                     <span className={explorerStyles.rowMeta}>{entry.status}</span>
@@ -387,7 +398,7 @@ export function ContentExplorerPanel({
         <ContentItemRenameDialog
           title={renameDialogTitle(renameTarget)}
           titleLabel={renameTarget.kind === 'collection' ? 'Name' : 'Title'}
-          initialTitle={renameTarget.kind === 'collection' ? renameTarget.collection.name : renameTarget.entry.title}
+          initialTitle={renameTarget.kind === 'collection' ? renameTarget.collection.name : readTitleCell(renameTarget.entry.cells)}
           initialSlug={renameTarget.kind === 'collection' ? renameTarget.collection.slug : renameTarget.entry.slug}
           onCancel={() => setRenameTarget(null)}
           onRename={handleRename}
@@ -405,6 +416,35 @@ export function ContentExplorerPanel({
         />
       )}
     </>
+  )
+}
+
+// Target CSS width for the row preview slot. Matches the column width used
+// by `.entryRow` in ContentPage.module.css and drives `pickVariantUrl` so
+// the browser fetches a tile-sized variant instead of the full-size original.
+const ENTRY_PREVIEW_CSS_WIDTH = 28
+
+function EntryRowPreview({ asset }: { asset: CmsMediaAsset | null }) {
+  // Restricted to images — the user-facing request is specifically "if the
+  // post has a featured image, display it as the thumbnail instead of the
+  // icon". Non-image featured media (video, document, …) keeps the existing
+  // file icon so the row layout stays predictable.
+  const isImage = asset?.mimeType.startsWith('image/') ?? false
+  const previewUrl = isImage ? pickVariantUrl(asset!, ENTRY_PREVIEW_CSS_WIDTH) : null
+  return (
+    <span className={styles.entryRowPreview} aria-hidden="true">
+      {previewUrl ? (
+        <img
+          className={styles.entryRowImage}
+          src={previewUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+        />
+      ) : (
+        <FileTextSolidIcon size={14} />
+      )}
+    </span>
   )
 }
 
