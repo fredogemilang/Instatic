@@ -13,6 +13,7 @@ import type {
   PluginCommandResult,
   PluginEditorPanel,
   PluginManifest,
+  PluginPaletteProvider,
   PluginToolbarButton,
   RegisteredPluginCanvasOverlay,
   RegisteredPluginEditorPanel,
@@ -34,11 +35,15 @@ interface PanelRecord {
   manifest: PluginManifest
 }
 
+/** Palette provider stored alongside the registering plugin id. */
+type RegisteredPaletteProvider = PluginPaletteProvider & { pluginId: string }
+
 class PluginRuntime {
   private commands = new Map<string, PluginCommand & { pluginId: string }>()
   private toolbarButtons = new Map<string, RegisteredPluginToolbarButton>()
   private panels = new Map<string, PanelRecord>()
   private canvasOverlays = new Map<string, RegisteredPluginCanvasOverlay>()
+  private paletteProviders = new Map<string, RegisteredPaletteProvider>()
   private pluginSettings = new Map<string, Record<string, string | number | boolean>>()
   private listeners = new Set<RuntimeListener>()
 
@@ -65,7 +70,39 @@ class PluginRuntime {
     this.toolbarButtons.clear()
     this.panels.clear()
     this.canvasOverlays.clear()
+    this.paletteProviders.clear()
     this.pluginSettings.clear()
+    this.toolbarButtonsSnapshot = null
+    this.panelsSnapshot = null
+    this.canvasOverlaysSnapshot = null
+    this.emit()
+  }
+
+  /**
+   * Deactivate all registrations for a single plugin — commands, toolbar
+   * buttons, panels, canvas overlays, and palette providers. Called when a
+   * plugin is disabled or uninstalled at runtime without a full reload.
+   *
+   * The common case (editor page reload) still goes through `reset()` which
+   * clears all registrations at once. This method handles the incremental
+   * case (e.g. admin disabling a plugin from the Plugins page).
+   */
+  deactivatePlugin(pluginId: string): void {
+    for (const [key, cmd] of this.commands) {
+      if (cmd.pluginId === pluginId) this.commands.delete(key)
+    }
+    for (const [key, btn] of this.toolbarButtons) {
+      if (btn.pluginId === pluginId) this.toolbarButtons.delete(key)
+    }
+    for (const [key, record] of this.panels) {
+      if (record.panel.pluginId === pluginId) this.panels.delete(key)
+    }
+    for (const [key, overlay] of this.canvasOverlays) {
+      if (overlay.pluginId === pluginId) this.canvasOverlays.delete(key)
+    }
+    for (const [key, provider] of this.paletteProviders) {
+      if (provider.pluginId === pluginId) this.paletteProviders.delete(key)
+    }
     this.toolbarButtonsSnapshot = null
     this.panelsSnapshot = null
     this.canvasOverlaysSnapshot = null
@@ -89,6 +126,40 @@ class PluginRuntime {
   registerCommand(pluginId: string, command: PluginCommand): void {
     this.commands.set(command.id, { ...command, pluginId })
     this.emit()
+  }
+
+  /**
+   * Register a Command Spotlight live-search provider on behalf of a plugin.
+   * The provider id MUST be namespaced under the plugin id (`<pluginId>.<name>`).
+   * Caller is responsible for asserting the `editor.commands` permission before
+   * invoking this method.
+   */
+  registerPaletteProvider(pluginId: string, provider: PluginPaletteProvider): void {
+    if (!provider.id.startsWith(`${pluginId}.`)) {
+      console.error(
+        `[plugin:${pluginId}] Palette provider id "${provider.id}" must start with "${pluginId}." — registration skipped.`,
+      )
+      return
+    }
+    this.paletteProviders.set(provider.id, { ...provider, pluginId })
+    this.emit()
+  }
+
+  /**
+   * Returns all registered plugin commands with their owning plugin id.
+   * The spotlight palette calls this on each open to synthesize the
+   * 'plugins' group of the command registry.
+   */
+  getPluginCommands(): ReadonlyArray<PluginCommand & { pluginId: string }> {
+    return [...this.commands.values()]
+  }
+
+  /**
+   * Returns all registered palette providers with their owning plugin id.
+   * The spotlight wraps each in a `SpotlightProvider` at search time.
+   */
+  getPaletteProviders(): ReadonlyArray<RegisteredPaletteProvider> {
+    return [...this.paletteProviders.values()]
   }
 
   registerToolbarButton(pluginId: string, button: PluginToolbarButton): void {
@@ -199,7 +270,12 @@ class PluginRuntime {
 
 export const pluginRuntime = new PluginRuntime()
 
-function createEditorPluginApi(
+/**
+ * Build the editor-side plugin API object for a given manifest.
+ * Exported so tests can construct the API directly without a full plugin
+ * activation cycle. Production callers go through `activateEditorPlugin`.
+ */
+export function createEditorPluginApi(
   manifest: PluginManifest,
   fetchImpl: FetchLike,
 ): EditorPluginApi {
@@ -241,6 +317,28 @@ function createEditorPluginApi(
           })
         },
       },
+      palette: {
+        registerCommand(cmd) {
+          const granted = (manifest.grantedPermissions ?? []).includes('editor.commands')
+          if (!granted) {
+            console.warn(
+              `[plugin:${manifest.id}] palette.registerCommand requires the "editor.commands" permission — registration skipped.`,
+            )
+            return
+          }
+          pluginRuntime.registerCommand(manifest.id, cmd)
+        },
+        registerProvider(provider) {
+          const granted = (manifest.grantedPermissions ?? []).includes('editor.commands')
+          if (!granted) {
+            console.warn(
+              `[plugin:${manifest.id}] palette.registerProvider requires the "editor.commands" permission — registration skipped.`,
+            )
+            return
+          }
+          pluginRuntime.registerPaletteProvider(manifest.id, provider)
+        },
+      },
     },
     cms: {
       storage: {
@@ -263,5 +361,6 @@ export async function activateEditorPlugin(
   mod: EditorPluginModule,
   fetchImpl: FetchLike = globalThis.fetch.bind(globalThis),
 ): Promise<void> {
-  await mod.activate(createEditorPluginApi(manifest, fetchImpl))
+  const api = createEditorPluginApi(manifest, fetchImpl)
+  await mod.activate(api)
 }

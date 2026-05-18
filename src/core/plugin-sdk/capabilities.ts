@@ -50,7 +50,7 @@ export const PLUGIN_CAPABILITIES: PluginCapability[] = [
   {
     permission: 'editor.commands',
     label: 'Register editor commands',
-    description: 'Allows the plugin editor entrypoint to register commands that can be invoked by editor UI.',
+    description: 'Allows the plugin editor entrypoint to register commands that can be invoked by editor UI. Also grants registration of Command Spotlight palette commands (api.editor.palette.registerCommand) and live-search providers (api.editor.palette.registerProvider).',
     risk: 'medium',
     surfaces: ['editor'],
   },

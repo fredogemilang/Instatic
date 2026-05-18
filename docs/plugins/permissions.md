@@ -26,7 +26,7 @@ Plugins declare requested permissions in `plugin.json`. The CMS shows those perm
 | `cms.routes` | Server | High | Register authenticated backend routes under the plugin runtime URL. |
 | `cms.hooks` | Server | High | Listen to CMS lifecycle events and register filters that transform values before they leave the CMS. |
 | `editor.toolbar` | Editor | Medium | Add toolbar buttons to the editor UI. |
-| `editor.commands` | Editor | Medium | Register commands callable from editor UI. |
+| `editor.commands` | Editor | Medium | Register commands callable from editor UI. **Also grants** Command Spotlight palette command registration (`api.editor.palette.registerCommand`) and live-search provider registration (`api.editor.palette.registerProvider`). No separate permission is needed for palette integration. |
 | `editor.store.read` | Editor | Medium | Read current editor store state. |
 | `editor.store.write` | Editor | High | Mutate editor store state through a host transaction. |
 | `editor.canvas` | Editor | High | Register canvas overlay React components (annotation pins, custom selection adornments, measurement tools) via `api.editor.canvas.registerOverlay`. |

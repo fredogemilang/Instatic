@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { consumePendingAction } from "@admin/spotlight/pendingAction";
 import type { ChangeEvent } from "react";
 import { Link } from "@admin/lib/routing";
 import { Button } from "@ui/components/Button";
@@ -101,6 +102,17 @@ function pluginStatus(plugin: InstalledPlugin): {
 
 export function PluginsPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Auto-open the file picker when the spotlight queued a `plugins.install`
+  // action from another workspace. Defer to the next tick so the input ref
+  // is mounted before we trigger .click() on it.
+  useEffect(() => {
+    const pending = consumePendingAction("plugins.install");
+    if (!pending) return;
+    const id = setTimeout(() => fileInputRef.current?.click(), 0);
+    return () => clearTimeout(id);
+  }, []);
+
   const [payload, setPayload] = useState<CmsPluginsPayload>(emptyPayload);
   const [loading, setLoading] = useState(true);
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);

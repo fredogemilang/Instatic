@@ -333,6 +333,165 @@ export function activate(api) {
 }
 ```
 
+## Spotlight Commands (`editor.commands`)
+
+The **Command Spotlight** (⌘K / Ctrl+K) surfaces plugin commands without any extra work and lets you register live-search providers for rich palette experiences.
+
+### 1. Basic command (auto-surfaced)
+
+Every command you register with `api.editor.commands.register` automatically appears in the palette under **"Plugin commands"** when the query matches. No extra code required — the basic shape is enough:
+
+```js
+api.editor.commands.register({
+  id: 'acme.workflow.sync',
+  label: 'Sync workflow',
+  run: () => ({ message: 'Sync complete' }),
+})
+```
+
+### 2. Richer palette command
+
+Use `api.editor.palette.registerCommand` when you want to provide the palette with additional display hints. Functionally equivalent to `commands.register` — both store into the same runtime registry:
+
+```js
+api.editor.palette.registerCommand({
+  id: 'acme.workflow.archive',
+  label: 'Archive current page…',
+  subtitle: 'Move the active page to the archive folder',
+  iconName: 'archive-box',          // pixel-art-icon name
+  keywords: ['archive', 'remove', 'move'],
+  destructive: true,                // palette renders danger styling + confirm
+  workspaces: ['site'],             // only shown in the site editor
+  args: [
+    {
+      id: 'reason',
+      label: 'Reason',
+      type: 'text',
+      placeholder: 'Why are you archiving this page?',
+    },
+    {
+      id: 'notify',
+      label: 'Notify team',
+      type: 'select',
+      options: [
+        { value: 'yes', label: 'Yes — send a notification' },
+        { value: 'no',  label: 'No'                        },
+      ],
+    },
+  ],
+  run: () => { /* perform the archive operation */ },
+})
+```
+
+Available `workspaces` values: `'site'`, `'content'`, `'data'`, `'media'`, `'plugins'`, `'users'`, `'account'`, `'any'` (default — always visible).
+
+Both `commands.register` and `palette.registerCommand` require the `editor.commands` permission.
+
+### 3. Live-search provider
+
+Register a provider to supply **dynamic results** on each debounced keystroke. Results appear as a group in the palette under your provider's `label`:
+
+```js
+api.editor.palette.registerProvider({
+  // id MUST start with "<pluginId>." — namespaced to avoid collisions
+  id: 'acme.workflow.tasks',
+  label: 'Tasks',    // group header shown in the palette
+
+  // Called with the current query string; return up to ~25 PluginPaletteResult items.
+  // Errors are caught — a failing provider surfaces as an empty group, not a crash.
+  search: async (query) => {
+    const res = await fetch(
+      '/admin/api/cms/plugins/acme.workflow/runtime/tasks?q=' + encodeURIComponent(query),
+      { credentials: 'include' },
+    )
+    if (!res.ok) throw new Error('Task search failed: ' + res.status)
+    const { tasks } = await res.json()
+
+    return tasks.map((task) => ({
+      id:       task.id,
+      title:    task.title,
+      subtitle: task.status,
+      iconName: 'checkbox-square',
+      run: async () => {
+        // Open the task detail page, or run an action…
+        window.location.href = '/admin/plugins/acme.workflow/tasks/' + task.id
+      },
+    }))
+  },
+})
+```
+
+**Rate-limiting**: the palette enforces one in-flight call per provider at a time. A new query cancels any pending debounce; results arriving after the palette is closed are discarded automatically.
+
+### End-to-end example
+
+```js
+// editor/index.js
+export function activate(api) {
+
+  // 1. Simple command — auto-appears in palette, also wired to toolbar.
+  api.editor.commands.register({
+    id: 'acme.crm.refresh',
+    label: 'Refresh CRM data',
+    run: async () => {
+      await fetch('/admin/api/cms/plugins/acme.crm/runtime/refresh', {
+        method: 'POST', credentials: 'include',
+      })
+      return { message: 'CRM data refreshed' }
+    },
+  })
+
+  api.editor.toolbar.addButton({
+    id: 'acme.crm.refresh',
+    label: 'Refresh CRM',
+    command: 'acme.crm.refresh',
+  })
+
+  // 2. Palette-specific command with args.
+  api.editor.palette.registerCommand({
+    id: 'acme.crm.createContact',
+    label: 'Create CRM contact…',
+    subtitle: 'Add a new contact from the current page content',
+    iconName: 'person-plus',
+    args: [
+      { id: 'name',  label: 'Name',  type: 'text'   },
+      { id: 'email', label: 'Email', type: 'text', placeholder: 'user@example.com' },
+    ],
+    run: () => { /* args are collected by palette before run() fires */ },
+  })
+
+  // 3. Live-search provider: search contacts from the CRM backend.
+  api.editor.palette.registerProvider({
+    id: 'acme.crm.contacts',
+    label: 'CRM contacts',
+    search: async (query) => {
+      const res = await fetch(
+        '/admin/api/cms/plugins/acme.crm/runtime/contacts?q=' + encodeURIComponent(query),
+        { credentials: 'include' },
+      )
+      const { contacts } = await res.json()
+      return contacts.map((c) => ({
+        id:       c.id,
+        title:    c.name,
+        subtitle: c.email,
+        iconName: 'person',
+        run: async () => {
+          window.open('/admin/plugins/acme.crm/contacts/' + c.id)
+        },
+      }))
+    },
+  })
+}
+```
+
+This requires the following in `plugin.json`:
+
+```json
+{
+  "permissions": ["editor.commands", "editor.toolbar", "cms.routes"]
+}
+```
+
 ## Editor Panels (`editor.panels`)
 
 Plugins can register panels that mount in the editor's **left sidebar**. The user opens them from the rail just like the built-in panels (Layers, Site, Selectors, etc.). Plugins write a real React component — same React + host-ui imports as admin apps.

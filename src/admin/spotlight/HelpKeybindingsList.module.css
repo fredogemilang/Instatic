@@ -1,0 +1,60 @@
+/**
+ * HelpKeybindingsList — styles for the generated keyboard shortcuts reference.
+ *
+ * Rendered inside SettingsModal → Shortcuts section.
+ * Uses shared editor design tokens only — no hardcoded colors.
+ */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.section {}
+
+.sectionTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--editor-text-subtle);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  margin: 0 0 10px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--editor-border);
+  font-size: 12px;
+}
+
+.rowTitle {
+  flex: 1;
+  color: var(--editor-text-secondary);
+}
+
+.shortcutHint {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  padding: 2px 6px;
+  background: var(--editor-border);
+  border: 1px solid var(--editor-border-med);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--editor-text-secondary);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  line-height: 1.4;
+}

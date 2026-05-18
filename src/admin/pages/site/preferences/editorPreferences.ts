@@ -97,6 +97,10 @@ function writeEditorPrefs(next: EditorPrefs): void {
 // ---------------------------------------------------------------------------
 
 /** Read a single boolean preference, falling back to the catalog default. */
+export function readEditorPreferenceBool(id: BooleanPreferenceId): boolean {
+  return readEditorPreference(id)
+}
+
 function readEditorPreference(id: BooleanPreferenceId): boolean {
   const prefs = readEditorPrefs() as Record<string, unknown>
   const value = prefs[id]

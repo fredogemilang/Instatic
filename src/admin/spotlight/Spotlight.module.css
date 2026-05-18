@@ -1,0 +1,569 @@
+/**
+ * Spotlight.module.css — Command palette overlay styles.
+ *
+ * §5.1 Layout spec:
+ *   - Overlay: fixed inset 0, backdrop rgba(0,0,0,0.5) + backdrop-blur
+ *   - Panel: 640px wide, 28vh top offset, centered, max-height min(60vh, 560px)
+ *   - Input row: 56px
+ *   - Result rows: 44px
+ *   - Group headers: 28px
+ *   - Footer: 36px
+ *
+ * All colors from design tokens in src/styles/globals.css.
+ * No hardcoded hex/rgb. No Tailwind utilities. No !important.
+ */
+
+/* ─── Backdrop / overlay ──────────────────────────────────────────────────── */
+
+.backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--spotlight-z-index);
+    background: var(--spotlight-backdrop);
+    backdrop-filter: blur(var(--spotlight-backdrop-blur));
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 28vh;
+}
+
+/* Open animation — fires once on mount (component unmounts when closed). */
+.backdrop[data-state="open"] {
+    animation: spotlightBackdropIn 120ms ease-out;
+}
+
+/* Close animation — fires when data-state changes to "closing". */
+.backdrop[data-state="closing"] {
+    animation: spotlightBackdropOut 80ms ease-in forwards;
+    pointer-events: none;
+}
+
+@keyframes spotlightBackdropIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes spotlightBackdropOut {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+}
+
+/* ─── Panel ───────────────────────────────────────────────────────────────── */
+
+.panel {
+    width: var(--spotlight-width);
+    max-width: calc(100vw - 32px);
+    max-height: min(60vh, 560px);
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--panel-radius);
+    box-shadow: var(--panel-shadow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.panel[data-state="open"] {
+    animation: spotlightPanelIn 120ms ease-out;
+}
+
+.panel[data-state="closing"] {
+    animation: spotlightPanelOut 80ms ease-in forwards;
+}
+
+@keyframes spotlightPanelIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes spotlightPanelOut {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+}
+
+/* ─── Input row ───────────────────────────────────────────────────────────── */
+
+.inputRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 56px;
+    padding: 0 16px;
+    flex-shrink: 0;
+}
+
+.searchIcon {
+    color: var(--editor-text-muted);
+    flex-shrink: 0;
+}
+
+.input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-family: var(--font-sans);
+    font-size: 16px;
+    color: var(--editor-text);
+    line-height: 1;
+}
+
+.input::placeholder {
+    color: var(--editor-text-muted);
+}
+
+.resultCount {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--editor-text-subtle);
+    background: var(--spotlight-group-header-fg);
+    opacity: 0.4;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+}
+
+/* ─── Results list ────────────────────────────────────────────────────────── */
+
+.results {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 4px 0;
+    min-height: 0;
+    overflow-x: hidden;
+}
+
+/* Scope push: new list slides in from the right */
+.results[data-scope-direction="push"] {
+    animation: scopeSlidePush 120ms ease-out;
+}
+
+/* Scope pop: new list slides in from the left */
+.results[data-scope-direction="pop"] {
+    animation: scopeSlidePop 120ms ease-out;
+}
+
+@keyframes scopeSlidePush {
+    from {
+        opacity: 0;
+        transform: translateX(32px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes scopeSlidePop {
+    from {
+        opacity: 0;
+        transform: translateX(-32px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* ─── Group header ────────────────────────────────────────────────────────── */
+
+.groupHeader {
+    height: 28px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--spotlight-group-header-fg);
+    user-select: none;
+}
+
+/* ─── Scope breadcrumb ────────────────────────────────────────────────────── */
+
+.scopeBreadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 28px;
+    padding: 0 16px;
+    font-size: 12px;
+    color: var(--editor-text-secondary);
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.scopeBreadcrumbPart {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.scopeBreadcrumbSep {
+    color: var(--editor-text-subtle);
+    font-size: 10px;
+}
+
+/* ─── Result row ──────────────────────────────────────────────────────────── */
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 44px;
+    margin: 0 6px;
+    padding: 0 10px;
+    border-radius: var(--editor-radius);
+    cursor: pointer;
+    transition: background 60ms ease-out;
+    user-select: none;
+}
+
+.rowHighlighted {
+    background: var(--spotlight-row-selected-bg);
+}
+
+.rowDestructive .rowLabel {
+    color: var(--spotlight-destructive-fg);
+}
+
+.rowDestructive .rowIcon {
+    color: var(--spotlight-destructive-fg);
+}
+
+/* Confirm state: override colors for the "Press ↵ again" prompt */
+.rowConfirming {
+    background: var(--spotlight-confirm-bg);
+}
+
+.rowConfirming .rowIcon {
+    color: var(--spotlight-destructive-fg);
+}
+
+.confirmText {
+    font-style: italic;
+    color: var(--spotlight-destructive-fg);
+    font-size: 13px;
+}
+
+.rowIcon {
+    flex-shrink: 0;
+    color: var(--editor-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+}
+
+.rowContent {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.rowLabel {
+    font-size: 14px;
+    color: var(--editor-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+}
+
+.rowSublabel {
+    font-size: 12px;
+    color: var(--editor-text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+}
+
+.rowShortcut {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 4px;
+    background: var(--editor-surface-3);
+    border: 1px solid var(--editor-border);
+    border-radius: var(--editor-radius-sm);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    color: var(--editor-text-secondary);
+    line-height: 1;
+}
+
+/* Match highlight — <mark> inside row labels */
+.rowLabel mark {
+    background: var(--spotlight-mark-bg);
+    color: var(--spotlight-mark-fg);
+    border-radius: 2px;
+    font-style: normal;
+    padding: 0 1px;
+}
+
+/* ─── Empty state ─────────────────────────────────────────────────────────── */
+
+.emptyState {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 16px;
+    gap: 8px;
+    color: var(--editor-text-muted);
+}
+
+.emptyStateIcon {
+    color: var(--editor-text-subtle);
+}
+
+.emptyStateText {
+    font-size: 14px;
+    color: var(--editor-text-muted);
+    text-align: center;
+}
+
+.emptyStateQuery {
+    font-weight: 600;
+    color: var(--editor-text-secondary);
+}
+
+/* ─── Footer ──────────────────────────────────────────────────────────────── */
+
+.footer {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 12px;
+    flex-shrink: 0;
+    background: var(--spotlight-footer-bg);
+}
+
+.footerHint {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--editor-text-subtle);
+    white-space: nowrap;
+}
+
+.footerSeparator {
+    color: var(--editor-text-subtle);
+    opacity: 0.4;
+}
+
+/* ─── Arg mode UI ─────────────────────────────────────────────────────────── */
+
+/* Breadcrumb showing parent command + current arg */
+.argBreadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 16px;
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.argBreadcrumbTitle {
+    color: var(--editor-text-secondary);
+    font-weight: 500;
+}
+
+.argBreadcrumbSeparator {
+    color: var(--editor-text-subtle);
+    font-size: 10px;
+}
+
+.argBreadcrumbCurrent {
+    color: var(--editor-text);
+    font-weight: 600;
+}
+
+/* Completed arg row (past args shown as read-only) */
+.argCompletedRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 16px;
+    opacity: 0.5;
+}
+
+/* Current (active) arg row */
+.argCurrentRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 44px;
+    margin: 0 6px;
+    padding: 0 10px;
+    border-radius: var(--editor-radius);
+    background: var(--spotlight-row-selected-bg);
+}
+
+.argRowGlyph {
+    font-size: 12px;
+    color: var(--editor-text-muted);
+    flex-shrink: 0;
+    width: 16px;
+}
+
+.argRowLabel {
+    font-size: 13px;
+    color: var(--editor-text-secondary);
+    flex-shrink: 0;
+}
+
+.argRowValue {
+    font-size: 13px;
+    color: var(--editor-text);
+    font-weight: 500;
+}
+
+.argRowValueActive {
+    font-size: 14px;
+    color: var(--editor-text);
+    font-weight: 500;
+    flex: 1;
+}
+
+.argRowPlaceholder {
+    color: var(--editor-text-muted);
+    font-weight: 400;
+    font-style: italic;
+}
+
+/* Select type options container */
+.argSelectOptions {
+    padding: 4px 0;
+}
+
+/* ─── Live region (visually hidden, for screen reader announcements) ──────── */
+
+.announceRegion {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/* ─── SpotlightArgInput (legacy stub, keep for backward compat) ───────────── */
+
+.argInput {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px 8px 32px;
+}
+
+.argLabel {
+    font-size: 12px;
+    color: var(--editor-text-muted);
+    flex-shrink: 0;
+}
+
+.argInputField {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    color: var(--editor-text);
+}
+
+/* ─── Reduced motion ──────────────────────────────────────────────────────── */
+/*
+ * The global prefers-reduced-motion block in globals.css already sets
+ * animation-duration/transition-duration to 0.01ms !important for all elements,
+ * which covers the open/close/scope keyframe animations above.
+ *
+ * This per-module block additionally disables transforms so no element
+ * physically moves — matching the spec §5.3 "cross-fade only" requirement.
+ */
+
+@media (prefers-reduced-motion: reduce) {
+    .backdrop[data-state="open"],
+    .backdrop[data-state="closing"] {
+        animation: none;
+    }
+
+    .panel[data-state="open"],
+    .panel[data-state="closing"] {
+        animation: none;
+        /* Ensure closing state still hides the panel */
+    }
+
+    .panel[data-state="closing"],
+    .backdrop[data-state="closing"] {
+        opacity: 0;
+    }
+
+    .results[data-scope-direction="push"],
+    .results[data-scope-direction="pop"] {
+        animation: none;
+        /* Cross-fade only — just the opacity change, no slide */
+        animation: scopeFadeOnly 120ms ease-out;
+    }
+
+    @keyframes scopeFadeOnly {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+    }
+}
+
+/* ─── High contrast mode ──────────────────────────────────────────────────── */
+/*
+ * In forced-colors (Windows High Contrast) mode, the custom ring / bg tokens
+ * are overridden by the system palette, so we rely on the browser's built-in
+ * focus / highlight indicators. Explicitly set ButtonText / Highlight to keep
+ * the ring visible.
+ */
+
+@media (prefers-contrast: more) {
+    .rowHighlighted {
+        outline: 2px solid currentColor;
+        outline-offset: -2px;
+    }
+
+    .rowLabel mark {
+        outline: 1px solid currentColor;
+    }
+}

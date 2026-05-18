@@ -11,7 +11,8 @@
  * state — only the loaded data, the shared error string, and the
  * mutation refresh callback live here.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { peekPendingAction } from '@admin/spotlight/pendingAction'
 import { Button } from '@ui/components/Button'
 import { AdminPageLayout } from '@admin/layouts'
 import { hasCapability } from '@admin/access'
@@ -48,6 +49,24 @@ export function UsersPage() {
 
   const [tab, setTab] = useState<Tab>('users')
   const activeTab = availableTabs.includes(tab) ? tab : availableTabs[0] ?? 'users'
+
+  // Cross-workspace spotlight actions can target this page. Peek (don't
+  // consume) at the pending action so the appropriate tab is selected before
+  // the tab itself mounts and consumes the action. Microtask defer to keep
+  // the setState off the commit phase without risking the macrotask race
+  // that setTimeout(0) would expose to fast cross-page navigations.
+  useEffect(() => {
+    const newRolePending =
+      peekPendingAction('users.newRole') && availableTabs.includes('roles')
+    const invitePending =
+      peekPendingAction('users.invite') && availableTabs.includes('users')
+    if (!newRolePending && !invitePending) return
+    queueMicrotask(() => {
+      if (newRolePending) setTab('roles')
+      else if (invitePending) setTab('users')
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const tabs = (
     <div role="tablist" aria-label="Users sections" className={styles.tabsRow}>

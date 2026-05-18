@@ -13,6 +13,7 @@ import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
 import { RulerDimensionSolidIcon } from 'pixel-art-icons/icons/ruler-dimension-solid'
 import { Button } from '@ui/components/Button'
 import { pluginRuntime } from '@core/plugins/runtime'
+import { getKeybindingForCommand, formatShortcut } from '@admin/spotlight/keybindings'
 import { resolvePluginPanelIcon } from './pluginPanelIcons'
 import styles from './PanelRail.module.css'
 
@@ -26,8 +27,12 @@ interface PrimaryRailItem {
   icon: IconComponent
   iconName: string
   accent: RailAccent
-  ariaKeyshortcuts?: string
-  shortcutLabel?: string
+  /**
+   * commandId links this panel button to a keybinding in the registry.
+   * The ariaKeyshortcuts and shortcutLabel tooltip are derived from it
+   * at runtime — do NOT hardcode shortcut strings here.
+   */
+  commandId?: string
 }
 
 interface RailItem {
@@ -51,6 +56,7 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     icon: Bulletlist2SharpIcon,
     iconName: 'bulletlist-2-sharp',
     accent: 'mint',
+    // No keyboard shortcut registered for the Layers panel.
   },
   {
     id: 'agent',
@@ -58,8 +64,7 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     icon: AiSettingsSolidIcon,
     iconName: 'ai-settings-solid',
     accent: 'lilac',
-    ariaKeyshortcuts: 'Meta+I',
-    shortcutLabel: 'Cmd+I',
+    commandId: 'panels.toggleAgent',
   },
   {
     id: 'site',
@@ -67,8 +72,7 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     icon: FilesStack2SolidIcon,
     iconName: 'files-stack-2',
     accent: 'sky',
-    ariaKeyshortcuts: 'Control+Shift+E',
-    shortcutLabel: 'Ctrl+Shift+E',
+    commandId: 'panels.toggleSiteExplorer',
   },
   {
     id: 'selectors',
@@ -104,6 +108,7 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     icon: ImagesSolidIcon,
     iconName: 'images',
     accent: 'sky',
+    commandId: 'panels.toggleMedia',
   },
   {
     id: 'dependencies',
@@ -152,6 +157,12 @@ export function PanelRail({ workspace = 'site', editable = true }: PanelRailProp
   useEffect(() => {
     if (!editable) return undefined
 
+    // All match predicates come from the keybindings registry — single source of truth.
+    const kbSiteExplorer = getKeybindingForCommand('panels.toggleSiteExplorer')
+    const kbMedia        = getKeybindingForCommand('panels.toggleMedia')
+    const kbProperties   = getKeybindingForCommand('panels.toggleProperties')
+    const kbAgent        = getKeybindingForCommand('panels.toggleAgent')
+
     function isTypingTarget(target: EventTarget | null) {
       const element = target as HTMLElement | null
       return Boolean(element && (
@@ -164,16 +175,16 @@ export function PanelRail({ workspace = 'site', editable = true }: PanelRailProp
     function onKeyDown(e: KeyboardEvent) {
       if (isTypingTarget(e.target)) return
 
-      if (e.ctrlKey && e.shiftKey && e.key === 'E') {
+      if (kbSiteExplorer?.match(e)) {
         e.preventDefault()
         useEditorStore.getState().toggleLeftSidebarPanel('site')
-      } else if (e.ctrlKey && e.shiftKey && e.key === 'M') {
+      } else if (kbMedia?.match(e)) {
         e.preventDefault()
         useEditorStore.getState().toggleLeftSidebarPanel('media')
-      } else if (e.ctrlKey && e.shiftKey && e.key === 'R') {
+      } else if (kbProperties?.match(e)) {
         e.preventDefault()
         useEditorStore.getState().togglePropertiesPanel()
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') {
+      } else if (kbAgent?.match(e)) {
         e.preventDefault()
         useEditorStore.getState().toggleLeftSidebarPanel('agent')
       }
@@ -201,11 +212,17 @@ export function PanelRail({ workspace = 'site', editable = true }: PanelRailProp
 
   const primaryItems: RailItem[] = visiblePrimaryItems.map((item) => {
     const label = workspace === 'content' && item.id === 'site' ? 'Content' : item.label
+    // Shortcut labels and ARIA keyshortcuts come from the keybindings registry.
+    const kb = item.commandId ? getKeybindingForCommand(item.commandId) : undefined
+    const shortcutLabel = kb ? formatShortcut(kb.shortcut) : undefined
+    const ariaKeyshortcuts = kb?.ariaKeyshortcuts
     return {
       ...item,
       label,
       open: editable ? panelOpenById[item.id] : item.id === 'layers',
       onToggle: editable ? () => toggleLeftSidebarPanel(item.id) : () => undefined,
+      shortcutLabel,
+      ariaKeyshortcuts,
     }
   })
 

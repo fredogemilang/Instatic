@@ -89,6 +89,21 @@ Use this matrix to choose agent-browser audit scope. Rows are user goals. Keep s
 | RESP-001 | P2 | Responsive | Use admin at tablet width | Logged in | 768px viewport | Main flows remain usable | clipped panels, overlapping text |
 | RESP-002 | P2 | Responsive | Preview/publish mobile page | Published page | 390px viewport | Public page is readable and styled | overflow, broken media |
 
+## Command Palette (⌘K Spotlight)
+
+Full scenario descriptions and per-assertion steps live in `docs/e2e/spotlight.md`.
+
+| ID | Priority | Area | User Goal | Setup | Path | Expected Outcome | Watch For |
+|---|---:|---|---|---|---|---|---|
+| SPOT-001 | P1 | Open/Close | Open palette with ⌘K and close with Esc | Logged in | ⌘K → Esc | Palette opens, input focused, Esc closes, focus restored | Focus trap failures; palette fails to open |
+| SPOT-002 | P1 | Navigation | Type a query and navigate to a workspace | Logged in | Open palette, type, Enter | Correct workspace opened; palette closed | Wrong navigation; palette left open |
+| SPOT-003 | P2 | Subcommand | Push a scope and pick an item | Site workspace with breakpoints | Open palette, drill into "Switch breakpoint →" | Breakpoint changes; palette closes | Scope push fails; wrong item selected |
+| SPOT-004 | P1 | Destructive | Two-Enter confirm flow for a destructive command | Multiple pages exist | Open palette, destructive command, Enter×2 | First Enter shows confirm; second runs | No confirm shown; double-fire |
+| SPOT-005 | P2 | Destructive timeout | Confirm collapses after 5 s without second Enter | Active confirm state | Wait >5 s | Confirm prompt disappears | Timer off; row stuck |
+| SPOT-006 | P1 | Empty state | No-match query shows empty state | Logged in | Open palette, type nonsense string | Empty-state UI with quoted query | Empty state missing; wrong empty state |
+| SPOT-007 | P2 | Context ranking | Duplicate-layer command boosted with node selected | Editor, node selected | Open palette | "Duplicate selected layer" near top | Command missing; not boosted |
+| SPOT-008 | P2 | Recents | Recent commands at top on re-open | Run one command | Close and reopen palette | Recent group with prior command visible | Recents not persisted; duplicates |
+
 ## Performance And Reliability
 
 | ID | Priority | Area | User Goal | Setup | Path | Expected Outcome | Watch For |

@@ -1,4 +1,7 @@
+import { useEffect } from 'react'
 import { AdminCanvasLayout } from '@admin/layouts'
+import { useEditorStore } from '@site/store/store'
+import { consumePendingAction } from '@admin/spotlight/pendingAction'
 
 // Register base modules with the global registry. Kept here (not in
 // AdminEntry / main.tsx) so the publisher / page-tree / sanitize stack only
@@ -31,5 +34,42 @@ import '@core/loops/sources'
  *   - ui/            — editor-shared building blocks (Tree, ModuleIcon)
  */
 export function SitePage() {
+  // Consume cross-workspace pending actions queued by the spotlight. Each
+  // action waits for the editor store to hydrate (site !== null) — we
+  // subscribe once and tear down as soon as the action has fired so the
+  // listener doesn't outlive the SitePage mount.
+  useEffect(() => {
+    function runIfHydrated(): boolean {
+      const store = useEditorStore.getState()
+      if (!store.site) return false
+
+      const newPage = consumePendingAction('site.newPage')
+      if (newPage) {
+        const title = newPage.args?.['title']?.trim()
+        if (title) store.addPage(title)
+        return true
+      }
+
+      const newVc = consumePendingAction('site.newVisualComponent')
+      if (newVc) {
+        const name = newVc.args?.['name']?.trim()
+        if (name) {
+          const vcId = store.createVisualComponent(name)
+          store.setActiveDocument({ kind: 'visualComponent', vcId })
+        }
+        return true
+      }
+
+      return true // hydrated but nothing queued — stop waiting
+    }
+
+    if (runIfHydrated()) return
+
+    const unsubscribe = useEditorStore.subscribe(() => {
+      if (runIfHydrated()) unsubscribe()
+    })
+    return unsubscribe
+  }, [])
+
   return <AdminCanvasLayout workspace="site" />
 }

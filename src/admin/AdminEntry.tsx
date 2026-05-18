@@ -21,6 +21,7 @@ import { StepUpProvider } from './shared/StepUp'
 import { canAccessWorkspace, firstAccessibleWorkspace, workspacePath } from './access'
 import { Navigate } from './lib/routing'
 import { useInRouterContext } from './lib/routing'
+import { SpotlightProvider } from './spotlight'
 import styles from './AdminEntry.module.css'
 
 // Section pages are split into per-workspace chunks so that admins who only
@@ -343,18 +344,26 @@ function AuthenticatedAdmin({
 
   return (
     <AdminSessionProvider user={currentUser}>
-      <StepUpProvider>
-        <Suspense fallback={<AppLoadingScreen />}>
-          {section === 'content' ? <ContentPage /> :
-            section === 'data' ? <DataPage /> :
-            section === 'media' ? <MediaPage /> :
-            section === 'plugins' ? <PluginsPage /> :
-            section === 'users' ? <UsersPage /> :
-            section === 'pluginPage' ? <PluginPage /> :
-            section === 'account' ? <AccountPage /> :
-            <SitePage />}
-        </Suspense>
-      </StepUpProvider>
+      {/* SpotlightProvider sits INSIDE AdminSessionProvider so it can read
+          the authenticated user via useCurrentAdminUser(). Without an
+          authenticated user the palette's CommandContext is null and every
+          command short-circuits — clicks become silent no-ops. It still
+          renders above StepUpProvider / the workspace switch so the palette
+          is available across every workspace. */}
+      <SpotlightProvider>
+        <StepUpProvider>
+          <Suspense fallback={<AppLoadingScreen />}>
+            {section === 'content' ? <ContentPage /> :
+              section === 'data' ? <DataPage /> :
+              section === 'media' ? <MediaPage /> :
+              section === 'plugins' ? <PluginsPage /> :
+              section === 'users' ? <UsersPage /> :
+              section === 'pluginPage' ? <PluginPage /> :
+              section === 'account' ? <AccountPage /> :
+              <SitePage />}
+          </Suspense>
+        </StepUpProvider>
+      </SpotlightProvider>
     </AdminSessionProvider>
   )
 }

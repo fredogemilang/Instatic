@@ -10,7 +10,8 @@
  * renders every input as `disabled` so admins can audit a role's
  * capabilities without entering edit mode.
  */
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { consumePendingAction } from '@admin/spotlight/pendingAction'
 import { Button } from '@ui/components/Button'
 import {
   DataTable,
@@ -71,6 +72,19 @@ export function RolesTab({ data, canManageRoles }: RolesTabProps) {
     setDialogMode('create')
     setError(null)
   }
+
+  // Auto-open the create-role dialog when the spotlight queued a
+  // `users.newRole` action while the user was on a different workspace.
+  // Guard on canManageRoles so we don't swallow the queued action on the
+  // first render before capabilities are known. See UsersTab for why we
+  // use queueMicrotask rather than setTimeout(0).
+  useEffect(() => {
+    if (!canManageRoles) return
+    const pending = consumePendingAction('users.newRole')
+    if (!pending) return
+    queueMicrotask(() => openCreate())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageRoles])
 
   function openView(role: CmsRole) {
     if (!canManageRoles) return

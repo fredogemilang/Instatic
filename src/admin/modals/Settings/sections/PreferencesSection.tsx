@@ -7,10 +7,14 @@
  * concrete row component. Each preference type has exactly one row component
  * — `BooleanPreferenceRow`, `SelectPreferenceRow` — and one runtime hook
  * (`useEditorPreference`, `useEditorSelectPreference`).
+ *
+ * Special handling for the 'spotlight' category: a "Clear command history"
+ * button is appended after the catalog-derived rows.
  */
 import { useEditorStore } from '@site/store/store'
 import { Switch } from '@ui/components/Switch'
 import { Select } from '@ui/components/Select'
+import { Button } from '@ui/components/Button'
 import {
   preferencesByCategory,
   type BooleanCatalogDef,
@@ -24,6 +28,8 @@ import {
   useEditorPreference,
   useEditorSelectPreference,
 } from '@site/preferences/editorPreferences'
+import { clearTelemetry } from '@admin/spotlight/telemetry'
+import { clearRecentCommands } from '@admin/spotlight/recentStore'
 import s from '../SettingsModal.module.css'
 
 export function PreferencesSection() {
@@ -45,6 +51,9 @@ export function PreferencesSection() {
           {group.preferences.map((pref) => (
             <PreferenceRow key={pref.id} pref={pref} />
           ))}
+          {group.id === 'spotlight' && (
+            <SpotlightHistoryControls />
+          )}
         </section>
       ))}
     </div>
@@ -134,6 +143,37 @@ function useDynamicSelectOptions(
     return breakpointsOptions.map((bp) => ({ value: bp.id, label: bp.label }))
   }
   return EMPTY_OPTIONS
+}
+
+// ─── Spotlight history controls ───────────────────────────────────────────────
+
+/**
+ * "Clear command history" button rendered inside the spotlight preference group.
+ * Clears both the recent-command list (recentStore) and opt-in telemetry data.
+ * Lives here (not in the catalog) because it is an action, not a stored value.
+ */
+function SpotlightHistoryControls() {
+  return (
+    <div className={s.toggleRow}>
+      <div className={s.toggleRowContent}>
+        <span className={s.toggleRowLabel}>Clear command history</span>
+        <p className={s.toggleRowDesc}>
+          Removes the list of recently run commands shown when the palette opens
+          with an empty query, and erases any local usage counts.
+        </p>
+      </div>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          clearRecentCommands()
+          clearTelemetry()
+        }}
+      >
+        Clear
+      </Button>
+    </div>
+  )
 }
 
 function DynamicSelectPreferenceRow({

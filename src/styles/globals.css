@@ -20,7 +20,7 @@
     --editor-surface-5: #605f5f;
 
     /* ─── Borders ────────────────────────────────────────────────────────── */
-    --editor-border: #1f1f1f;
+    --editor-border: #333333;
     --editor-border-med: #2e2e2e; /* medium border (slightly elevated) */
 
     /* ─── Text Hierarchy ─────────────────────────────────────────────────── */
@@ -67,6 +67,12 @@
     --editor-success-bright: #4ade80; /* green-400 — agent tool success */
     --editor-success-text: #d1fae5; /* emerald-100 — success/mint badge text */
     --editor-success-text-soft: #a7f3d0; /* emerald-200 — success hint text */
+    --editor-success-bg: rgba(
+        52,
+        211,
+        153,
+        0.1
+    ); /* emerald-400 at 10% — success pill surface */
     --editor-info-text: #c4b5fd; /* violet-300 — info text */
 
     /* ─── Mint accent surface (canvas breakpoint chrome, mode toggle) ────── */
@@ -127,7 +133,7 @@
     --input-shadow: none;
     --input-shadow-focus:
         inset 0 0 5px #ffffff0f, inset 0 -5px 8px #ffffff17, 0 0px 5px #0000003d; /* achromatic glow */
-    --input-radius: 12px;
+    --input-radius: 1em;
 
     /* ─── Canvas ─────────────────────────────────────────────────────────── */
     --canvas-selection-ring: inset 0 0 0 1px #39ff14;
@@ -150,6 +156,30 @@
         0 4px 16px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     --tooltip-radius: 6px;
     --tooltip-z-index: 2000;
+
+    /* ─── Spotlight (Cmd+K command palette) ──────────────────────────────── */
+    --spotlight-backdrop: rgba(0, 0, 0, 0.5);
+    --spotlight-backdrop-blur: 8px;
+    --spotlight-z-index: 9000;
+    --spotlight-width: 640px;
+    /* Row highlight — single subtle bg lift, no border ring (Linear/Raycast style).
+     * 0.08 opacity over the panel surface keeps the row distinct without the
+     * visual noise of an extra border on every selected/hovered item. */
+    --spotlight-row-selected-bg: rgba(255, 255, 255, 0.08);
+    /* Match highlight — reuse success bg for <mark> characters */
+    --spotlight-mark-bg: rgba(52, 211, 153, 0.2);
+    --spotlight-mark-fg: var(--editor-text-bright);
+    /* Group header */
+    --spotlight-group-header-fg: var(--editor-text-subtle);
+    /* Footer */
+    --spotlight-footer-bg: rgba(255, 255, 255, 0.03);
+    /* Destructive row */
+    --spotlight-destructive-fg: var(--editor-danger-light);
+    /* Destructive confirm state — first Enter pressed, awaiting second Enter */
+    --spotlight-confirm-bg: rgba(239, 68, 68, 0.08);
+    /* Skeleton loading shimmer (Phase 3 providers) */
+    --spotlight-skeleton-base: rgba(255, 255, 255, 0.06);
+    --spotlight-skeleton-shimmer: rgba(255, 255, 255, 0.12);
 }
 
 /* Reduced motion support — Constraint from UX Guideline #189 */

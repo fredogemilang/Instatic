@@ -11,7 +11,8 @@
  * has no fresh window. Cancelling the step-up dialog resolves silently
  * (we match on `StepUpCancelledMessage`).
  */
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { consumePendingAction } from '@admin/spotlight/pendingAction'
 import { Button } from '@ui/components/Button'
 import {
   DataTable,
@@ -86,6 +87,22 @@ export function UsersTab({ data, canManageUsers }: UsersTabProps) {
     setDialogMode('create')
     setError(null)
   }
+
+  // Auto-open the invite dialog when the spotlight queued a `users.invite`
+  // action while the user was on a different workspace. Only consume the
+  // action once `canManageUsers` is true — otherwise openCreate's capability
+  // guard would swallow the action and we'd have spent it for nothing.
+  // We use queueMicrotask (not setTimeout) so the setState fires on the same
+  // task: setTimeout(0) cleanup can race the timer when a fast navigation
+  // tears the tab back down before the macrotask runs, which would lose
+  // the dialog.
+  useEffect(() => {
+    if (!canManageUsers) return
+    const pending = consumePendingAction('users.invite')
+    if (!pending) return
+    queueMicrotask(() => openCreate())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageUsers])
 
   function openEdit(user: CmsCurrentUser) {
     if (!canManageUsers || isOwnerUser(user)) return

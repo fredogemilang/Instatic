@@ -32,6 +32,7 @@ import { Dialog } from '@ui/components/Dialog'
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { Input } from '@ui/components/Input'
 import { useCanvas } from '@site/hooks/useCanvas'
+import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { CanvasTransformLayer } from './CanvasTransformLayer'
 import { CanvasPreviewSurface } from './CanvasPreviewSurface'
 import { CanvasNotch } from './CanvasNotch'
@@ -263,6 +264,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   )
 
   // ─── Canvas-level keyboard shortcuts ──────────────────────────────────────
+  // Match predicates come from the keybindings registry — single source of truth.
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -289,7 +291,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
       const currentIds = useEditorStore.getState().selectedNodeIds
 
       // Delete / Backspace → delete selected layer(s)
-      if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (getKeybindingForCommand('layers.delete')?.match(e)) {
         // Don't intercept backspace in inputs
         const target = e.target as HTMLElement
         if (
@@ -309,7 +311,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
       }
 
       // Ctrl/Cmd+D → duplicate
-      if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+      if (getKeybindingForCommand('layers.duplicate')?.match(e)) {
         e.preventDefault()
         if (currentIds.length > 1) {
           duplicateNodes(currentIds)
@@ -321,23 +323,21 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
       // Ctrl/Cmd+C / X / V — clipboard. Skip when the active element is a
       // text input / contenteditable so native text-clipboard behaviour wins
       // when the user is editing a value, not the layer tree.
-      if (e.ctrlKey || e.metaKey) {
-        const target = e.target as HTMLElement
-        const isTextInput =
-          target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable
-        if (isTextInput) return
-
-        if (e.key === 'c') {
+      const target = e.target as HTMLElement
+      const isTextInput =
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      if (!isTextInput) {
+        if (getKeybindingForCommand('layers.copy')?.match(e)) {
           e.preventDefault()
           if (currentIds.length > 1) copyNodes(currentIds)
           else copyNode(selectedNodeId)
-        } else if (e.key === 'x') {
+        } else if (getKeybindingForCommand('layers.cut')?.match(e)) {
           e.preventDefault()
           if (currentIds.length > 1) cutNodes(currentIds)
           else cutNode(selectedNodeId)
-        } else if (e.key === 'v') {
+        } else if (getKeybindingForCommand('layers.paste')?.match(e)) {
           e.preventDefault()
           // Paste anchors to the multi-selection's anchor — same single target.
           pasteNode(selectedNodeId)

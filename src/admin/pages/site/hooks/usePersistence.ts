@@ -41,6 +41,7 @@ import {
   readEditorSelectPreference,
   subscribeToEditorPrefsChanged,
 } from '@site/preferences/editorPreferences'
+import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 
 /**
  * Event dispatched by the Plugins admin page after a pack install (which
@@ -291,11 +292,14 @@ export function usePersistence(
   }, [enabled, saveCurrentSite])
 
   // ─── 3. Cmd/Ctrl+S — immediate save ───────────────────────────────────────
+  // Match predicate comes from the keybindings registry — single source of truth.
   useEffect(() => {
     if (!enabled) return undefined
 
+    const kbSave = getKeybindingForCommand('editor.save')
+
     async function handleKeyDown(e: KeyboardEvent) {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 's') return
+      if (!kbSave?.match(e)) return
       e.preventDefault()
 
       try {

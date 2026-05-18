@@ -28,7 +28,7 @@
 // order the sections render in (see PreferencesSection).
 // ---------------------------------------------------------------------------
 
-export type PreferenceCategory = 'editor' | 'layers' | 'canvas' | 'properties'
+export type PreferenceCategory = 'editor' | 'layers' | 'canvas' | 'properties' | 'spotlight'
 
 const PREFERENCE_CATEGORIES: ReadonlyArray<{
   id: PreferenceCategory
@@ -52,6 +52,11 @@ const PREFERENCE_CATEGORIES: ReadonlyArray<{
   {
     id: 'properties',
     label: 'Properties panel',
+  },
+  {
+    id: 'spotlight',
+    label: 'Command palette',
+    description: 'Settings for the ⌘K command palette.',
   },
 ]
 
@@ -248,6 +253,17 @@ export const PREFERENCE_CATALOG = [
     label: 'Smooth scroll on tab change',
     description: 'Animate the properties panel when switching between Style / Module / Component tabs.',
     default: true,
+  },
+
+  // ── Command palette (spotlight) ──────────────────────────────────────────
+  {
+    id: 'spotlightTelemetryEnabled',
+    type: 'boolean',
+    category: 'spotlight',
+    label: 'Track command usage (local only)',
+    description:
+      'Anonymously count which commands you run most often so the palette can surface them higher. Data never leaves this device.',
+    default: false,
   },
 ] as const satisfies ReadonlyArray<PreferenceDef>
 

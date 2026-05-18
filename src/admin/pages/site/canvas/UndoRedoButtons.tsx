@@ -9,13 +9,21 @@
  * - Buttons are ALWAYS rendered in the DOM — never conditionally removed.
  * - When unavailable: aria-disabled="true" + visual grey. NOT the `disabled` HTML attr.
  * - aria-keyshortcuts documents the keyboard shortcut for screen readers.
+ *
+ * Shortcut display strings come from the keybindings registry (keybindings.ts)
+ * — not hardcoded here.
  */
 import { useEffect } from 'react'
 import { useCanUndo, useCanRedo, useUndo, useRedo } from '@site/store/store'
 import { UndoIcon } from 'pixel-art-icons/icons/undo'
 import { RedoIcon } from 'pixel-art-icons/icons/redo'
 import { Button } from '@ui/components/Button'
+import { getKeybindingForCommand, formatShortcut } from '@admin/spotlight/keybindings'
 import styles from './CanvasNotch.module.css'
+
+// Resolve undo/redo bindings once at module load — they never change.
+const kbUndo = getKeybindingForCommand('editor.undo')
+const kbRedo = getKeybindingForCommand('editor.redo')
 
 export function UndoRedoButtons() {
   const canUndo = useCanUndo()
@@ -25,9 +33,6 @@ export function UndoRedoButtons() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      const isMod = e.metaKey || e.ctrlKey
-      if (!isMod) return
-
       const target = e.target as HTMLElement
       if (
         target.tagName === 'INPUT' ||
@@ -35,10 +40,15 @@ export function UndoRedoButtons() {
         target.isContentEditable
       ) return
 
-      if (e.key === 'z' && !e.shiftKey) {
+      if (kbUndo?.match(e)) {
         e.preventDefault()
         undo()
-      } else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+      } else if (kbRedo?.match(e)) {
+        e.preventDefault()
+        redo()
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
+        // Ctrl+Y is a Windows/Linux redo alias — not in the registry since
+        // ⌘⇧Z is the canonical binding, but handled here for convenience.
         e.preventDefault()
         redo()
       }
@@ -46,6 +56,10 @@ export function UndoRedoButtons() {
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [undo, redo])
+
+  // Shortcut labels from the registry — platform-aware.
+  const undoHint = kbUndo ? formatShortcut(kbUndo.shortcut) : ''
+  const redoHint = kbRedo ? formatShortcut(kbRedo.shortcut) : ''
 
   return (
     <div
@@ -59,10 +73,10 @@ export function UndoRedoButtons() {
         iconOnly
         className={styles.quickButton}
         aria-label="Undo"
-        aria-keyshortcuts="Meta+Z"
+        aria-keyshortcuts={kbUndo?.ariaKeyshortcuts}
         aria-disabled={!canUndo}
         onClick={canUndo ? undo : undefined}
-        tooltip="Undo (⌘Z)"
+        tooltip={undoHint ? `Undo (${undoHint})` : 'Undo'}
         data-testid="canvas-notch-undo-btn"
       >
         <UndoIcon size={14} aria-hidden="true" />
@@ -74,10 +88,10 @@ export function UndoRedoButtons() {
         iconOnly
         className={styles.quickButton}
         aria-label="Redo"
-        aria-keyshortcuts="Meta+Shift+Z"
+        aria-keyshortcuts={kbRedo?.ariaKeyshortcuts}
         aria-disabled={!canRedo}
         onClick={canRedo ? redo : undefined}
-        tooltip="Redo (⌘⇧Z)"
+        tooltip={redoHint ? `Redo (${redoHint})` : 'Redo'}
         data-testid="canvas-notch-redo-btn"
       >
         <RedoIcon size={14} aria-hidden="true" />
