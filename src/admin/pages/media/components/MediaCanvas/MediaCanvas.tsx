@@ -229,13 +229,15 @@ export function MediaCanvas({ workspace }: MediaCanvasProps) {
   const showingTotal = workspace.assets.length
   const showingMatching = visibleAssets.length
 
+  // The big EmptyState below carries the message whenever `showingMatching === 0`,
+  // so the status bar only narrates the non-empty cases (count, loading, error).
+  // Anything else would render two empty-state messages on top of each other.
   const headerLabel = useMemo(() => {
     if (workspace.loading) return 'Loading…'
     if (workspace.error) return workspace.error
-    if (showingMatching === 0 && showingTotal > 0) return 'No matching media'
-    if (showingMatching === 0) return trashView ? 'Trash is empty' : 'No media yet'
+    if (showingMatching === 0) return null
     return `${showingMatching} ${showingMatching === 1 ? 'item' : 'items'}`
-  }, [workspace.loading, workspace.error, showingTotal, showingMatching, trashView])
+  }, [workspace.loading, workspace.error, showingMatching])
 
   return (
     <section
@@ -307,17 +309,31 @@ export function MediaCanvas({ workspace }: MediaCanvasProps) {
         />
       </header>
 
-      <div className={styles.statusBar} role="status" aria-live="polite">
-        {headerLabel}
-      </div>
+      {headerLabel !== null && (
+        <div className={styles.statusBar} role="status" aria-live="polite">
+          {headerLabel}
+        </div>
+      )}
 
       <div className={styles.body}>
         {showingMatching === 0 ? (
           <EmptyState
             variant="centered"
             icon={<ImagesSolidIcon size={28} />}
-            title={trashView ? 'Trash is empty' : 'No media yet'}
-            description={trashView ? 'Soft-deleted assets show up here.' : 'Drag files into this window or click Upload.'}
+            title={
+              trashView
+                ? 'Trash is empty'
+                : showingTotal > 0
+                  ? 'No matching media'
+                  : 'No media yet'
+            }
+            description={
+              trashView
+                ? 'Soft-deleted assets show up here.'
+                : showingTotal > 0
+                  ? 'Try a different search or filter.'
+                  : 'Drag files into this window or click Upload.'
+            }
           />
         ) : viewMode === 'grid' ? (
           <ul className={styles.grid} role="list" data-testid="media-grid">
