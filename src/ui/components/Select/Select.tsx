@@ -1,9 +1,6 @@
 import {
-  Children,
   forwardRef,
-  isValidElement,
   useCallback,
-  useEffect,
   useId,
   useMemo,
   useRef,
@@ -11,43 +8,27 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
   type MouseEvent,
-  type OptionHTMLAttributes,
-  type ReactElement,
   type ReactNode,
   type Ref,
-  type RefObject,
   type SelectHTMLAttributes,
 } from 'react'
-import { createPortal } from 'react-dom'
-import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { ChevronDownIcon } from 'pixel-art-icons/icons/chevron-down'
 import { cn } from '@ui/cn'
 import styles from './Select.module.css'
+import {
+  getInitialActiveIndex,
+  getOptionId,
+  isEnabledOptionIndex,
+  normalizeOptions,
+  type SelectOption,
+} from './SelectOption'
+import { useSelectMenuAnchor, type MenuPlacement } from './useSelectMenuAnchor'
+import { useSelectValue } from './useSelectValue'
+import { handleSelectKeyDown } from './selectKeyboard'
+import { SelectMenu } from './SelectMenu'
 
 type FieldSize = 'xs' | 'sm' | 'md'
 type TextEmphasis = 'default' | 'strong'
-type MenuPlacement = 'bottom-start' | 'left-start'
-
-interface SelectOption {
-  value: string | number
-  label: ReactNode
-  textValue?: string
-  icon?: ReactNode
-  disabled?: boolean
-}
-
-interface NormalizedSelectOption {
-  value: string
-  label: ReactNode
-  textValue: string
-  icon?: ReactNode
-  disabled?: boolean
-}
-
-interface MenuSizing {
-  width: number
-  minWidth: number
-}
 
 interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'size'> {
   invalid?: boolean
@@ -70,7 +51,7 @@ interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'siz
    * Ignored when `menuPlacement === 'left-start'` (left-anchored placement
    * needs trigger-relative coordinates to stay aligned with the trigger row).
    */
-  menuAnchorRef?: RefObject<HTMLElement | null>
+  menuAnchorRef?: React.RefObject<HTMLElement | null>
   options?: SelectOption[]
   placeholder?: string
   'data-testid'?: string
@@ -105,46 +86,27 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
   const generatedId = useId()
   const triggerId = id ?? `select-${generatedId}`
   const menuId = `${triggerId}-menu`
+
   const normalizedOptions = useMemo(
     () => normalizeOptions(options, children),
     [options, children],
   )
-  const firstValue = normalizedOptions[0]?.value ?? ''
-  const isControlled = value !== undefined
-  const [internalValue, setInternalValue] = useState(() => {
-    return stringifySelectValue(defaultValue ?? firstValue)
-  })
+
+  const {
+    isControlled,
+    selectedValue,
+    selectedOption,
+    selectedText,
+    showPlaceholder,
+    setInternalValue,
+  } = useSelectValue({ value, defaultValue, placeholder, normalizedOptions })
+
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
-  const [menuSizing, setMenuSizing] = useState<MenuSizing | null>(null)
 
   const nativeSelectRef = useRef<HTMLSelectElement | null>(null)
   const selectRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLInputElement | null>(null)
-
-  const rawSelectedValue = stringifySelectValue(isControlled ? value : internalValue)
-  const selectedValue = normalizedOptions.some((option) => option.value === rawSelectedValue)
-    ? rawSelectedValue
-    : firstValue
-  const selectedOption =
-    normalizedOptions.find((option) => option.value === selectedValue) ??
-    normalizedOptions[0]
-  const showPlaceholder = rawSelectedValue === '' && hasTextValue(placeholder)
-  const selectedText = showPlaceholder ? '' : (selectedOption?.textValue ?? '')
-  const resolvedActiveIndex =
-    open && isEnabledOptionIndex(normalizedOptions, activeIndex)
-      ? activeIndex
-      : getInitialActiveIndex(normalizedOptions, selectedValue)
-  const activeOptionId =
-    open && resolvedActiveIndex >= 0 ? getOptionId(menuId, resolvedActiveIndex) : undefined
-
-  const setSelectRef = useCallback(
-    (node: HTMLSelectElement | null) => {
-      nativeSelectRef.current = node
-      assignRef(ref, node)
-    },
-    [ref],
-  )
 
   // The dropdown's dismiss anchor is ALWAYS the Select's own wrapper —
   // not a wider parent the caller may pass via `menuAnchorRef`. This is
@@ -163,63 +125,35 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
   // `menuSizing.width` prop — both used purely for layout.
   const resolvedAnchorRef = useRef<HTMLElement | null>(null)
 
-  // Compose the rect ContextMenu uses for floating-position math. When the
-  // dropdown is anchored to a wider parent (`menuAnchorRef`), horizontal
-  // extent (left/right/width) comes from the wider parent so the menu can
-  // span past the narrow trigger cell and show full option labels — but
-  // vertical extent (top/bottom/height) keeps coming from the trigger so
-  // the menu opens directly below the field instead of below the entire
-  // wider parent. When no wider anchor is set, this falls through to the
-  // trigger's own rect (identical behaviour to a plain anchored menu).
-  const getAnchorRect = useCallback((): DOMRect | null => {
-    const triggerRect = selectRef.current?.getBoundingClientRect()
-    if (!triggerRect) return null
-    if (menuPlacement === 'left-start' || !menuAnchorRef?.current) {
-      return triggerRect
-    }
-    const wideRect = menuAnchorRef.current.getBoundingClientRect()
-    const left = wideRect.left
-    const right = wideRect.right
-    const width = wideRect.width
-    const top = triggerRect.top
-    const bottom = triggerRect.bottom
-    const height = triggerRect.height
-    return {
-      left,
-      right,
-      width,
-      top,
-      bottom,
-      height,
-      x: left,
-      y: top,
-      toJSON() {
-        return { left, right, width, top, bottom, height, x: left, y: top }
-      },
-    } as DOMRect
-  }, [menuAnchorRef, menuPlacement])
+  const { menuSizing, getAnchorRect, updateMenuSizing, clearMenuSizing } = useSelectMenuAnchor({
+    open,
+    menuPlacement,
+    menuAnchorRef,
+    menuMinWidth,
+    selectRef,
+  })
 
-  const updateMenuSizing = useCallback(() => {
-    // Width comes from the wider parent when provided (so long option
-    // labels stay readable past the narrow trigger cell); otherwise from
-    // the trigger itself.
-    const widthAnchor =
-      menuPlacement !== 'left-start' && menuAnchorRef?.current
-        ? menuAnchorRef.current
-        : selectRef.current
-    if (!widthAnchor) return
-    const anchorRect = widthAnchor.getBoundingClientRect()
-    const resolvedMinWidth = menuMinWidth ?? anchorRect.width
-    const resolvedWidth = Math.max(anchorRect.width, resolvedMinWidth)
-    setMenuSizing({ width: resolvedWidth, minWidth: resolvedMinWidth })
-  }, [menuAnchorRef, menuMinWidth, menuPlacement])
+  const resolvedActiveIndex =
+    open && isEnabledOptionIndex(normalizedOptions, activeIndex)
+      ? activeIndex
+      : getInitialActiveIndex(normalizedOptions, selectedValue)
+  const activeOptionId =
+    open && resolvedActiveIndex >= 0 ? getOptionId(menuId, resolvedActiveIndex) : undefined
+
+  const setSelectRef = useCallback(
+    (node: HTMLSelectElement | null) => {
+      nativeSelectRef.current = node
+      assignRef(ref, node)
+    },
+    [ref],
+  )
 
   const closeMenu = useCallback(() => {
     setOpen(false)
     setActiveIndex(-1)
-    setMenuSizing(null)
+    clearMenuSizing()
     resolvedAnchorRef.current = null
-  }, [])
+  }, [clearMenuSizing])
 
   const openMenu = useCallback(() => {
     if (disabled) return
@@ -230,19 +164,6 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
     setActiveIndex(getInitialActiveIndex(normalizedOptions, selectedValue))
     setOpen(true)
   }, [disabled, normalizedOptions, selectedValue, updateMenuSizing])
-
-  useEffect(() => {
-    if (!open) return
-    function handleViewportChange() {
-      updateMenuSizing()
-    }
-    window.addEventListener('resize', handleViewportChange)
-    window.addEventListener('scroll', handleViewportChange, true)
-    return () => {
-      window.removeEventListener('resize', handleViewportChange)
-      window.removeEventListener('scroll', handleViewportChange, true)
-    }
-  }, [open, updateMenuSizing])
 
   const commitValue = useCallback(
     (nextValue: string) => {
@@ -258,7 +179,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       } as ChangeEvent<HTMLSelectElement>)
       requestAnimationFrame(() => triggerRef.current?.focus())
     },
-    [closeMenu, disabled, isControlled, name, onChange],
+    [closeMenu, disabled, isControlled, name, onChange, setInternalValue],
   )
 
   function handleNativeChange(event: ChangeEvent<HTMLSelectElement>) {
@@ -299,50 +220,15 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
   }
 
   function handleTriggerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    switch (event.key) {
-      case 'ArrowDown':
-        event.preventDefault()
-        if (!open) {
-          openMenu()
-        } else {
-          setActiveIndex(getNextEnabledOptionIndex(normalizedOptions, resolvedActiveIndex, 1))
-        }
-        break
-      case 'ArrowUp':
-        event.preventDefault()
-        if (!open) {
-          openMenu()
-        } else {
-          setActiveIndex(getNextEnabledOptionIndex(normalizedOptions, resolvedActiveIndex, -1))
-        }
-        break
-      case 'Home':
-        if (!open) return
-        event.preventDefault()
-        setActiveIndex(getFirstEnabledOptionIndex(normalizedOptions))
-        break
-      case 'End':
-        if (!open) return
-        event.preventDefault()
-        setActiveIndex(getLastEnabledOptionIndex(normalizedOptions))
-        break
-      case 'Enter':
-      case ' ':
-        event.preventDefault()
-        if (!open) {
-          openMenu()
-        } else if (isEnabledOptionIndex(normalizedOptions, resolvedActiveIndex)) {
-          commitValue(normalizedOptions[resolvedActiveIndex].value)
-        }
-        break
-      case 'Escape':
-        event.preventDefault()
-        closeMenu()
-        break
-      case 'Tab':
-        closeMenu()
-        break
-    }
+    handleSelectKeyDown(event, {
+      open,
+      options: normalizedOptions,
+      activeIndex: resolvedActiveIndex,
+      setActiveIndex,
+      openMenu,
+      closeMenu,
+      commitValue,
+    })
   }
 
   return (
@@ -413,46 +299,22 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
         <ChevronDownIcon size={12} />
       </span>
 
-      {open && menuSizing && createPortal(
-        <ContextMenu
-          id={menuId}
+      {open && menuSizing && (
+        <SelectMenu
+          menuId={menuId}
           anchorRef={resolvedAnchorRef}
           getAnchorRect={getAnchorRect}
-          side={menuPlacement === 'left-start' ? 'left' : 'auto'}
-          align="start"
-          offset={6}
-          width={menuSizing.width}
-          minWidth={menuSizing.minWidth}
-          zIndex={10000}
-          ariaLabel={ariaLabel ?? 'Select option'}
-          aria-labelledby={ariaLabelledBy}
-          role="listbox"
+          menuPlacement={menuPlacement}
+          menuSizing={menuSizing}
+          ariaLabel={ariaLabel}
+          ariaLabelledBy={ariaLabelledBy}
+          options={normalizedOptions}
+          activeIndex={resolvedActiveIndex}
+          selectedValue={selectedValue}
+          onHover={setActiveIndex}
+          onSelect={commitValue}
           onClose={closeMenu}
-        >
-          {normalizedOptions.map((option, index) => (
-            <ContextMenuItem
-              key={option.value}
-              id={getOptionId(menuId, index)}
-              active={index === resolvedActiveIndex}
-              role="option"
-              aria-selected={option.value === selectedValue}
-              disabled={option.disabled}
-              tabIndex={-1}
-              onMouseEnter={() => {
-                if (!option.disabled) setActiveIndex(index)
-              }}
-              onClick={() => commitValue(option.value)}
-            >
-              {option.icon && (
-                <span aria-hidden="true">
-                  {option.icon}
-                </span>
-              )}
-              <span className={styles.optionLabel}>{option.label}</span>
-            </ContextMenuItem>
-          ))}
-        </ContextMenu>,
-        document.body,
+        />
       )}
     </div>
   )
@@ -465,97 +327,6 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
   } else {
     ref.current = value
   }
-}
-
-function stringifySelectValue(value: unknown): string {
-  if (Array.isArray(value)) return stringifySelectValue(value[0])
-  if (value === undefined || value === null) return ''
-  return String(value)
-}
-
-function hasTextValue(value: unknown): value is string {
-  return typeof value === 'string' && value !== ''
-}
-
-function normalizeOptions(options: SelectOption[] | undefined, children: ReactNode): NormalizedSelectOption[] {
-  if (options) {
-    return options.map((option) => ({
-      ...option,
-      value: stringifySelectValue(option.value),
-      textValue: option.textValue ?? getNodeText(option.label),
-    }))
-  }
-  return Children.toArray(children).flatMap(optionFromChild)
-}
-
-function optionFromChild(child: ReactNode): NormalizedSelectOption[] {
-  if (!isValidElement(child)) return []
-  if (child.type === 'optgroup') {
-    const props = child.props as { children?: ReactNode }
-    return Children.toArray(props.children).flatMap(optionFromChild)
-  }
-  if (child.type !== 'option') return []
-
-  const option = child as ReactElement<OptionHTMLAttributes<HTMLOptionElement>>
-  const textValue = getNodeText(option.props.children)
-  return [{
-    value: stringifySelectValue(option.props.value ?? textValue),
-    label: option.props.children,
-    textValue,
-    disabled: option.props.disabled,
-  }]
-}
-
-function getOptionId(menuId: string, index: number) {
-  return `${menuId}-option-${index}`
-}
-
-function isEnabledOptionIndex(options: NormalizedSelectOption[], index: number) {
-  return index >= 0 && index < options.length && !options[index].disabled
-}
-
-function getFirstEnabledOptionIndex(options: NormalizedSelectOption[]) {
-  return options.findIndex((option) => !option.disabled)
-}
-
-function getLastEnabledOptionIndex(options: NormalizedSelectOption[]) {
-  for (let index = options.length - 1; index >= 0; index--) {
-    if (!options[index].disabled) return index
-  }
-  return -1
-}
-
-function getInitialActiveIndex(options: NormalizedSelectOption[], selectedValue: string) {
-  const selectedIndex = options.findIndex(
-    (option) => option.value === selectedValue && !option.disabled,
-  )
-  return selectedIndex >= 0 ? selectedIndex : getFirstEnabledOptionIndex(options)
-}
-
-function getNextEnabledOptionIndex(
-  options: NormalizedSelectOption[],
-  currentIndex: number,
-  direction: 1 | -1,
-) {
-  if (options.length === 0) return -1
-  const startIndex = currentIndex >= 0 ? currentIndex : direction > 0 ? -1 : options.length
-
-  for (let step = 1; step <= options.length; step++) {
-    const nextIndex = (startIndex + direction * step + options.length) % options.length
-    if (!options[nextIndex].disabled) return nextIndex
-  }
-
-  return -1
-}
-
-function getNodeText(node: ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  if (Array.isArray(node)) return node.map(getNodeText).join('')
-  if (isValidElement(node)) {
-    const props = node.props as { children?: ReactNode }
-    return getNodeText(props.children)
-  }
-  return ''
 }
 
 function SelectIcon({ icon }: { icon: ReactNode }) {
