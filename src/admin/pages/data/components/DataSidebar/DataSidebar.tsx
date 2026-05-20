@@ -5,17 +5,22 @@
  * Uses the canonical Panel primitive for the inner panel slot — consistent
  * with the site editor's docked panels. The outer <aside> (rail + resize
  * handle) follows the LeftSidebar layout pattern.
+ *
+ * Export and Import buttons delegate to the parent via `onOpenExport` /
+ * `onOpenImport` callbacks — the dialogs themselves live in DataPage.
  */
 import { useRef, type CSSProperties } from 'react'
 import { Button } from '@ui/components/Button'
 import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
+import { ArrowDownIcon } from 'pixel-art-icons/icons/arrow-down'
+import { UploadIcon } from 'pixel-art-icons/icons/upload'
 import { useEditorStore } from '@site/store/store'
 import { Panel } from '@admin/shared/Panel'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 import leftSidebarStyles from '@site/sidebars/LeftSidebar/LeftSidebar.module.css'
 import panelRailStyles from '@site/sidebars/PanelRail/PanelRail.module.css'
-import type { DataTable } from '@core/data/schemas'
+import type { DataTableListItem } from '@core/data/schemas'
 import styles from './DataSidebar.module.css'
 
 // ---------------------------------------------------------------------------
@@ -23,12 +28,18 @@ import styles from './DataSidebar.module.css'
 // ---------------------------------------------------------------------------
 
 export interface DataSidebarProps {
-  tables: DataTable[]
+  // TODO: each table now carries `rowCount` — consider rendering a count chip
+  // next to the kind badge once the sidebar layout has a natural slot for it.
+  tables: DataTableListItem[]
   loading: boolean
   error: string | null
   selectedTableId: string | null
   onSelectTable: (tableId: string) => void
   onCreateTable: () => void
+  /** Opens the ExportDialog in the parent. */
+  onOpenExport: () => void
+  /** Opens the ImportDialog in the parent. */
+  onOpenImport: () => void
   canCreate: boolean
 }
 
@@ -43,6 +54,8 @@ export function DataSidebar({
   selectedTableId,
   onSelectTable,
   onCreateTable,
+  onOpenExport,
+  onOpenImport,
   canCreate,
 }: DataSidebarProps) {
   const sidebarRef = useRef<HTMLElement | null>(null)
@@ -140,26 +153,43 @@ export function DataSidebar({
                     <DatabaseSolidIcon size={13} aria-hidden="true" />
                     <span className={styles.tableLabel}>{table.pluralLabel}</span>
                     <span className={styles.kindBadge}>
-                      {table.kind === 'postType' ? 'post-type' : 'data'}
+                      {table.kind === 'postType' ? 'post-type'
+                        : table.kind === 'page' ? 'page'
+                        : table.kind === 'component' ? 'component'
+                        : 'data'}
                     </span>
                   </Button>
                 )
               })}
             </div>
 
-            {canCreate && (
-              <div className={styles.footer}>
+            {/* Action footer — create table + export/import */}
+            <div className={styles.footer}>
+              {canCreate && (
                 <Button
                   variant="primary"
                   size="sm"
                   fullWidth
                   onClick={onCreateTable}
+                  className={styles.footerButton}
                 >
                   <PlusIcon size={12} aria-hidden="true" />
                   <span>New table</span>
                 </Button>
+              )}
+
+              <div className={styles.transferActions}>
+                <Button variant="ghost" size="sm" fullWidth onClick={onOpenExport}>
+                  <ArrowDownIcon size={12} aria-hidden="true" />
+                  <span>Export site</span>
+                </Button>
+
+                <Button variant="ghost" size="sm" fullWidth onClick={onOpenImport}>
+                  <UploadIcon size={12} aria-hidden="true" />
+                  <span>Import site</span>
+                </Button>
               </div>
-            )}
+            </div>
           </Panel>
         </div>
       </div>
