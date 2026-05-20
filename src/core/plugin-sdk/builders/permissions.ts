@@ -29,6 +29,9 @@ export const permissions = {
   frontendTracker: 'frontend.tracker',
   networkOutbound: 'network.outbound',
   cmsSchedule: 'cms.schedule',
+  mediaStorageAdapter: 'media.storage.adapter',
+  mediaUrlTransform: 'media.url.transform',
+  mediaVariantDelegate: 'media.variant.delegate',
   unstableInternals: 'unstable.internals',
 } as const satisfies Record<string, PluginPermission>
 

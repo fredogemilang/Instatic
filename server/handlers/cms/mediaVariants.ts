@@ -11,8 +11,12 @@
  *      original width. The set covers the common breakpoints we serve plus
  *      a tiny 64-wide thumb the admin grid + picker use.
  *
- * All variant files live next to the original under `/uploads/`, named
- * `<originalStem>-w<width>.webp`. Each row is stored in `variants_json`.
+ * Variant bytes are streamed to the storage adapter elected for the
+ * `'variant'` role via `dispatchUpload(role: 'variant')`. The default
+ * local-disk adapter writes each WebP next to the original under
+ * `<uploadsDir>/<originalStem>-w<width>.webp`. A plugin storage adapter
+ * (S3, R2, …) routes variants to its own backend without any change in
+ * this pipeline — that's the point of dispatch.
  *
  * Why synchronous? Sharp + libvips processes a typical 4 MP JPEG into the
  * full ladder in ~200–500 ms. We already block the upload response on the
@@ -21,10 +25,11 @@
  * transition. If real-world uploads cross multi-second territory we move
  * this to a background job (out of scope for v1).
  */
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import sharp from 'sharp'
 import { encode as encodeBlurHash } from 'blurhash'
+import type { DbClient } from '../../db/client'
+import { dispatchDelete, dispatchUpload } from './mediaUploadDispatch'
+import { getElectedVariantDelegate, type ElectedVariantDelegate } from '../../repositories/mediaStorageAdapters'
 
 /**
  * Target widths for the responsive variant ladder. Chosen to cover the
@@ -61,6 +66,10 @@ export interface MediaVariantRecord {
   format: 'webp'
   path: string
   sizeBytes: number
+  /** Adapter-internal storage handle — used by the delete dispatch path. */
+  storagePath: string
+  /** Adapter id that wrote this variant; `''` for local-disk. */
+  storageAdapterId: string
 }
 
 export interface ImageProcessingResult {
@@ -83,7 +92,8 @@ function variantStorageBase(storagePath: string): string {
 /**
  * Generate the full responsive ladder for an uploaded image. Returns the
  * probed dimensions, the BlurHash placeholder, and the list of variant
- * files written to disk.
+ * records — each variant has been streamed to the elected `'variant'`
+ * storage adapter by this point (default local-disk).
  *
  * On any non-image input (GIF, SVG — though we don't accept SVG today) or
  * on any sharp failure, returns `null` so the caller falls back to a plain
@@ -91,9 +101,10 @@ function variantStorageBase(storagePath: string): string {
  * still renders fine without variants, it just loads the original.
  */
 export async function processImageVariants(
+  db: DbClient,
   bytes: Uint8Array,
-  storagePath: string,
-  uploadsDir: string,
+  /** storagePath of the parent original — used to derive variant filenames. */
+  parentStoragePath: string,
 ): Promise<ImageProcessingResult | null> {
   try {
     // Pull intrinsic dimensions first. `sharp.metadata()` is cheap (header
@@ -127,24 +138,49 @@ export async function processImageVariants(
     )
 
     // ── Variant ladder ───────────────────────────────────────────────────
-    // Skip any target width ≥ the original — upscaling is wasteful and
-    // makes the published markup misleading.
-    const base = variantStorageBase(storagePath)
+    // If a Tier-3 variant delegate is elected, we SKIP local sharp resizing
+    // entirely and emit URL-template variants pointing at the delegate's
+    // service (Cloudflare Images / Imgix / Bunny Optimizer / …). No bytes
+    // are produced or stored for variants in that case.
+    //
+    // Otherwise we run the local ladder, streaming each WebP through
+    // `dispatchUpload(role: 'variant')` so plugin storage adapters get
+    // bytes for variants the same way they do for originals.
+    const delegate = await getElectedVariantDelegate(db)
+    if (delegate) {
+      const variants = buildDelegateVariants(delegate, parentStoragePath, originalWidth, originalHeight)
+      return {
+        width: originalWidth,
+        height: originalHeight,
+        blurHash,
+        variants,
+      }
+    }
+
+    const base = variantStorageBase(parentStoragePath)
     const variants: MediaVariantRecord[] = []
     for (const width of TARGET_WIDTHS) {
       if (width >= originalWidth) continue
-      const outPath = `${base}-w${width}.webp`
+      const suggested = `${base}-w${width}.webp`
       const variantBytes = await sharp(bytes)
         .resize({ width, withoutEnlargement: true })
         .webp({ quality: WEBP_QUALITY })
         .toBuffer({ resolveWithObject: true })
-      await writeFile(join(uploadsDir, outPath), variantBytes.data)
+      const dispatched = await dispatchUpload(db, {
+        bytes: new Uint8Array(variantBytes.data),
+        mimeType: 'image/webp',
+        suggestedStoragePath: suggested,
+        role: 'variant',
+        variantOf: parentStoragePath,
+      })
       variants.push({
         width: variantBytes.info.width,
         height: variantBytes.info.height,
         format: 'webp',
-        path: `/uploads/${outPath}`,
+        path: dispatched.publicUrl,
         sizeBytes: variantBytes.data.byteLength,
+        storagePath: dispatched.storagePath,
+        storageAdapterId: dispatched.storageAdapterId,
       })
     }
 
@@ -161,27 +197,117 @@ export async function processImageVariants(
 }
 
 /**
- * Remove on-disk variant files for an asset that's being purged or
- * replaced. Caller passes the variants array from the row; we delete each
- * file's storage_path (the `/uploads/` public prefix is stripped first).
+ * Compute the original public path the delegate template targets. Locally-
+ * hosted originals live at `/uploads/<storagePath>`; the delegate's URL
+ * template substitutes `{path}` with this value to construct the variant
+ * URL. For externally-hosted originals the absolute URL would be the
+ * proper substitution, but the variant pipeline doesn't currently know
+ * the original's `public_path` — passing `/uploads/<storage>` is the
+ * conservative choice that matches what the host's static handler serves.
+ */
+function originPathForDelegate(parentStoragePath: string): string {
+  return parentStoragePath.startsWith('/')
+    ? parentStoragePath
+    : `/uploads/${parentStoragePath}`
+}
+
+/**
+ * Substitute the delegate's URL template placeholders. The template is
+ * declared once at plugin registration and is the same for every variant
+ * (only width / format / quality / path vary), so this is a cheap string
+ * replace — no JIT, no eval.
  *
- * Accepts any `{ path: string }` so the repo's broader `MediaVariant`
- * union (with future jpeg/png/avif formats) can flow through unchanged.
+ * Supported placeholders: `{path}`, `{width}`, `{format}`, `{quality}`,
+ * `{originalMime}` (matches the SDK's `MediaVariantDelegate` JSDoc).
+ */
+function fillDelegateTemplate(
+  template: string,
+  vars: { path: string; width: number; format: string; quality: number; originalMime: string },
+): string {
+  return template
+    .replaceAll('{path}', vars.path)
+    .replaceAll('{width}', String(vars.width))
+    .replaceAll('{format}', vars.format)
+    .replaceAll('{quality}', String(vars.quality))
+    .replaceAll('{originalMime}', vars.originalMime)
+}
+
+/**
+ * Materialise the delegate's variant ladder. `sizeBytes` is `0` for every
+ * entry because we never produced the bytes — the delegate generates the
+ * variant on demand at the CDN edge. Consumers that depend on
+ * `sizeBytes` for prefetch budgeting will treat a `0` as "unknown" (the
+ * UI already does for non-image MIMEs).
+ */
+function buildDelegateVariants(
+  delegate: ElectedVariantDelegate,
+  parentStoragePath: string,
+  originalWidth: number,
+  originalHeight: number,
+): MediaVariantRecord[] {
+  const aspect = originalHeight > 0 ? originalHeight / originalWidth : 1
+  // The variant ladder is one entry per (width, format) pair — but we
+  // only emit ONE format per width to keep `srcset` lean. Picking the
+  // first declared format (typically 'webp' or 'avif') matches the
+  // strategy of every image-CDN: serve the modern format unless the
+  // browser explicitly opts out via Accept headers.
+  const format = delegate.formats[0] ?? 'webp'
+  const path = originPathForDelegate(parentStoragePath)
+  const out: MediaVariantRecord[] = []
+  for (const width of delegate.widths) {
+    if (width >= originalWidth) continue
+    const url = fillDelegateTemplate(delegate.variantUrlTemplate, {
+      path,
+      width,
+      format,
+      quality: 80,
+      originalMime: 'image/jpeg',
+    })
+    out.push({
+      width,
+      height: Math.round(width * aspect),
+      // The format literal is widened to `'webp'` because the on-disk
+      // emitter only ever wrote webp; the SDK shape accepts `webp | jpeg
+      // | avif`, and storing the actual delegate format keeps the
+      // renderer's `<picture>` emission honest.
+      format: format as 'webp',
+      path: url,
+      sizeBytes: 0,
+      // Variants emitted by the delegate aren't backed by host-stored
+      // bytes — they live entirely on the delegate's CDN. We label them
+      // with the delegate id so the delete path knows they're virtual
+      // (and the prefix `delegate:` keeps the field's "namespaced adapter
+      // id" semantics intact).
+      storagePath: `delegate:${delegate.delegateId}`,
+      storageAdapterId: `delegate:${delegate.delegateId}`,
+    })
+  }
+  return out
+}
+
+/**
+ * Remove the underlying bytes for every variant in `variants` via the
+ * adapter that wrote each one. Variants written by an adapter that's
+ * since been disabled are logged and skipped — bytes remain in the
+ * backend (the user can clean them up out-of-band or wait for a future
+ * orphan-sweep job).
  *
  * Failures are non-fatal — the database row removal has already succeeded.
- * Orphaned files just sit in `uploads/` until a future GC sweeps them.
+ * Orphaned files just sit in the backend until a future GC sweeps them.
  */
 export async function removeVariantFiles(
-  variants: ReadonlyArray<{ path: string }>,
-  uploadsDir: string,
+  variants: ReadonlyArray<{ storagePath: string; storageAdapterId: string }>,
 ): Promise<void> {
-  const { rm } = await import('node:fs/promises')
   for (const variant of variants) {
-    // The `path` is the public URL form (`/uploads/xxx-w320.webp`); the
-    // on-disk filename is everything after `/uploads/`.
-    const storageName = variant.path.startsWith('/uploads/')
-      ? variant.path.slice('/uploads/'.length)
-      : variant.path
-    await rm(join(uploadsDir, storageName), { force: true })
+    // Virtual variants emitted by a Tier-3 delegate (Cloudflare Images
+    // etc.) aren't backed by host-stored bytes — the delegate generates
+    // them on demand at the CDN edge — so there's nothing to delete.
+    // Their storage_adapter_id carries the `delegate:` prefix as a tag.
+    if (variant.storageAdapterId.startsWith('delegate:')) continue
+    try {
+      await dispatchDelete(variant.storageAdapterId, variant.storagePath)
+    } catch (err) {
+      console.error('[mediaVariants] variant delete failed (orphaned bytes):', err)
+    }
   }
 }

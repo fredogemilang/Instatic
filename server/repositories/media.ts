@@ -4,8 +4,22 @@ export interface MediaVariant {
   width: number
   height: number
   format: 'webp' | 'jpeg' | 'png' | 'avif'
+  /**
+   * Public URL the renderer emits (`/uploads/<storage>` for local; an
+   * absolute URL like `https://cdn.example.com/...` for `'public-url'`
+   * adapters; `/uploads/<storage>` again for `'signed-redirect'` /
+   * `'proxy'` adapters because the router resolves them on request).
+   */
   path: string
   sizeBytes: number
+  /**
+   * Adapter-internal storage handle. For local-disk this is the basename
+   * under `uploadsDir`; for S3 it's the bucket key. Used by `dispatchDelete`
+   * to remove the right bytes when the asset is purged.
+   */
+  storagePath: string
+  /** Adapter id that wrote this variant; `''` for the built-in local-disk adapter. */
+  storageAdapterId: string
 }
 
 export interface MediaAsset {
@@ -30,6 +44,19 @@ export interface MediaAsset {
   blurHash: string | null
   variants: MediaVariant[]
   posterPath: string | null
+  /**
+   * Id of the storage adapter that wrote this asset. Empty string for the
+   * built-in local-disk adapter (historical assets keep this default).
+   * Reads dispatch through THIS field, not the currently-elected adapter,
+   * so an election swap can't strand existing rows.
+   */
+  storageAdapterId: string
+  /**
+   * True when the bytes live outside the host's uploads dir
+   * (servingMode `'public-url'`). The hard-delete path uses this to choose
+   * between local `rm` and `adapter.delete()`.
+   */
+  externallyHosted: boolean
 }
 
 interface CreateMediaAssetInput {
@@ -40,6 +67,10 @@ interface CreateMediaAssetInput {
   storagePath: string
   publicPath: string
   uploadedByUserId: string | null
+  /** Empty string = local-disk; otherwise the namespaced adapter id. */
+  storageAdapterId: string
+  /** True when this row's bytes are stored outside the host's uploads dir. */
+  externallyHosted: boolean
 }
 
 export interface UpdateMediaAssetMetadataInput {
@@ -71,6 +102,9 @@ interface MediaAssetRow {
   blur_hash: string | null
   variants_json: unknown
   poster_path: string | null
+  storage_adapter_id: string
+  /** PG: boolean; SQLite: integer 0/1. Read via Boolean(row.externally_hosted). */
+  externally_hosted: boolean | number
 }
 
 interface DeletedMediaAssetRow {
@@ -101,6 +135,13 @@ function parseVariants(value: unknown): MediaVariant[] {
   // already; the runtime check here is defense against a hand-edited row.
   // Anything that isn't a well-shaped variant gets dropped silently — the
   // asset still serves its original file, just without the responsive ladder.
+  //
+  // `storagePath` / `storageAdapterId` were added when the media subsystem
+  // grew pluggable storage adapters. Older rows without them are derived:
+  // `storagePath` from `path` (stripping `/uploads/`), `storageAdapterId`
+  // to `''` (local-disk). This is the canonical derivation — not a band-aid
+  // — because old rows were always written by the local-disk adapter and
+  // their storagePath is structurally `path.slice('/uploads/'.length)`.
   const raw: unknown = Array.isArray(value)
     ? value
     : typeof value === 'string'
@@ -114,12 +155,20 @@ function parseVariants(value: unknown): MediaVariant[] {
     if (typeof e.width !== 'number' || typeof e.height !== 'number') continue
     if (typeof e.path !== 'string' || typeof e.sizeBytes !== 'number') continue
     if (e.format !== 'webp' && e.format !== 'jpeg' && e.format !== 'png' && e.format !== 'avif') continue
+    const storagePath = typeof e.storagePath === 'string' && e.storagePath
+      ? e.storagePath
+      : e.path.startsWith('/uploads/')
+        ? e.path.slice('/uploads/'.length)
+        : e.path
+    const storageAdapterId = typeof e.storageAdapterId === 'string' ? e.storageAdapterId : ''
     result.push({
       width: e.width,
       height: e.height,
       format: e.format,
       path: e.path,
       sizeBytes: e.sizeBytes,
+      storagePath,
+      storageAdapterId,
     })
   }
   return result
@@ -154,6 +203,8 @@ function mapMediaAsset(row: MediaAssetRow, folderIds: string[] = []): MediaAsset
     blurHash: row.blur_hash ?? null,
     variants: parseVariants(row.variants_json),
     posterPath: row.poster_path ?? null,
+    storageAdapterId: row.storage_adapter_id ?? '',
+    externallyHosted: Boolean(row.externally_hosted),
   }
 }
 
@@ -197,8 +248,15 @@ export async function createMediaAsset(
   db: DbClient,
   input: CreateMediaAssetInput,
 ): Promise<MediaAsset> {
+  // SQLite cross-dialect note: boolean values pass through Bun's tagged
+  // template as `true`/`false` for Postgres but need 1/0 for SQLite. The
+  // SQLite adapter (`server/db/sqlite.ts`) handles this coercion centrally
+  // — passing a JS boolean here works against both engines.
   const { rows } = await db<MediaAssetRow>`
-    insert into media_assets (id, filename, mime_type, size_bytes, storage_path, public_path, uploaded_by_user_id)
+    insert into media_assets (
+      id, filename, mime_type, size_bytes, storage_path, public_path,
+      uploaded_by_user_id, storage_adapter_id, externally_hosted
+    )
     values (
       ${input.id},
       ${input.filename},
@@ -206,12 +264,15 @@ export async function createMediaAsset(
       ${input.sizeBytes},
       ${input.storagePath},
       ${input.publicPath},
-      ${input.uploadedByUserId}
+      ${input.uploadedByUserId},
+      ${input.storageAdapterId},
+      ${input.externallyHosted}
     )
     returning id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
              alt_text, caption, title, tags_json, width, height, duration_ms,
              dominant_color, deleted_at, replaced_at,
-             blur_hash, variants_json, poster_path
+             blur_hash, variants_json, poster_path,
+             storage_adapter_id, externally_hosted
   `
   return mapMediaAsset(rows[0])
 }
@@ -224,7 +285,8 @@ export async function getMediaAsset(
     select id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
            alt_text, caption, title, tags_json, width, height, duration_ms,
            dominant_color, deleted_at, replaced_at,
-           blur_hash, variants_json, poster_path
+           blur_hash, variants_json, poster_path,
+           storage_adapter_id, externally_hosted
     from media_assets
     where id = ${id}
   `
@@ -254,7 +316,8 @@ export async function listMediaAssets(
         select id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
                alt_text, caption, title, tags_json, width, height, duration_ms,
                dominant_color, deleted_at, replaced_at,
-             blur_hash, variants_json, poster_path
+               blur_hash, variants_json, poster_path,
+               storage_adapter_id, externally_hosted
         from media_assets
         where deleted_at is not null
         order by deleted_at desc
@@ -263,7 +326,8 @@ export async function listMediaAssets(
         select id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
                alt_text, caption, title, tags_json, width, height, duration_ms,
                dominant_color, deleted_at, replaced_at,
-             blur_hash, variants_json, poster_path
+               blur_hash, variants_json, poster_path,
+               storage_adapter_id, externally_hosted
         from media_assets
         where deleted_at is null
         order by created_at desc
@@ -282,7 +346,8 @@ export async function renameMediaAsset(
     returning id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
              alt_text, caption, title, tags_json, width, height, duration_ms,
              dominant_color, deleted_at, replaced_at,
-             blur_hash, variants_json, poster_path
+             blur_hash, variants_json, poster_path,
+             storage_adapter_id, externally_hosted
   `
   if (rows.length === 0) return null
   const assets = await hydrateAssets(db, rows)
@@ -322,7 +387,8 @@ export async function updateMediaAssetMetadata(
     returning id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
              alt_text, caption, title, tags_json, width, height, duration_ms,
              dominant_color, deleted_at, replaced_at,
-             blur_hash, variants_json, poster_path
+             blur_hash, variants_json, poster_path,
+             storage_adapter_id, externally_hosted
   `
   if (rows.length === 0) return null
   const assets = await hydrateAssets(db, rows)
@@ -361,7 +427,8 @@ export async function setMediaAssetVariants(
     returning id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
              alt_text, caption, title, tags_json, width, height, duration_ms,
              dominant_color, deleted_at, replaced_at,
-             blur_hash, variants_json, poster_path
+             blur_hash, variants_json, poster_path,
+             storage_adapter_id, externally_hosted
   `
   if (rows.length === 0) return null
   const assets = await hydrateAssets(db, rows)
@@ -383,7 +450,8 @@ export async function softDeleteMediaAsset(
     returning id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
              alt_text, caption, title, tags_json, width, height, duration_ms,
              dominant_color, deleted_at, replaced_at,
-             blur_hash, variants_json, poster_path
+             blur_hash, variants_json, poster_path,
+             storage_adapter_id, externally_hosted
   `
   if (rows.length === 0) return getMediaAsset(db, id)
   const assets = await hydrateAssets(db, rows)
@@ -400,7 +468,8 @@ export async function restoreMediaAsset(
     returning id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
              alt_text, caption, title, tags_json, width, height, duration_ms,
              dominant_color, deleted_at, replaced_at,
-             blur_hash, variants_json, poster_path
+             blur_hash, variants_json, poster_path,
+             storage_adapter_id, externally_hosted
   `
   if (rows.length === 0) return null
   const assets = await hydrateAssets(db, rows)
@@ -425,9 +494,15 @@ export async function deleteMediaAsset(
 }
 
 /**
- * Replace the binary backing this asset while keeping the same id and
- * public_path so every existing reference stays valid. Caller writes the new
- * file to disk and removes the old one.
+ * Replace the binary backing this asset while keeping the same id so every
+ * existing reference stays valid.
+ *
+ * `public_path` is no longer guaranteed stable — when the storage adapter
+ * elected for the role differs from the one that wrote the previous
+ * binary, the new bytes live on a different backend with a different
+ * URL. Renderers reference media by asset id (or path) via the
+ * `prefetchMediaAssets` lookup, which re-resolves on each publish, so a
+ * URL change is transparent to consumers.
  */
 export async function replaceMediaAssetBinary(
   db: DbClient,
@@ -437,6 +512,9 @@ export async function replaceMediaAssetBinary(
     mimeType: string
     sizeBytes: number
     storagePath: string
+    publicPath: string
+    storageAdapterId: string
+    externallyHosted: boolean
   },
 ): Promise<MediaAsset | null> {
   const nowIso = new Date().toISOString()
@@ -446,12 +524,16 @@ export async function replaceMediaAssetBinary(
       mime_type = ${input.mimeType},
       size_bytes = ${input.sizeBytes},
       storage_path = ${input.storagePath},
+      public_path = ${input.publicPath},
+      storage_adapter_id = ${input.storageAdapterId},
+      externally_hosted = ${input.externallyHosted},
       replaced_at = ${nowIso}
     where id = ${id}
     returning id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
              alt_text, caption, title, tags_json, width, height, duration_ms,
              dominant_color, deleted_at, replaced_at,
-             blur_hash, variants_json, poster_path
+             blur_hash, variants_json, poster_path,
+             storage_adapter_id, externally_hosted
   `
   if (rows.length === 0) return null
   const assets = await hydrateAssets(db, rows)
@@ -518,4 +600,112 @@ export async function assignAssetToFolders(
     }
     return getMediaAsset(tx, assetId)
   })
+}
+
+// ---------------------------------------------------------------------------
+// Bundle export / import helpers
+// ---------------------------------------------------------------------------
+
+/** Extended asset row that also returns the storage_path column. */
+interface MediaAssetExportRow extends MediaAssetRow {
+  storage_path: string
+}
+
+/**
+ * List all non-deleted media assets including their storage paths for bundle
+ * export. Storage path is kept separate from the normal `listMediaAssets` query
+ * because the public read paths never need to expose it.
+ */
+export async function listMediaAssetsForExport(db: DbClient): Promise<Array<MediaAsset & { storagePath: string }>> {
+  const { rows } = await db<MediaAssetExportRow>`
+    select id, filename, mime_type, size_bytes, public_path, uploaded_by_user_id, created_at,
+           alt_text, caption, title, tags_json, width, height, duration_ms,
+           dominant_color, deleted_at, replaced_at,
+           blur_hash, variants_json, poster_path,
+           storage_adapter_id, externally_hosted, storage_path
+    from media_assets
+    where deleted_at is null
+    order by created_at asc
+  `
+  const folderMap = await loadFolderIdsForAssets(db, rows.map((r) => r.id))
+  return rows.map((row) => ({
+    ...mapMediaAsset(row, folderMap.get(row.id) ?? []),
+    storagePath: row.storage_path,
+  }))
+}
+
+interface ImportMediaAssetInput {
+  id: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  storagePath: string
+  publicPath: string
+  altText: string
+  caption: string
+  title: string
+  tags: string[]
+  width: number | null
+  height: number | null
+  durationMs: number | null
+  dominantColor: string | null
+  blurHash: string | null
+  posterPath: string | null
+  /** Optional; defaults to local-disk when omitted. */
+  storageAdapterId?: string
+  /** Optional; defaults to false when omitted. */
+  externallyHosted?: boolean
+}
+
+/**
+ * Insert a media asset record preserving its original id and metadata.
+ * Used exclusively by the bundle import handler.
+ *
+ * Variants are intentionally omitted — they regenerate on first request.
+ * Folder memberships are not imported (no folder rows to link to yet in
+ * the target instance).
+ *
+ * If an asset with the same id already exists it is replaced.
+ */
+export async function importMediaAsset(
+  db: DbClient,
+  input: ImportMediaAssetInput,
+): Promise<void> {
+  const tags = Array.from(new Set(input.tags.map((t) => t.trim().toLowerCase()).filter(Boolean))).sort()
+  const storageAdapterId = input.storageAdapterId ?? ''
+  const externallyHosted = input.externallyHosted ?? false
+  await db`
+    insert into media_assets (
+      id, filename, mime_type, size_bytes, storage_path, public_path,
+      alt_text, caption, title, tags_json, width, height, duration_ms,
+      dominant_color, blur_hash, poster_path,
+      storage_adapter_id, externally_hosted
+    )
+    values (
+      ${input.id}, ${input.filename}, ${input.mimeType}, ${input.sizeBytes},
+      ${input.storagePath}, ${input.publicPath},
+      ${input.altText}, ${input.caption}, ${input.title}, ${tags},
+      ${input.width}, ${input.height}, ${input.durationMs},
+      ${input.dominantColor}, ${input.blurHash}, ${input.posterPath},
+      ${storageAdapterId}, ${externallyHosted}
+    )
+    on conflict (id) do update
+      set filename      = excluded.filename,
+          mime_type     = excluded.mime_type,
+          size_bytes    = excluded.size_bytes,
+          storage_path  = excluded.storage_path,
+          public_path   = excluded.public_path,
+          alt_text      = excluded.alt_text,
+          caption       = excluded.caption,
+          title         = excluded.title,
+          tags_json     = excluded.tags_json,
+          width         = excluded.width,
+          height        = excluded.height,
+          duration_ms   = excluded.duration_ms,
+          dominant_color = excluded.dominant_color,
+          blur_hash     = excluded.blur_hash,
+          poster_path   = excluded.poster_path,
+          storage_adapter_id = excluded.storage_adapter_id,
+          externally_hosted = excluded.externally_hosted
+  `
 }

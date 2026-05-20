@@ -27,8 +27,6 @@
  * giant if/else chain". Parameterised paths use a `RegExp` pattern with a
  * named `id` capture group.
  */
-import { rm } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { DbClient } from '../../db/client'
 import { requireCapability } from '../../auth/authz'
 import {
@@ -48,9 +46,10 @@ import {
   acceptReplacementMedia,
   acceptUploadedMedia,
   readUploadedFile,
-  uploadsDirRequired,
 } from './mediaUpload'
 import { removeVariantFiles } from './mediaVariants'
+import { dispatchDelete } from './mediaUploadDispatch'
+import { materializeAssetListForClient } from '../../publish/mediaPresentation'
 
 const MAX_MEDIA_BYTES = 50 * 1024 * 1024
 
@@ -138,17 +137,20 @@ async function handleListMedia(req: Request, db: DbClient): Promise<Response> {
 
   if (limit !== null) assets = assets.slice(0, limit)
 
-  return jsonResponse({ assets })
+  // Run the `media.url.transform` filter chain so the admin grid + picker
+  // show identical URLs to the published page (no dev/prod skew when a
+  // CDN URL transformer is registered).
+  const materialized = await materializeAssetListForClient(assets)
+  return jsonResponse({ assets: materialized })
 }
 
 async function handleUploadMedia(
   req: Request,
   db: DbClient,
-  options: CmsHandlerOptions,
+  _options: CmsHandlerOptions,
 ): Promise<Response> {
   const user = await requireCapability(req, db, 'media.manage')
   if (user instanceof Response) return user
-  if (!options.uploadsDir) return uploadsDirRequired()
 
   const file = await readUploadedFile(req)
   if (!file) return badRequest('Missing file')
@@ -157,7 +159,7 @@ async function handleUploadMedia(
     file,
     maxBytes: MAX_MEDIA_BYTES,
     allowedMimes: MEDIA_LIBRARY_MIMES,
-    uploadsDir: options.uploadsDir,
+    role: 'original',
     uploadedByUserId: user.id,
     oversizedMessage: 'File exceeds the 50 MB hard limit',
     unsupportedMessage: 'Only JPEG, PNG, GIF, WebP, MP4, and WebM files can be uploaded',
@@ -183,12 +185,11 @@ async function handleRestoreMedia(
 async function handleReplaceMedia(
   req: Request,
   db: DbClient,
-  options: CmsHandlerOptions,
+  _options: CmsHandlerOptions,
   params: RouteParams,
 ): Promise<Response> {
   const user = await requireCapability(req, db, 'media.manage')
   if (user instanceof Response) return user
-  if (!options.uploadsDir) return uploadsDirRequired()
 
   const file = await readUploadedFile(req)
   if (!file) return badRequest('Missing file')
@@ -197,7 +198,7 @@ async function handleReplaceMedia(
     file,
     maxBytes: MAX_MEDIA_BYTES,
     allowedMimes: MEDIA_LIBRARY_MIMES,
-    uploadsDir: options.uploadsDir,
+    role: 'original',
     uploadedByUserId: user.id,
     oversizedMessage: 'File exceeds the 50 MB hard limit',
     unsupportedMessage: 'Only JPEG, PNG, GIF, WebP, MP4, and WebM files can be uploaded',
@@ -248,7 +249,7 @@ async function handleUpdateMediaMetadata(
 async function handleDeleteMedia(
   req: Request,
   db: DbClient,
-  options: CmsHandlerOptions,
+  _options: CmsHandlerOptions,
   params: RouteParams,
 ): Promise<Response> {
   const user = await requireCapability(req, db, 'media.manage')
@@ -266,20 +267,21 @@ async function handleDeleteMedia(
   // Hard delete — only legal on already-trashed assets so a single
   // click can't bypass the trash safety net. Caller must explicitly
   // soft-delete first and then purge from the Trash view.
-  if (!options.uploadsDir) return uploadsDirRequired()
-
   const existing = await getMediaAsset(db, params.id)
   if (!existing) return notFound()
   if (!existing.deletedAt) return badRequest('Asset must be soft-deleted before purge')
 
-  // Snapshot the variant list BEFORE deletion so we know which
-  // extra files to sweep off disk alongside the original.
+  // Snapshot the variant list BEFORE the row delete so we know which
+  // extra bytes to sweep from each variant's adapter alongside the original.
   const variants = existing.variants
+  const adapterId = existing.storageAdapterId
   const deleted = await deleteMediaAsset(db, params.id)
   if (!deleted) return notFound()
 
-  await rm(join(options.uploadsDir, deleted.storagePath), { force: true })
-  await removeVariantFiles(variants, options.uploadsDir)
+  await dispatchDelete(adapterId, deleted.storagePath).catch((err) => {
+    console.error('[media] hard-delete original byte sweep failed (orphaned bytes):', err)
+  })
+  await removeVariantFiles(variants)
   return jsonResponse({ ok: true })
 }
 

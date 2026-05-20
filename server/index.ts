@@ -7,6 +7,7 @@ import { DEV_ORIGIN_ALLOWLIST, stampSocketIp } from './auth/security'
 await import('./domEnvironment')
 const { handleServerRequest } = await import('./router')
 const { activateInstalledServerPlugins } = await import('./plugins/runtime')
+const { mediaStorageRegistry } = await import('@core/plugins/mediaStorageRegistry')
 
 const config = readServerConfig()
 const { db, migrations } = createDbClient(config.databaseUrl)
@@ -16,6 +17,10 @@ await runMigrations(db, migrations)
 // installations don't strand owners on a stale grant list when new
 // capabilities are added in code. See `syncSystemRoles` for the policy.
 await syncSystemRoles(db)
+// Wire the built-in local-disk media adapter BEFORE plugins activate —
+// plugin adapters register through the same registry but local-disk is
+// always the fallback for unset roles. See `mediaStorageRegistry.ts`.
+mediaStorageRegistry.configureLocalDisk({ uploadsDir: config.uploadsDir })
 await activateInstalledServerPlugins(db, config.uploadsDir)
 
 /**

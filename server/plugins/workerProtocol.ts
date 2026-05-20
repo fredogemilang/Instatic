@@ -77,6 +77,8 @@ export type MainToWorkerMessage =
   | RunLoopFetchRequest
   | RunLoopPreviewRequest
   | RunScheduleRequest
+  | RunMediaAdapterCallRequest
+  | RunMediaUrlTransformerRequest
   | ApiReply
 
 export interface LoadPluginRequest {
@@ -171,6 +173,56 @@ export interface RunScheduleRequest {
   maxDurationMs: number
 }
 
+/**
+ * Methods on a `MediaStorageAdapter` the host can invoke. Mirrors the
+ * adapter contract in `src/core/plugin-sdk/types.ts` exactly. One generic
+ * runner is used (vs. one runner per method) because every adapter
+ * exposes the same set of named callbacks; routing in the VM is just a
+ * property lookup on the handler object.
+ */
+export type MediaAdapterMethod =
+  | 'beginWrite'
+  | 'finalizeWrite'
+  | 'abortWrite'
+  | 'delete'
+  | 'getReadUrl'
+  | 'verify'
+
+/**
+ * Invoke a method on a plugin-registered media storage adapter. The host
+ * builds these in `mediaStorageRegistry`-wrapping adapter shims that the
+ * upload pipeline calls; the shim turns each call into one of these
+ * requests and awaits the matching `media-adapter-call-result`.
+ *
+ * `args` is the JSON-serializable input passed to the method. Bytes are
+ * NEVER part of `args` — the adapter signs upload plans; the host
+ * streams bytes directly via `executeUploadPlan` outside the sandbox.
+ */
+export interface RunMediaAdapterCallRequest {
+  kind: 'run-media-adapter-call'
+  correlationId: string
+  pluginId: string
+  adapterId: string
+  method: MediaAdapterMethod
+  args: unknown
+}
+
+/**
+ * Invoke a registered URL transformer. The transformer takes a media path
+ * and a context, returns either a rewritten path or `null` (which the
+ * caller treats as pass-through). Multiple transformers chain in
+ * registration order — the host chains them via `hookBus.filter` so the
+ * same pipeline as the rest of the CMS handles chaining + error fallback.
+ */
+export interface RunMediaUrlTransformerRequest {
+  kind: 'run-media-url-transformer'
+  correlationId: string
+  pluginId: string
+  transformerId: string
+  /** Single { path, ctx } payload — kept opaque here so the schema lives in one place. */
+  payload: unknown
+}
+
 /** Host's reply to a worker-initiated `api-call`. */
 export interface ApiReply {
   kind: 'api-reply'
@@ -194,6 +246,8 @@ export type WorkerToMainMessage =
   | LoopFetchResultMessage
   | LoopPreviewResult
   | ScheduleResult
+  | MediaAdapterCallResult
+  | MediaUrlTransformerResult
   | ApiCall
   | WorkerLogEvent
 
@@ -280,6 +334,24 @@ export interface ScheduleResult {
   durationMs: number
 }
 
+export interface MediaAdapterCallResult {
+  kind: 'media-adapter-call-result'
+  correlationId: string
+  ok: boolean
+  value?: unknown
+  error?: string
+}
+
+export interface MediaUrlTransformerResult {
+  kind: 'media-url-transformer-result'
+  correlationId: string
+  ok: boolean
+  /** Plugin-transformed path. When `null`, the caller falls back to the
+   *  previous value (chain pass-through). */
+  value?: string | null
+  error?: string
+}
+
 /**
  * Worker-initiated call into the host's ServerPluginApi. Awaiting an
  * `ApiReply` with the same correlationId.
@@ -343,6 +415,26 @@ const ALLOWED_API_TARGETS = [
   // handler on cadence.
   'cms.schedule.register',
   'cms.schedule.cancel',
+  // Media subsystem — three independent surfaces.
+  //   • registerStorageAdapter — declares an exclusive storage backend the
+  //     admin can elect per asset role. Bytes never cross the sandbox;
+  //     the adapter only signs upload plans + handles delete/verify.
+  //   • registerUrlTransformer — chained pure path → path rewriter.
+  //   • registerVariantDelegate — replaces local variant ladder with a
+  //     URL template (image-transform CDNs).
+  'cms.media.registerStorageAdapter',
+  'cms.media.registerUrlTransformer',
+  'cms.media.registerVariantDelegate',
+  // ── Crypto primitives ────────────────────────────────────────────────
+  // SHA-256 / HMAC-SHA256 are needed for AWS Sigv4, OAuth1.0a, JWT signing,
+  // S3 presigned URL generation, etc. — the kind of work storage / auth
+  // plugins do routinely. Without these the plugin would have to vendor
+  // a pure-JS HMAC implementation; not impossible but error-prone enough
+  // that we expose a thin host bridge instead. No permission gate — these
+  // are pure computation, no I/O, no privilege escalation (same shape as
+  // `Math` or `JSON`).
+  'crypto.digest',
+  'crypto.signHmac',
 ] as const
 
 type AllowedApiTarget = typeof ALLOWED_API_TARGETS[number]
@@ -354,6 +446,13 @@ function isAllowedApiTarget(target: string): target is AllowedApiTarget {
 // ---------------------------------------------------------------------------
 // Runtime validation for worker-initiated api-calls
 // ---------------------------------------------------------------------------
+
+/**
+ * Shared host-pattern regex — same shape as `manifest.ts`. Re-declared here
+ * (instead of imported) so this file stays a single source of truth for the
+ * worker IPC schemas and doesn't pull in manifest validation.
+ */
+const NETWORK_HOST_PATTERN = /^(?:\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/
 
 const RouteMethodSchema = Type.Union([
   Type.Literal('GET'),
@@ -526,6 +625,108 @@ const ScheduleCancelArgSchema = Type.Object(
   { additionalProperties: false },
 )
 
+// ---------------------------------------------------------------------------
+// Media subsystem — registration payloads (callbacks themselves live INSIDE
+// the VM; only metadata crosses the host bridge).
+// ---------------------------------------------------------------------------
+
+const MEDIA_ID_PATTERN = '^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$'
+const MEDIA_ROLE_VALUES = ['original', 'variant', 'avatar', 'font', 'plugin-pack'] as const
+
+const MediaRoleSchema = Type.Union(MEDIA_ROLE_VALUES.map((v) => Type.Literal(v)))
+
+const MediaServingModeSchema = Type.Union([
+  Type.Literal('public-url'),
+  Type.Literal('signed-redirect'),
+  Type.Literal('proxy'),
+])
+
+const MediaCspOriginSchema = Type.Object(
+  {
+    directive: Type.Union([
+      Type.Literal('img-src'),
+      Type.Literal('media-src'),
+      Type.Literal('connect-src'),
+    ]),
+    // Same hostname shape that gates outbound fetch — keeps the CSP surface
+    // narrow (no schemes, no paths, no port suffixes; the host renders
+    // `https://<origin>` itself).
+    origin: Type.String({ pattern: NETWORK_HOST_PATTERN.source, maxLength: 253 }),
+  },
+  { additionalProperties: false },
+)
+
+const RegisterStorageAdapterArgSchema = Type.Object(
+  {
+    adapterId: Type.String({ pattern: MEDIA_ID_PATTERN, maxLength: 120 }),
+    label: Type.String({ minLength: 1, maxLength: 80 }),
+    roles: Type.Array(MediaRoleSchema, { minItems: 1, maxItems: MEDIA_ROLE_VALUES.length }),
+    servingMode: MediaServingModeSchema,
+    /** Whether the plugin's adapter object exposes `getReadUrl` (for read-side dispatch). */
+    hasGetReadUrl: Type.Boolean(),
+    /** Whether the plugin's adapter object exposes `readStream` (proxy mode). */
+    hasReadStream: Type.Boolean(),
+    cspOrigins: Type.Optional(Type.Array(MediaCspOriginSchema, { maxItems: 10 })),
+  },
+  { additionalProperties: false },
+)
+
+const RegisterUrlTransformerArgSchema = Type.Object(
+  {
+    transformerId: Type.String({ minLength: 1, maxLength: 120, pattern: '^[a-zA-Z0-9_-]+$' }),
+  },
+  { additionalProperties: false },
+)
+
+const RegisterVariantDelegateArgSchema = Type.Object(
+  {
+    delegateId: Type.String({ pattern: MEDIA_ID_PATTERN, maxLength: 120 }),
+    variantUrlTemplate: Type.String({ minLength: 1, maxLength: 500 }),
+    widths: Type.Array(Type.Integer({ minimum: 16, maximum: 8192 }), { minItems: 1, maxItems: 16 }),
+    formats: Type.Array(
+      Type.Union([Type.Literal('webp'), Type.Literal('jpeg'), Type.Literal('avif')]),
+      { minItems: 1, maxItems: 3 },
+    ),
+  },
+  { additionalProperties: false },
+)
+
+// ---------------------------------------------------------------------------
+// Crypto — small fixed surface (SHA-256 / SHA-1 / SHA-512 digest + HMAC sign).
+//
+// Inputs are base64-encoded over the wire. We cap them at 8 MB so a runaway
+// plugin can't OOM the host process by sending arbitrarily large hash
+// requests. Real AWS Sigv4 / OAuth signing inputs are < 4 KB; this ceiling
+// is generous defense-in-depth.
+// ---------------------------------------------------------------------------
+
+const HashAlgorithmSchema = Type.Union([
+  Type.Literal('SHA-256'),
+  Type.Literal('SHA-1'),
+  Type.Literal('SHA-512'),
+])
+
+/** Max base64 payload — 8 MB after decode. (base64 inflates by 4/3 → ~10.7 MB encoded.) */
+const MAX_CRYPTO_PAYLOAD_BASE64 = 12 * 1024 * 1024
+
+const CryptoDigestArgSchema = Type.Object(
+  {
+    algorithm: HashAlgorithmSchema,
+    data: Type.String({ minLength: 0, maxLength: MAX_CRYPTO_PAYLOAD_BASE64 }),
+  },
+  { additionalProperties: false },
+)
+
+const CryptoSignHmacArgSchema = Type.Object(
+  {
+    hash: HashAlgorithmSchema,
+    key: Type.String({ minLength: 0, maxLength: MAX_CRYPTO_PAYLOAD_BASE64 }),
+    data: Type.String({ minLength: 0, maxLength: MAX_CRYPTO_PAYLOAD_BASE64 }),
+  },
+  { additionalProperties: false },
+)
+
+
 function apiCallSchema<TTarget extends AllowedApiTarget, TArgs extends TSchema>(
   target: TTarget,
   args: TArgs,
@@ -571,6 +772,20 @@ const ApiCallSchemas = {
   'network.abort': apiCallSchema('network.abort', Type.Tuple([NetworkAbortArgSchema])),
   'cms.schedule.register': apiCallSchema('cms.schedule.register', Type.Tuple([ScheduleRegisterArgSchema])),
   'cms.schedule.cancel': apiCallSchema('cms.schedule.cancel', Type.Tuple([ScheduleCancelArgSchema])),
+  'cms.media.registerStorageAdapter': apiCallSchema(
+    'cms.media.registerStorageAdapter',
+    Type.Tuple([RegisterStorageAdapterArgSchema]),
+  ),
+  'cms.media.registerUrlTransformer': apiCallSchema(
+    'cms.media.registerUrlTransformer',
+    Type.Tuple([RegisterUrlTransformerArgSchema]),
+  ),
+  'cms.media.registerVariantDelegate': apiCallSchema(
+    'cms.media.registerVariantDelegate',
+    Type.Tuple([RegisterVariantDelegateArgSchema]),
+  ),
+  'crypto.digest': apiCallSchema('crypto.digest', Type.Tuple([CryptoDigestArgSchema])),
+  'crypto.signHmac': apiCallSchema('crypto.signHmac', Type.Tuple([CryptoSignHmacArgSchema])),
 } satisfies Record<AllowedApiTarget, TSchema>
 
 export type RouteRegistrationApiCall = Static<typeof ApiCallSchemas['cms.routes.register']>
@@ -587,6 +802,11 @@ export type NetworkFetchApiCall = Static<typeof ApiCallSchemas['network.fetch']>
 export type NetworkAbortApiCall = Static<typeof ApiCallSchemas['network.abort']>
 export type ScheduleRegisterApiCall = Static<typeof ApiCallSchemas['cms.schedule.register']>
 export type ScheduleCancelApiCall = Static<typeof ApiCallSchemas['cms.schedule.cancel']>
+export type RegisterStorageAdapterApiCall = Static<typeof ApiCallSchemas['cms.media.registerStorageAdapter']>
+export type RegisterUrlTransformerApiCall = Static<typeof ApiCallSchemas['cms.media.registerUrlTransformer']>
+export type RegisterVariantDelegateApiCall = Static<typeof ApiCallSchemas['cms.media.registerVariantDelegate']>
+export type CryptoDigestApiCall = Static<typeof ApiCallSchemas['crypto.digest']>
+export type CryptoSignHmacApiCall = Static<typeof ApiCallSchemas['crypto.signHmac']>
 
 export type ValidatedApiCall =
   | RouteRegistrationApiCall
@@ -603,6 +823,11 @@ export type ValidatedApiCall =
   | NetworkAbortApiCall
   | ScheduleRegisterApiCall
   | ScheduleCancelApiCall
+  | RegisterStorageAdapterApiCall
+  | RegisterUrlTransformerApiCall
+  | RegisterVariantDelegateApiCall
+  | CryptoDigestApiCall
+  | CryptoSignHmacApiCall
 
 export class ApiCallValidationError extends Error {
   constructor(message: string) {
@@ -673,6 +898,16 @@ function decodeApiCall(target: AllowedApiTarget, value: unknown): ValidatedApiCa
       return Value.Decode(ApiCallSchemas['cms.schedule.register'], value)
     case 'cms.schedule.cancel':
       return Value.Decode(ApiCallSchemas['cms.schedule.cancel'], value)
+    case 'cms.media.registerStorageAdapter':
+      return Value.Decode(ApiCallSchemas['cms.media.registerStorageAdapter'], value)
+    case 'cms.media.registerUrlTransformer':
+      return Value.Decode(ApiCallSchemas['cms.media.registerUrlTransformer'], value)
+    case 'cms.media.registerVariantDelegate':
+      return Value.Decode(ApiCallSchemas['cms.media.registerVariantDelegate'], value)
+    case 'crypto.digest':
+      return Value.Decode(ApiCallSchemas['crypto.digest'], value)
+    case 'crypto.signHmac':
+      return Value.Decode(ApiCallSchemas['crypto.signHmac'], value)
   }
 }
 

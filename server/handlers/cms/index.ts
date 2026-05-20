@@ -37,13 +37,19 @@ import { handleUsersRoutes } from './users'
 import { handleRolesRoutes } from './roles'
 import { handleAuditRoutes } from './audit'
 import { handleSiteRoutes } from './site'
+import { handlePagesRoutes } from './pages'
+import { handleComponentsRoutes } from './components'
 import { handleRuntimeRoutes } from './runtime'
 import { handleMediaRoutes } from './media'
 import { handleMediaFolderRoutes } from './mediaFolders'
+import { handleMediaStorageAdminRoutes } from './mediaStorageAdmin'
 import { handlePluginsRoutes } from './plugins'
 import { handleDataRoutes } from './data'
 import { handleFontsRoutes } from './fonts'
 import { handlePublishRoutes } from './publish'
+import { handleExportRoute } from './export'
+import { handleImportPreviewRoute } from './importPreview'
+import { handleImportRoute } from './import'
 
 export type { CmsHandlerOptions } from './shared'
 
@@ -73,16 +79,28 @@ export async function handleCmsRequest(
     ?? (await handleRolesRoutes(req, db))
     ?? (await handleAuditRoutes(req, db))
     ?? (await handleSiteRoutes(req, db))
+    ?? (await handlePagesRoutes(req, db))
+    ?? (await handleComponentsRoutes(req, db))
     ?? (await handleRuntimeRoutes(req, db))
     // The folder routes match `/admin/api/cms/media/folders/...` so they must
     // run BEFORE the asset routes whose `/admin/api/cms/media/:id` pattern
-    // would otherwise eat them (treating "folders" as an asset id).
+    // would otherwise eat them (treating "folders" as an asset id). The
+    // storage-admin routes (`/admin/api/cms/media/storage/...`) follow
+    // the same rule — `/media/:id` would otherwise consume "storage".
     ?? (await handleMediaFolderRoutes(req, db))
+    ?? (await handleMediaStorageAdminRoutes(req, db, options))
     ?? (await handleMediaRoutes(req, db, options))
     ?? (await handlePluginsRoutes(req, db, options))
     ?? (await handleDataRoutes(req, db))
     ?? (await handleFontsRoutes(req, db, options))
     ?? (await handlePublishRoutes(req, db))
+    // Export and import are registered after data routes so their exact paths
+    // `/export` and `/import` cannot conflict with any `/data/...` sub-routes.
+    // Preview must come before import: `/import/preview` is a longer path that
+    // would otherwise be consumed by the `/import` handler first.
+    ?? (await handleExportRoute(req, db, options))
+    ?? (await handleImportPreviewRoute(req, db))
+    ?? (await handleImportRoute(req, db, options))
 
   return response ?? jsonResponse({ error: 'Not found' }, { status: 404 })
 }

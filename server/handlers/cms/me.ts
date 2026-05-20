@@ -48,7 +48,6 @@ import {
   IMAGE_MIMES,
   acceptUploadedMedia,
   readUploadedFile,
-  uploadsDirRequired,
 } from './mediaUpload'
 import { Type } from '@core/utils/typeboxHelpers'
 
@@ -79,7 +78,7 @@ function newRecoveryCodeSet(): { codes: string[]; hashes: string[] } {
 export async function handleMeRoutes(
   req: Request,
   db: DbClient,
-  options: CmsHandlerOptions,
+  _options: CmsHandlerOptions,
 ): Promise<Response | null> {
   const url = new URL(req.url)
 
@@ -202,8 +201,6 @@ export async function handleMeRoutes(
   if (user instanceof Response) return user
 
   if (req.method === 'POST') {
-    if (!options.uploadsDir) return uploadsDirRequired()
-
     const file = await readUploadedFile(req)
     if (!file) return badRequest('Missing file')
 
@@ -211,7 +208,7 @@ export async function handleMeRoutes(
       file,
       maxBytes: MAX_AVATAR_BYTES,
       allowedMimes: IMAGE_MIMES,
-      uploadsDir: options.uploadsDir,
+      role: 'avatar',
       uploadedByUserId: user.id,
       oversizedMessage: 'Avatar must be smaller than 5 MB',
       unsupportedMessage: 'Avatars must be a JPEG, PNG, GIF, or WebP image',

@@ -39,6 +39,8 @@ import type {
   RunLifecycleRequest,
   RunLoopFetchRequest,
   RunLoopPreviewRequest,
+  RunMediaAdapterCallRequest,
+  RunMediaUrlTransformerRequest,
   RunMigrateRequest,
   RunRouteRequest,
   RunScheduleRequest,
@@ -461,6 +463,58 @@ async function handleRunSchedule(msg: RunScheduleRequest): Promise<void> {
   }
 }
 
+async function handleRunMediaAdapterCall(msg: RunMediaAdapterCallRequest): Promise<void> {
+  const vm = vmsByPluginId.get(msg.pluginId)
+  if (!vm) {
+    send({
+      kind: 'media-adapter-call-result',
+      correlationId: msg.correlationId,
+      ok: false,
+      error: `Plugin "${msg.pluginId}" not loaded in worker`,
+    })
+    return
+  }
+  try {
+    // Adapter methods take 0..2 arguments (most take exactly one). We pass
+    // `args` as a wire-level unknown and let the VM bootstrap's
+    // __runMediaAdapterCall destructure the first two positional values.
+    const argsArray = Array.isArray(msg.args) ? msg.args : [msg.args]
+    const value = await vm.runMediaAdapterCall(msg.adapterId, msg.method, argsArray)
+    send({ kind: 'media-adapter-call-result', correlationId: msg.correlationId, ok: true, value })
+  } catch (err) {
+    send({
+      kind: 'media-adapter-call-result',
+      correlationId: msg.correlationId,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+async function handleRunMediaUrlTransformer(msg: RunMediaUrlTransformerRequest): Promise<void> {
+  const vm = vmsByPluginId.get(msg.pluginId)
+  if (!vm) {
+    // Transformer pipeline is purely additive — when the worker is gone,
+    // pass the value through unchanged (null = "no rewrite").
+    send({ kind: 'media-url-transformer-result', correlationId: msg.correlationId, ok: true, value: null })
+    return
+  }
+  try {
+    const payload = (msg.payload && typeof msg.payload === 'object'
+      ? msg.payload
+      : { path: '', ctx: null }) as { path: string; ctx: unknown }
+    const value = await vm.runMediaUrlTransformer(msg.transformerId, payload)
+    send({ kind: 'media-url-transformer-result', correlationId: msg.correlationId, ok: true, value })
+  } catch (err) {
+    send({
+      kind: 'media-url-transformer-result',
+      correlationId: msg.correlationId,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Settings sync — `settings.changed` lands here from the host and updates
 // the VM's local mirror so subsequent `api.cms.settings.get(...)` calls
@@ -511,6 +565,12 @@ async function maybeApplySettingsChange(reply: ApiReply): Promise<void> {
       return
     case 'run-schedule':
       void handleRunSchedule(msg)
+      return
+    case 'run-media-adapter-call':
+      void handleRunMediaAdapterCall(msg)
+      return
+    case 'run-media-url-transformer':
+      void handleRunMediaUrlTransformer(msg)
       return
     case 'api-reply':
       void maybeApplySettingsChange(msg)

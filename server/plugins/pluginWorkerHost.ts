@@ -30,6 +30,14 @@
 import { nanoid } from 'nanoid'
 import type { DbClient } from '../db/client'
 import type {
+  MediaAssetRole,
+  MediaStorageAdapter,
+  MediaStorageBeginWriteInput,
+  MediaStorageFinalizeWriteInput,
+  MediaStorageServingMode,
+  MediaStorageUploadPlan,
+  MediaStorageVerifyResult,
+  MediaStorageWriteResult,
   PluginManifest,
   PluginPermission,
   PluginRecord,
@@ -41,6 +49,8 @@ import {
 } from '@core/plugin-sdk'
 import { findPluginResource, validatePluginRecordData } from '@core/plugins/manifest'
 import { hookBus } from '@core/plugins/hookBus'
+import { mediaStorageRegistry } from '@core/plugins/mediaStorageRegistry'
+import { mediaVariantDelegateRegistry } from '@core/plugins/mediaVariantDelegateRegistry'
 import { loopSourceRegistry } from '@core/loops/registry'
 import type { LoopEntitySource, LoopFetchResult, LoopItem } from '@core/loops/types'
 import {
@@ -90,12 +100,26 @@ interface HostLoopSourceEntry {
   sourceId: string
 }
 
+interface HostMediaAdapterEntry {
+  pluginId: string
+  adapterId: string
+}
+
+interface HostMediaTransformerEntry {
+  pluginId: string
+  transformerId: string
+}
+
 interface HostPluginRecord {
   manifest: PluginManifest
   routes: Map<string, HostRouteEntry>
   hookListeners: HostHookListenerEntry[]
   hookFilters: HostHookFilterEntry[]
   loopSources: HostLoopSourceEntry[]
+  /** Media storage adapter ids registered by this plugin. */
+  mediaAdapters: HostMediaAdapterEntry[]
+  /** Media URL transformer registrations — actually live as hookBus filters. */
+  mediaUrlTransformers: HostMediaTransformerEntry[]
   /**
    * In-flight outbound fetches keyed by the plugin's `abortId`. Populated
    * by `performGatedFetch` (which registers a fresh AbortController before
@@ -123,6 +147,39 @@ function assertHostPluginPermission(
   if (!hasGrantedPermission(entry.manifest, permission)) {
     throw new Error(`Plugin "${entry.manifest.id}" requires permission "${permission}"`)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Base64 helpers — wire format for binary payloads on the crypto bridge.
+// JSON can't carry Uint8Array; base64 is the smallest portable encoding.
+// Bun ships native btoa / atob (WHATWG-spec), which are byte-oriented
+// despite the "binary string" misnomer — exactly what we want here.
+// ---------------------------------------------------------------------------
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  // Chunked so we don't blow the call stack on multi-MB inputs (the
+  // String.fromCharCode spread variant fails on large arrays).
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(binary)
+}
+
+/**
+ * Decode base64 directly into a fresh, tightly-sized `ArrayBuffer`. The
+ * Web Crypto `crypto.subtle` API requires `BufferSource` with an
+ * `ArrayBuffer` (not `SharedArrayBuffer`); `Uint8Array.buffer` is typed
+ * as `ArrayBufferLike` which TS narrows out. A fresh allocation removes
+ * the narrowing problem and guarantees no sibling view past byteLength.
+ */
+function base64ToFreshArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64)
+  const buffer = new ArrayBuffer(binary.length)
+  const view = new Uint8Array(buffer)
+  for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i)
+  return buffer
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +349,8 @@ function handleWorkerCrash(pluginId: string, reason: string): void {
     }
     entry.inflightFetches.clear()
     hookBus.unregisterPlugin(pluginId)
+    mediaStorageRegistry.unregisterPlugin(pluginId)
+    mediaVariantDelegateRegistry.unregisterPlugin(pluginId)
     hostPlugins.delete(pluginId)
   }
 
@@ -421,6 +480,8 @@ export async function loadPluginInWorker(args: {
       loopSourceRegistry.unregister(source.sourceId)
     }
     hookBus.unregisterPlugin(args.manifest.id)
+    mediaStorageRegistry.unregisterPlugin(args.manifest.id)
+    mediaVariantDelegateRegistry.unregisterPlugin(args.manifest.id)
   }
   hostPlugins.set(args.manifest.id, {
     manifest: args.manifest,
@@ -428,6 +489,8 @@ export async function loadPluginInWorker(args: {
     hookListeners: [],
     hookFilters: [],
     loopSources: [],
+    mediaAdapters: [],
+    mediaUrlTransformers: [],
     inflightFetches: new Map(),
   })
 
@@ -465,6 +528,8 @@ export async function unloadPluginInWorker(pluginId: string): Promise<void> {
     }
     entry.inflightFetches.clear()
     hookBus.unregisterPlugin(pluginId)
+    mediaStorageRegistry.unregisterPlugin(pluginId)
+    mediaVariantDelegateRegistry.unregisterPlugin(pluginId)
   }
   hostPlugins.delete(pluginId)
 
@@ -842,6 +907,101 @@ async function dispatchApiCall(msg: ValidatedApiCall): Promise<void> {
         replyApiOk(msg.pluginId, msg.correlationId)
         return
       }
+
+      case 'cms.media.registerStorageAdapter': {
+        assertHostPluginPermission(entry, 'media.storage.adapter')
+        const [arg] = msg.args
+        // Schema-validated, so the cast is for the union narrowing the
+        // SDK exposes. servingMode + roles are already validated as the
+        // expected literal sets.
+        const adapter = buildAdapterShim({
+          pluginId: msg.pluginId,
+          adapterId: arg.adapterId,
+          label: arg.label,
+          roles: arg.roles as ReadonlyArray<MediaAssetRole>,
+          servingMode: arg.servingMode as MediaStorageServingMode,
+          hasGetReadUrl: arg.hasGetReadUrl,
+          hasReadStream: arg.hasReadStream,
+          ...(arg.cspOrigins ? { cspOrigins: arg.cspOrigins } : {}),
+        })
+        // Registry.register throws on a reserved id (e.g. ''); let it bubble
+        // so the plugin sees a real exception instead of a silent failure.
+        // The outer try/catch turns it into a structured api-call error.
+        mediaStorageRegistry.register(adapter)
+        entry.mediaAdapters.push({ pluginId: msg.pluginId, adapterId: arg.adapterId })
+        replyApiOk(msg.pluginId, msg.correlationId)
+        return
+      }
+
+      case 'cms.media.registerUrlTransformer': {
+        assertHostPluginPermission(entry, 'media.url.transform')
+        const [{ transformerId }] = msg.args
+        entry.mediaUrlTransformers.push({ pluginId: msg.pluginId, transformerId })
+        // URL transformers ride the existing hook bus filter pipeline so
+        // chaining + error-fallback semantics match every other plugin
+        // filter. The filter input is `{ path, ctx }` and the host applies
+        // it via `hookBus.applyFilter('media.url.transform', ...)` at the
+        // render boundary (Phase C wires the boundary).
+        hookBus.filter(msg.pluginId, 'media.url.transform', async (value) => {
+          const payload = value as { path: string; ctx: unknown }
+          const rewritten = await runMediaUrlTransformerInWorker(
+            msg.pluginId,
+            transformerId,
+            payload,
+          )
+          // null = "no rewrite" — chain through. String = the new path.
+          if (typeof rewritten === 'string') {
+            return { ...payload, path: rewritten }
+          }
+          return value
+        })
+        replyApiOk(msg.pluginId, msg.correlationId)
+        return
+      }
+
+      case 'crypto.digest': {
+        // Pure computation — no permission gate (same model as Math /
+        // JSON exposure). Inputs are size-bounded by the schema.
+        const [{ algorithm, data }] = msg.args
+        const dataBytes = base64ToFreshArrayBuffer(data)
+        const digest = await crypto.subtle.digest(algorithm, dataBytes)
+        replyApiOk(msg.pluginId, msg.correlationId, bytesToBase64(new Uint8Array(digest)))
+        return
+      }
+
+      case 'crypto.signHmac': {
+        const [{ hash, key, data }] = msg.args
+        const keyBuffer = base64ToFreshArrayBuffer(key)
+        const dataBuffer = base64ToFreshArrayBuffer(data)
+        const importedKey = await crypto.subtle.importKey(
+          'raw',
+          keyBuffer,
+          { name: 'HMAC', hash },
+          false,
+          ['sign'],
+        )
+        const signature = await crypto.subtle.sign({ name: 'HMAC' }, importedKey, dataBuffer)
+        replyApiOk(msg.pluginId, msg.correlationId, bytesToBase64(new Uint8Array(signature)))
+        return
+      }
+
+      case 'cms.media.registerVariantDelegate': {
+        assertHostPluginPermission(entry, 'media.variant.delegate')
+        const [arg] = msg.args
+        // Persist in the in-memory registry so the admin UI's
+        // "Pick a delegate" picker sees it. Election (which delegate
+        // actually wins) lives in `active_media_variant_delegate` and
+        // is managed by the admin API in `server/handlers/cms/mediaStorageAdmin.ts`.
+        mediaVariantDelegateRegistry.register({
+          id: arg.delegateId,
+          pluginId: msg.pluginId,
+          variantUrlTemplate: arg.variantUrlTemplate,
+          widths: arg.widths,
+          formats: arg.formats,
+        })
+        replyApiOk(msg.pluginId, msg.correlationId)
+        return
+      }
     }
   } catch (err) {
     replyApiError(msg.pluginId, msg.correlationId, err instanceof Error ? err.message : String(err))
@@ -1045,6 +1205,136 @@ export async function runScheduleInWorker(args: {
     error: result.error,
     durationMs: result.durationMs,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Media subsystem — worker round-trips
+//
+// Bytes NEVER cross the QuickJS sandbox boundary. The adapter signs upload
+// plans here (single round-trip per stage); the host streams bytes itself
+// via `executeUploadPlan` in `server/handlers/cms/mediaUploadExecutor.ts`.
+// `runMediaAdapterCallInWorker` is a generic dispatcher — every adapter
+// method routes through this one helper, mirroring how routes / hook
+// listeners / hook filters use a single shared worker call.
+// ---------------------------------------------------------------------------
+
+async function runMediaAdapterCallInWorker(
+  pluginId: string,
+  adapterId: string,
+  method: 'beginWrite' | 'finalizeWrite' | 'abortWrite' | 'delete' | 'getReadUrl' | 'verify',
+  args: unknown[],
+): Promise<unknown> {
+  const result = await requestFromWorker(
+    pluginId,
+    {
+      kind: 'run-media-adapter-call',
+      correlationId: nanoid(),
+      pluginId,
+      adapterId,
+      method,
+      args,
+    },
+    'media-adapter-call-result',
+  )
+  if (!result.ok) {
+    throw new Error(result.error ?? `Plugin "${pluginId}" media adapter "${adapterId}.${method}" failed`)
+  }
+  return result.value
+}
+
+async function runMediaUrlTransformerInWorker(
+  pluginId: string,
+  transformerId: string,
+  payload: unknown,
+): Promise<string | null> {
+  const result = await requestFromWorker(
+    pluginId,
+    {
+      kind: 'run-media-url-transformer',
+      correlationId: nanoid(),
+      pluginId,
+      transformerId,
+      payload,
+    },
+    'media-url-transformer-result',
+  )
+  if (!result.ok) {
+    console.error(`[plugin:${pluginId}] media URL transformer threw:`, result.error)
+    return null
+  }
+  return typeof result.value === 'string' ? result.value : null
+}
+
+/**
+ * Build a host-side `MediaStorageAdapter` shim that proxies every method
+ * to the plugin's VM. The adapter's *contract* (servingMode, roles,
+ * cspOrigins, hasGetReadUrl, hasReadStream) is metadata declared at
+ * registration time; the actual logic lives inside the QuickJS sandbox
+ * and round-trips here for each invocation.
+ */
+function buildAdapterShim(args: {
+  pluginId: string
+  adapterId: string
+  label: string
+  roles: ReadonlyArray<MediaAssetRole>
+  servingMode: MediaStorageServingMode
+  hasGetReadUrl: boolean
+  hasReadStream: boolean
+  cspOrigins?: ReadonlyArray<{ directive: 'img-src' | 'media-src' | 'connect-src'; origin: string }>
+}): MediaStorageAdapter {
+  const call = (
+    method: 'beginWrite' | 'finalizeWrite' | 'abortWrite' | 'delete' | 'getReadUrl' | 'verify',
+    methodArgs: unknown[],
+  ): Promise<unknown> => runMediaAdapterCallInWorker(args.pluginId, args.adapterId, method, methodArgs)
+  const shim: MediaStorageAdapter = {
+    id: args.adapterId,
+    label: args.label,
+    roles: args.roles,
+    servingMode: args.servingMode,
+    beginWrite: async (input: MediaStorageBeginWriteInput): Promise<MediaStorageUploadPlan> => {
+      const v = await call('beginWrite', [input])
+      return v as MediaStorageUploadPlan
+    },
+    finalizeWrite: async (input: MediaStorageFinalizeWriteInput): Promise<MediaStorageWriteResult> => {
+      const v = await call('finalizeWrite', [input])
+      return v as MediaStorageWriteResult
+    },
+    abortWrite: async (input) => {
+      await call('abortWrite', [input])
+    },
+    delete: async (storagePath: string) => {
+      await call('delete', [storagePath])
+    },
+    verify: async (): Promise<MediaStorageVerifyResult> => {
+      const v = await call('verify', [])
+      // Defensive: plugin verify() that throws or returns garbage gets
+      // converted to a structured failure here so the admin UI doesn't
+      // crash on an unexpected shape.
+      if (v && typeof v === 'object' && typeof (v as { ok?: unknown }).ok === 'boolean') {
+        return v as MediaStorageVerifyResult
+      }
+      return { ok: false, reason: 'Adapter returned a malformed verify() result.' }
+    },
+    ...(args.cspOrigins && args.cspOrigins.length > 0 ? { cspOrigins: args.cspOrigins } : {}),
+  }
+  if (args.hasGetReadUrl) {
+    shim.getReadUrl = async (storagePath: string, ttlSeconds: number) => {
+      const v = await call('getReadUrl', [storagePath, ttlSeconds])
+      if (v && typeof v === 'object' && typeof (v as { url?: unknown }).url === 'string') {
+        const obj = v as { url: string; expiresAt?: number }
+        return {
+          url: obj.url,
+          expiresAt: typeof obj.expiresAt === 'number' ? obj.expiresAt : Date.now() + ttlSeconds * 1000,
+        }
+      }
+      throw new Error(`Plugin "${args.pluginId}" adapter "${args.adapterId}" returned malformed getReadUrl result`)
+    }
+  }
+  // readStream support for proxy adapters is intentionally not wired in
+  // Phase B — proxy-mode adapters land with the host streaming bytes
+  // through a separate API (and the QuickJS bridge needs a chunked
+  // protocol). Public-URL and signed-redirect adapters are the v1 target.
+  return shim
 }
 
 /**

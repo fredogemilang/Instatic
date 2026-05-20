@@ -16,6 +16,8 @@
 
 import type { DbClient } from '../db/client'
 import { listInstalledPlugins } from '../repositories/plugins'
+import { mediaStorageRegistry } from '@core/plugins/mediaStorageRegistry'
+import { listElectedAdapters } from '../repositories/mediaStorageAdapters'
 
 export interface FrontendInjections {
   headTags: string[]
@@ -32,6 +34,18 @@ export interface FrontendInjections {
    * schema enforces.
    */
   networkAllowedHosts: string[]
+  /**
+   * CSP origins declared by elected media storage adapters. The publisher
+   * appends them to the matching CSP directive (`img-src`, `media-src`,
+   * `connect-src`) so the browser is allowed to load assets from the
+   * adapter's backend (e.g. `https://*.s3.amazonaws.com` for the S3
+   * adapter). Origins from non-elected adapters are NOT included —
+   * installed-but-inactive adapters don't pollute the CSP.
+   */
+  mediaCspOrigins: ReadonlyArray<{
+    directive: 'img-src' | 'media-src' | 'connect-src'
+    origin: string
+  }>
 }
 
 /**
@@ -68,7 +82,39 @@ export function injectFrontendAssets(
       : `${next}\n${bodyTag}`
     next = relaxCspForFrontendPlugins(next, injections.networkAllowedHosts)
   }
+  if (injections.mediaCspOrigins.length > 0) {
+    next = appendMediaAdapterCspOrigins(next, injections.mediaCspOrigins)
+  }
   return next
+}
+
+/**
+ * Append CSP origins declared by elected media storage adapters. Runs
+ * regardless of whether any frontend plugin tags were injected — a site
+ * can use an external storage backend without any frontend.scripts
+ * plugin being active. The directive sources extend `'self'` so the
+ * host-relative defaults (`/uploads/*`, `/_pb/*`) keep working.
+ */
+function appendMediaAdapterCspOrigins(
+  html: string,
+  origins: ReadonlyArray<{ directive: 'img-src' | 'media-src' | 'connect-src'; origin: string }>,
+): string {
+  // Bucket by directive so a single appendOrSetCspDirective call carries
+  // every source for that directive — keeps the rewrite idempotent under
+  // repeated render passes.
+  const byDirective = new Map<'img-src' | 'media-src' | 'connect-src', Set<string>>()
+  for (const entry of origins) {
+    const bucket = byDirective.get(entry.directive) ?? new Set<string>()
+    bucket.add(`https://${entry.origin}`)
+    byDirective.set(entry.directive, bucket)
+  }
+  return html.replace(CSP_META_PATTERN, (full, content: string) => {
+    let nextCsp = content
+    for (const [directive, sources] of byDirective) {
+      nextCsp = appendOrSetCspDirective(nextCsp, directive, ["'self'", ...sources])
+    }
+    return full.replace(content, nextCsp)
+  })
 }
 
 const CSP_META_PATTERN = /<meta http-equiv="Content-Security-Policy"\s+content="([^"]*)"\s*\/?>/i
@@ -208,7 +254,36 @@ export async function collectFrontendInjections(db: DbClient): Promise<FrontendI
     headTags,
     bodyTags,
     networkAllowedHosts: [...networkAllowedHostsSet].sort(),
+    mediaCspOrigins: await collectMediaAdapterCspOrigins(db),
   }
+}
+
+/**
+ * Look up every per-role elected storage adapter and aggregate the CSP
+ * origins they declared at registration time. Dedup by directive+origin
+ * so multi-role elections of the same adapter don't repeat entries.
+ *
+ * Only ELECTED adapters contribute — an installed-but-inactive S3
+ * plugin doesn't pollute the page CSP with `*.s3.amazonaws.com`.
+ */
+async function collectMediaAdapterCspOrigins(
+  db: DbClient,
+): Promise<FrontendInjections['mediaCspOrigins']> {
+  const elections = await listElectedAdapters(db)
+  const seen = new Set<string>()
+  const out: Array<{ directive: 'img-src' | 'media-src' | 'connect-src'; origin: string }> = []
+  for (const election of elections) {
+    if (!election.adapterId) continue // local-disk has no remote origin
+    const adapter = mediaStorageRegistry.resolveForRead(election.adapterId)
+    if (!adapter || !adapter.cspOrigins) continue
+    for (const entry of adapter.cspOrigins) {
+      const key = `${entry.directive}|${entry.origin}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(entry)
+    }
+  }
+  return out
 }
 
 function escapeHtmlAttribute(value: string): string {

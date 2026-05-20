@@ -546,4 +546,71 @@ export const pgMigrations: Migration[] = [
         add column if not exists snapshot_json jsonb;
     `,
   },
+  {
+    id: '004_media_storage_adapters',
+    sql: `
+      -- ─── Media storage adapter election (per-role) ────────────────────────
+      --
+      -- One row per asset role ('original', 'variant', 'avatar', 'font',
+      -- 'plugin-pack'). 'adapter_id' is the namespaced id of a plugin
+      -- adapter (e.g. 'acme.s3.adapter') OR the empty string for the
+      -- built-in local-disk adapter. Missing rows default to local-disk.
+      --
+      -- The row's primary key on 'role' enforces the "exactly one elected
+      -- adapter per role" invariant at the DB level.
+
+      create table if not exists active_media_storage_adapter (
+        role text primary key,
+        adapter_id text not null default '',
+        elected_at timestamptz not null default now(),
+        elected_by_user_id text references users(id) on delete set null
+      );
+
+      -- ─── Per-asset adapter pinning ───────────────────────────────────────
+      --
+      -- Each media asset remembers which adapter wrote it. Reads dispatch
+      -- through THIS column, not the currently-elected one, so a
+      -- post-election adapter swap doesn't strand existing rows. Empty
+      -- string = built-in local-disk adapter (matches the historical
+      -- behaviour for pre-existing rows).
+
+      alter table media_assets
+        add column if not exists storage_adapter_id text not null default '';
+
+      -- ─── Externally-hosted flag ──────────────────────────────────────────
+      --
+      -- True when the asset's bytes live outside the host's uploads dir
+      -- (i.e. the adapter's servingMode is 'public-url'). The hard-delete
+      -- path uses this to skip the local 'rm' and call the adapter's
+      -- delete() instead.
+
+      alter table media_assets
+        add column if not exists externally_hosted boolean not null default false;
+    `,
+  },
+  {
+    id: '005_media_variant_delegate',
+    sql: `
+      -- ─── Variant delegate election (singleton) ────────────────────────────
+      --
+      -- Tier 3 of the media plugin surface: when an image-transform CDN
+      -- plugin (Cloudflare Images, Imgix, Bunny Optimizer) is elected,
+      -- the host SKIPS local variant generation and instead emits URLs
+      -- derived from the delegate's URL template.
+      --
+      -- Singleton table — at most ONE delegate is active per host. The
+      -- 'singleton = 1 CHECK' is the DB-level guarantee; missing row
+      -- means "no delegate elected → fall back to local sharp ladder".
+
+      create table if not exists active_media_variant_delegate (
+        singleton integer primary key default 1 check (singleton = 1),
+        delegate_id text not null,
+        variant_url_template text not null,
+        widths_json jsonb not null,
+        formats_json jsonb not null,
+        elected_at timestamptz not null default now(),
+        elected_by_user_id text references users(id) on delete set null
+      );
+    `,
+  },
 ]

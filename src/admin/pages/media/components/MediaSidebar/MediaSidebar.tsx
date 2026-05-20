@@ -12,18 +12,23 @@
  * Reuses the editor's PanelRail / LeftSidebar CSS so the visual language is
  * identical across Site / Content / Media.
  */
-import { useRef, type CSSProperties } from 'react'
+import { useMemo, useRef, type CSSProperties } from 'react'
 import { Button } from '@ui/components/Button'
+import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { FolderGlyphIcon } from 'pixel-art-icons/icons/folder-glyph'
+import type { IconComponent } from 'pixel-art-icons/types'
 import { useEditorStore } from '@site/store/store'
+import { hasCapability } from '@admin/access'
+import { useCurrentAdminUser } from '@admin/sessionContext'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 import { Panel } from '@admin/shared/Panel'
 import leftSidebarStyles from '@site/sidebars/LeftSidebar/LeftSidebar.module.css'
 import panelRailStyles from '@site/sidebars/PanelRail/PanelRail.module.css'
 import { MediaFolderPanel } from '../MediaFolderPanel/MediaFolderPanel'
+import { MediaStoragePanel } from '../MediaStoragePanel/MediaStoragePanel'
 import type { UseMediaWorkspaceResult } from '../../hooks/useMediaWorkspace'
 
-export type MediaSidebarPanelId = 'folders'
+export type MediaSidebarPanelId = 'folders' | 'storage'
 
 interface MediaSidebarProps {
   workspace: UseMediaWorkspaceResult
@@ -31,28 +36,57 @@ interface MediaSidebarProps {
   onActivePanelChange: (panel: MediaSidebarPanelId | null) => void
 }
 
-const RAIL_ITEMS: Array<{
+interface RailItem {
   id: MediaSidebarPanelId
   label: string
-  icon: typeof FolderGlyphIcon
+  icon: IconComponent
   iconName: string
   accent: 'mint' | 'lilac' | 'sky' | 'peach'
-}> = [
+}
+
+/**
+ * Every available rail item. The actual rendered set is filtered by
+ * `useRailItems` below so panels gated on a capability (e.g. storage =
+ * runtime.manage) are hidden for users who can't use them anyway —
+ * rather than showing a button that produces a 403 on first click.
+ */
+const ALL_RAIL_ITEMS: RailItem[] = [
   { id: 'folders', label: 'Folders', icon: FolderGlyphIcon, iconName: 'folder', accent: 'sky' },
+  { id: 'storage', label: 'Storage', icon: CloudUploadSolidIcon, iconName: 'cloud-upload', accent: 'mint' },
 ]
 
 const PANEL_TITLES: Record<MediaSidebarPanelId, string> = {
   folders: 'Folders',
+  storage: 'Storage',
 }
 
 export function MediaSidebar({ workspace, activePanel, onActivePanelChange }: MediaSidebarProps) {
   const sidebarRef = useRef<HTMLElement | null>(null)
   const leftSidebarWidth = useEditorStore((s) => s.leftSidebarWidth)
   const setLeftSidebarWidth = useEditorStore((s) => s.setLeftSidebarWidth)
+  const currentUser = useCurrentAdminUser()
   const panelWidth = activePanel ? leftSidebarWidth : 0
   const style = {
     '--left-sidebar-panel-width': `${panelWidth}px`,
   } as CSSProperties
+
+  // Storage settings change runtime topology (which adapter handles which
+  // role) — same capability gate as plugin install/uninstall. Hide the
+  // rail button entirely for users who can't use it; the API endpoints
+  // also enforce this gate server-side as defense-in-depth.
+  const railItems = useMemo<RailItem[]>(() => {
+    return ALL_RAIL_ITEMS.filter((item) => {
+      if (item.id === 'storage') return hasCapability(currentUser, 'runtime.manage')
+      return true
+    })
+  }, [currentUser])
+
+  // Defensive: if the user previously had the storage panel open and then
+  // had their capability revoked, collapse it on the next render so they
+  // don't end up looking at a stale 403-shaped error.
+  if (activePanel === 'storage' && !railItems.some((item) => item.id === 'storage')) {
+    onActivePanelChange(null)
+  }
 
   function handleRailToggle(panelId: MediaSidebarPanelId) {
     const next = activePanel === panelId ? null : panelId
@@ -74,7 +108,7 @@ export function MediaSidebar({ workspace, activePanel, onActivePanelChange }: Me
         data-testid="media-panel-rail"
       >
         <div className={panelRailStyles.itemGroup}>
-          {RAIL_ITEMS.map((item) => {
+          {railItems.map((item) => {
             const Icon = item.icon
             const active = activePanel === item.id
             const action = active ? 'Close' : 'Open'
@@ -114,9 +148,16 @@ export function MediaSidebar({ workspace, activePanel, onActivePanelChange }: Me
               ariaLabel={`${PANEL_TITLES[activePanel]} panel`}
               testId={`media-${activePanel}-panel`}
               onClose={() => onActivePanelChange(null)}
-              body="bare"
+              // The folder tree owns its own scroll container (`body="bare"`),
+              // but the storage panel is a stack of small cards that
+              // wants the standard 8px-padded scroll surface.
+              body={activePanel === 'folders' ? 'bare' : 'padded'}
             >
-              <MediaFolderPanel workspace={workspace} />
+              {activePanel === 'folders' ? (
+                <MediaFolderPanel workspace={workspace} />
+              ) : (
+                <MediaStoragePanel />
+              )}
             </Panel>
           )}
         </div>

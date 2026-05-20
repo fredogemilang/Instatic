@@ -44,7 +44,7 @@ describe('CMS dynamic template routes', () => {
     }
     const snapshot: PublishedPageSnapshot = {
       cmsSnapshotVersion: 1,
-      pageId: page.id,
+      pageRowId: page.id,
       site: makeSite({ pages: [page] }),
     }
 
@@ -55,14 +55,28 @@ describe('CMS dynamic template routes', () => {
         }
         return undefined
       },
+      (sql) => {
+        // `collectFrontendInjections` reads elected media storage adapters so
+        // their declared CSP origins extend the page CSP. No adapter is
+        // elected in these tests, so the empty result lands the renderer on
+        // the local-disk defaults.
+        if (sql.includes('from active_media_storage_adapter')) {
+          return { rows: [], rowCount: 0 }
+        }
+        return undefined
+      },
       (sql, params) => {
-        if (!sql.startsWith('select page_versions.snapshot_json')) return undefined
+        if (!sql.startsWith('select data_row_versions.snapshot_json')) return undefined
 
-        if (sql.includes('where pages.slug = $1')) {
+        // getPublishedPageBySlug — has data_rows.slug parameter; return empty
+        // (no published page at 'posts/dynamic-post')
+        if (sql.includes('data_rows.slug =')) {
           expect(params).toEqual(['posts/dynamic-post'])
           return { rows: [], rowCount: 0 }
         }
 
+        // getLatestPublishedSiteSnapshot — return the snapshot so the template
+        // renderer can find the matching template page
         return { rows: [{ snapshot_json: snapshot }], rowCount: 1 }
       },
       (sql, params) => {
@@ -106,9 +120,9 @@ describe('CMS dynamic template routes', () => {
   it('redirects an old published data row slug to the active published slug', async () => {
     const db = makeTemplateRouteFakeDb([
       (sql, params) => {
-        if (!sql.startsWith('select page_versions.snapshot_json')) return undefined
-
-        if (sql.includes('where pages.slug = $1')) {
+        if (!sql.startsWith('select data_row_versions.snapshot_json')) return undefined
+        // getPublishedPageBySlug — return empty (no published page at this slug)
+        if (sql.includes('data_rows.slug =')) {
           expect(params).toEqual(['posts/untitled'])
         }
         return { rows: [], rowCount: 0 }

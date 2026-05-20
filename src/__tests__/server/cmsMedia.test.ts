@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
@@ -13,6 +13,7 @@ import {
   listMediaAssets,
   renameMediaAsset,
 } from '../../../server/repositories/media'
+import { mediaStorageRegistry } from '../../../src/core/plugins/mediaStorageRegistry'
 
 // Real, sharp-decodable PNG / JPEG bytes used as upload fixtures. The upload
 // pipeline runs `processImageVariants` (sharp) on any sniffed image MIME, so
@@ -56,6 +57,8 @@ function mediaRow(input: Record<string, unknown>): Record<string, unknown> {
     blur_hash: null,
     variants_json: [],
     poster_path: null,
+    storage_adapter_id: '',
+    externally_hosted: false,
     ...input,
   }
 }
@@ -114,8 +117,26 @@ function makeFakeDb() {
       return { rows: [], rowCount: 0 }
     }
 
-    // createMediaAsset — values[0..6] = id, filename, mimeType, sizeBytes, storagePath, publicPath, uploadedByUserId
-    if (normalized.includes('insert into media_assets')) {
+    // Media storage adapter election lookup — `getElectedAdapterId` issues
+    // this for every upload to resolve which adapter handles the role. The
+    // fake DB always returns no rows, which the helper resolves as `''`
+    // (the built-in local-disk adapter).
+    if (normalized.includes('from active_media_storage_adapter')) {
+      return { rows: [], rowCount: 0 }
+    }
+    // Variant delegate election — `getElectedVariantDelegate` issues this
+    // for every image upload to decide between the local sharp ladder and
+    // a delegate's URL template. No delegate is elected in these tests, so
+    // the empty result lands the pipeline on the local sharp ladder.
+    if (normalized.includes('from active_media_variant_delegate')) {
+      return { rows: [], rowCount: 0 }
+    }
+
+    // createMediaAsset — values[0..8] = id, filename, mimeType, sizeBytes,
+    // storagePath, publicPath, uploadedByUserId, storageAdapterId,
+    // externallyHosted. The fake DB router matches before importMediaAsset
+    // because importMediaAsset's column list is much longer.
+    if (normalized.includes('insert into media_assets') && values.length === 9) {
       const row = mediaRow({
         id: values[0],
         filename: values[1],
@@ -124,6 +145,8 @@ function makeFakeDb() {
         storage_path: values[4],
         public_path: values[5],
         uploaded_by_user_id: values[6],
+        storage_adapter_id: values[7],
+        externally_hosted: values[8],
         created_at: new Date('2026-01-03').toISOString(),
       })
       media.push(row)
@@ -268,6 +291,8 @@ describe('CMS media repository', () => {
       storagePath: 'asset_1-hero.png',
       publicPath: '/uploads/asset_1-hero.png',
       uploadedByUserId: 'user_1',
+      storageAdapterId: '',
+      externallyHosted: false,
     })
 
     const assets = await listMediaAssets(db)
@@ -298,6 +323,8 @@ describe('CMS media repository', () => {
       storagePath: 'asset_1-hero.png',
       publicPath: '/uploads/asset_1-hero.png',
       uploadedByUserId: 'user_1',
+      storageAdapterId: '',
+      externallyHosted: false,
     })
 
     const asset = await renameMediaAsset(db, 'asset_1', 'Hero renamed.png')
@@ -317,6 +344,8 @@ describe('CMS media repository', () => {
       storagePath: 'asset_1-hero.png',
       publicPath: '/uploads/asset_1-hero.png',
       uploadedByUserId: 'user_1',
+      storageAdapterId: '',
+      externallyHosted: false,
     })
 
     const deleted = await deleteMediaAsset(db, 'asset_1')
@@ -340,6 +369,7 @@ describe('CMS media handlers', () => {
     const db = makeFakeDb()
     const cookie = await createCookie(db)
     const uploadsDir = mkdtempSync(join(tmpdir(), 'page-builder-uploads-'))
+    mediaStorageRegistry.configureLocalDisk({ uploadsDir })
     const body = new FormData()
     body.set('file', pngFile('Hero Image.png'))
 
@@ -382,6 +412,7 @@ describe('CMS media handlers', () => {
     const db = makeFakeDb()
     const cookie = await createCookie(db)
     const uploadsDir = mkdtempSync(join(tmpdir(), 'page-builder-uploads-'))
+    mediaStorageRegistry.configureLocalDisk({ uploadsDir })
     const body = new FormData()
     // Attacker plants `<script>` HTML but sets the multipart Content-Type
     // to `image/png`. Old code accepted this and wrote `pwn.html` to disk.
@@ -420,6 +451,7 @@ describe('CMS media handlers', () => {
     const db = makeFakeDb()
     const cookie = await createCookie(db)
     const uploadsDir = mkdtempSync(join(tmpdir(), 'page-builder-uploads-'))
+    mediaStorageRegistry.configureLocalDisk({ uploadsDir })
     const body = new FormData()
     // Real PNG bytes, but the filename claims `.html`. Server must rename
     // it to `.png` (the magic-byte-derived extension) on disk.
@@ -450,6 +482,7 @@ describe('CMS media handlers', () => {
     const db = makeFakeDb()
     const cookie = await createCookie(db)
     const uploadsDir = mkdtempSync(join(tmpdir(), 'page-builder-uploads-'))
+    mediaStorageRegistry.configureLocalDisk({ uploadsDir })
     const body = new FormData()
     body.set(
       'file',
@@ -482,6 +515,7 @@ describe('CMS media handlers', () => {
     const db = makeFakeDb()
     const cookie = await createCookie(db)
     const uploadsDir = mkdtempSync(join(tmpdir(), 'page-builder-uploads-'))
+    mediaStorageRegistry.configureLocalDisk({ uploadsDir })
     const body = new FormData()
     body.set('file', new File([JPEG_BYTES], 'photo.jpg', { type: 'image/jpeg' }))
 
@@ -516,6 +550,8 @@ describe('CMS media handlers', () => {
       storagePath: 'asset_1-hero.png',
       publicPath: '/uploads/asset_1-hero.png',
       uploadedByUserId: 'user_1',
+      storageAdapterId: '',
+      externallyHosted: false,
     })
 
     const res = await handleCmsRequest(
@@ -542,6 +578,8 @@ describe('CMS media handlers', () => {
       storagePath: 'asset_1-hero.png',
       publicPath: '/uploads/asset_1-hero.png',
       uploadedByUserId: 'user_1',
+      storageAdapterId: '',
+      externallyHosted: false,
     })
 
     const res = await handleCmsRequest(
@@ -563,6 +601,7 @@ describe('CMS media handlers', () => {
     const db = makeFakeDb()
     const cookie = await createCookie(db)
     const uploadsDir = mkdtempSync(join(tmpdir(), 'page-builder-uploads-'))
+    mediaStorageRegistry.configureLocalDisk({ uploadsDir })
     await createMediaAsset(db, {
       id: 'asset_1',
       filename: 'hero.png',
@@ -571,6 +610,8 @@ describe('CMS media handlers', () => {
       storagePath: 'asset_1-hero.png',
       publicPath: '/uploads/asset_1-hero.png',
       uploadedByUserId: 'user_1',
+      storageAdapterId: '',
+      externallyHosted: false,
     })
     await writeFile(join(uploadsDir, 'asset_1-hero.png'), 'image-bytes')
 
@@ -600,6 +641,7 @@ describe('CMS media handlers', () => {
     const db = makeFakeDb()
     const cookie = await createCookie(db)
     const uploadsDir = mkdtempSync(join(tmpdir(), 'page-builder-uploads-'))
+    mediaStorageRegistry.configureLocalDisk({ uploadsDir })
     await createMediaAsset(db, {
       id: 'asset_1',
       filename: 'hero.png',
@@ -608,6 +650,8 @@ describe('CMS media handlers', () => {
       storagePath: 'asset_1-hero.png',
       publicPath: '/uploads/asset_1-hero.png',
       uploadedByUserId: 'user_1',
+      storageAdapterId: '',
+      externallyHosted: false,
     })
     await writeFile(join(uploadsDir, 'asset_1-hero.png'), 'image-bytes')
 

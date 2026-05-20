@@ -511,4 +511,52 @@ export const sqliteMigrations: Migration[] = [
       alter table data_row_versions add column snapshot_json text;
     `,
   },
+  {
+    id: '004_media_storage_adapters',
+    sql: `
+      -- ─── Media storage adapter election (per-role) ────────────────────────
+      --
+      -- SQLite mirror of the Postgres migration. See migrations-pg.ts for
+      -- the full design rationale.
+
+      create table if not exists active_media_storage_adapter (
+        role text primary key,
+        adapter_id text not null default '',
+        elected_at text not null default current_timestamp,
+        elected_by_user_id text references users(id) on delete set null
+      );
+
+      -- Per-asset adapter pinning. SQLite < 3.37 lacks ADD COLUMN IF NOT
+      -- EXISTS; the migration tracker guarantees this block runs exactly
+      -- once, so the bare ALTER is safe (mirrors the avatar_media_id
+      -- pattern in the baseline migration).
+      alter table media_assets add column storage_adapter_id text not null default '';
+
+      -- 'externally_hosted' is stored as integer 1/0; repository code reads
+      -- it via Boolean(row.externally_hosted) — same convention as the
+      -- rest of the SQLite schema (see CLAUDE.md "Database dialect rules").
+      alter table media_assets add column externally_hosted integer not null default 0;
+    `,
+  },
+  {
+    id: '005_media_variant_delegate',
+    sql: `
+      -- ─── Variant delegate election (singleton) ────────────────────────────
+      --
+      -- SQLite mirror of the Postgres migration. See migrations-pg.ts for
+      -- the full design rationale. JSON columns end in '_json' so the
+      -- SQLite adapter auto-parses on read and stringifies on write (see
+      -- CLAUDE.md "Database dialect rules").
+
+      create table if not exists active_media_variant_delegate (
+        singleton integer primary key default 1 check (singleton = 1),
+        delegate_id text not null,
+        variant_url_template text not null,
+        widths_json text not null,
+        formats_json text not null,
+        elected_at text not null default current_timestamp,
+        elected_by_user_id text references users(id) on delete set null
+      );
+    `,
+  },
 ]

@@ -1,0 +1,21 @@
+{
+  "//": "Azure Blob storage plugin tsconfig — same path setup as the other storage plugins.",
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@pagebuilder/host-ui": ["../../../src/core/plugin-host-ui/index.ts"],
+      "@pagebuilder/host-hooks": ["../../../src/core/plugin-host-hooks/index.ts"],
+      "@pagebuilder/plugin-sdk": ["../../../src/core/plugin-sdk/index.ts"],
+      "@core/*": ["../../../src/core/*"]
+    }
+  },
+  "include": ["pb-plugin.config.ts", "server/**/*"]
+}

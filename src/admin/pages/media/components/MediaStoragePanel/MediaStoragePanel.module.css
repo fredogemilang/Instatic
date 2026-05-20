@@ -1,0 +1,204 @@
+/* MediaStoragePanel — minimal settings-style layout.
+   Matches the visual language of the Settings modal sections: small
+   uppercase section heads, bordered rows (no card surfaces), label +
+   control + muted hint per row. No cards = no shadows = no scrollbar
+   collision inside the narrow sidebar. */
+
+.root {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    padding: 4px 2px 12px;
+}
+
+.section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sectionLabel {
+    margin: 0;
+    padding: 0 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--editor-text-subtle);
+}
+
+.sectionDescription {
+    margin: 0;
+    padding: 0 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--editor-text-muted);
+}
+
+.rows {
+    display: flex;
+    flex-direction: column;
+}
+
+.row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 8px;
+    border-bottom: 1px solid var(--editor-border);
+}
+
+.row:last-child {
+    border-bottom: 0;
+}
+
+/* Row head — label · meta on one line. The label is just a normal-weight
+   text label (not a heading), the meta is muted + mono so the visual
+   hierarchy stays "select first, label is annotation". */
+.rowHead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.rowLabel {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--editor-text);
+}
+
+.rowMeta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--editor-text-muted);
+    white-space: nowrap;
+}
+
+.rowHint {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--editor-text-muted);
+}
+
+.rowSelect {
+    width: 100%;
+}
+
+/* Migration affordance — sits under the role's select. Visually a soft
+   indent so it reads as "follow-up action for this row" rather than a
+   peer of the select. Single-column flex so the button + progress
+   strings stack when the panel narrows. */
+.migration {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    margin-top: 2px;
+    padding: 8px 10px;
+    border-radius: var(--editor-radius-sm);
+    background: var(--editor-bg-subtle);
+}
+
+.migrationProgress {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--editor-text);
+}
+
+.statusBad {
+    margin: 0;
+    color: var(--editor-danger);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.statusGood {
+    color: var(--editor-success-green);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.errorBanner {
+    margin: 0 8px;
+    padding: 8px 10px;
+    border-radius: var(--editor-radius-sm);
+    background: color-mix(in oklab, var(--editor-danger) 12%, transparent);
+    color: var(--editor-danger);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.empty {
+    margin: 0;
+    padding: 12px 8px;
+    color: var(--editor-text-muted);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.delegateTemplate {
+    margin: 0;
+    padding: 6px 8px;
+    border-radius: var(--editor-radius-sm);
+    background: var(--editor-bg-subtle);
+    color: var(--editor-text-muted);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.4;
+    word-break: break-all;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 5px;
+    border-radius: var(--editor-radius-sm);
+    background: var(--editor-bg-subtle);
+    color: var(--editor-text-muted);
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.4;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.adapterBadges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.adapterMeta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--editor-text-subtle);
+    word-break: break-all;
+}
+
+.cspList {
+    margin: 0;
+    padding-left: 14px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.5;
+    color: var(--editor-text-muted);
+}
+
+.cspList li {
+    list-style: square;
+}
+
+.adapterActions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.verifyStatus {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}

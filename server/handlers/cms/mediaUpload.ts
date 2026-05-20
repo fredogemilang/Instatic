@@ -6,19 +6,24 @@
  *   - Magic-byte MIME sniffing (NEVER trust `file.type` — attacker-controlled)
  *   - Filename sanitisation (drops user-supplied extensions to prevent
  *     `.html` payloads from being served as text/html by the static handler)
- *   - Disk write to `<uploadsDir>/<storagePath>` and `createMediaAsset` row
+ *   - Two-phase dispatch through the elected `MediaStorageAdapter`
+ *     (see `./mediaUploadDispatch.ts`)
  *
- * Callers control the policy knobs (`maxBytes`, allowed MIMEs, uploader id)
- * and consume the persisted `MediaAsset` row. Keeping the byte-level checks
- * in one place is a security-critical invariant — any handler that uploads
- * media MUST go through `acceptUploadedMedia`.
+ * The byte transport itself lives in `./mediaUploadExecutor.ts` — bytes
+ * NEVER cross the QuickJS sandbox boundary, regardless of which adapter
+ * is elected. Adapters only sign plans; the host streams.
+ *
+ * Callers control the policy knobs (`maxBytes`, allowed MIMEs, uploader id,
+ * asset role) and consume the persisted `MediaAsset` row. Keeping the
+ * byte-level checks in one place is a security-critical invariant — any
+ * handler that uploads media MUST go through `acceptUploadedMedia`.
  */
-import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename } from 'node:path'
 import { nanoid } from 'nanoid'
 import type { DbClient } from '../../db/client'
 import {
   createMediaAsset,
+  getMediaAsset,
   getMediaAssetStoragePath,
   getMediaAssetVariants,
   replaceMediaAssetBinary,
@@ -26,6 +31,13 @@ import {
 } from '../../repositories/media'
 import { badRequest, jsonResponse } from '../../http'
 import { processImageVariants, removeVariantFiles } from './mediaVariants'
+import type { MediaAssetRole } from '@core/plugin-sdk'
+import {
+  buildSuggestedStoragePath,
+  dispatchDelete,
+  dispatchUpload,
+  MediaStorageDispatchError,
+} from './mediaUploadDispatch'
 
 /**
  * Whitelist of media MIMEs we accept — keys are the canonical MIME, values
@@ -131,8 +143,12 @@ interface AcceptUploadInput {
   maxBytes: number
   /** Subset of `EXTENSION_FOR_MIME` the caller is willing to accept. */
   allowedMimes: ReadonlyArray<AcceptedMediaMime>
-  /** Absolute path to the on-disk uploads directory. */
-  uploadsDir: string
+  /**
+   * Asset role — picked per call site so the dispatcher resolves the right
+   * elected adapter ('original' for the media library, 'avatar' for the
+   * avatar endpoint, 'font' for fonts).
+   */
+  role: MediaAssetRole
   /** User who triggered the upload; persisted on the media row. */
   uploadedByUserId: string | null
   /** Error message for the size-limit response (keeps the prose per-surface). */
@@ -173,6 +189,11 @@ async function validateUploadedMedia(input: AcceptUploadInput): Promise<Response
  * On any policy failure the function returns a `Response` so the caller can
  * `return response` straight from its route handler. On success it returns
  * the `MediaAsset` row from the repository.
+ *
+ * The actual byte transport is handled by `dispatchUpload`: the elected
+ * adapter for `input.role` signs an upload plan, the host streams bytes
+ * to it directly, the adapter commits. Bytes NEVER cross the QuickJS
+ * boundary.
  */
 export async function acceptUploadedMedia(
   db: DbClient,
@@ -185,19 +206,33 @@ export async function acceptUploadedMedia(
   // extension→Content-Type lookup can only ever yield the verified inert
   // MIME we just sniffed. Client-supplied extension is dropped.
   const storageName = `${safeStorageStem(input.file.name)}${EXTENSION_FOR_MIME[validated.detectedMime]}`
-  const storagePath = `${nanoid()}-${storageName}`
-  const publicPath = `/uploads/${storagePath}`
-  await mkdir(input.uploadsDir, { recursive: true })
-  await writeFile(join(input.uploadsDir, storagePath), validated.bytes)
+  const suggestedStoragePath = buildSuggestedStoragePath(safeStorageStem(input.file.name), EXTENSION_FOR_MIME[validated.detectedMime])
+
+  let dispatched
+  try {
+    dispatched = await dispatchUpload(db, {
+      bytes: validated.bytes,
+      mimeType: validated.detectedMime,
+      suggestedStoragePath,
+      role: input.role,
+    })
+  } catch (err) {
+    if (err instanceof MediaStorageDispatchError) {
+      return jsonResponse({ error: err.message }, { status: err.status })
+    }
+    throw err
+  }
 
   const asset = await createMediaAsset(db, {
     id: nanoid(),
-    filename: input.file.name || storagePath,
+    filename: input.file.name || storageName,
     mimeType: validated.detectedMime,
     sizeBytes: input.file.size,
-    storagePath,
-    publicPath,
+    storagePath: dispatched.storagePath,
+    publicPath: dispatched.publicUrl,
     uploadedByUserId: input.uploadedByUserId,
+    storageAdapterId: dispatched.storageAdapterId,
+    externallyHosted: dispatched.externallyHosted,
   })
 
   // Responsive pipeline (docs/responsive-media.md). Image-only for v1 —
@@ -206,7 +241,7 @@ export async function acceptUploadedMedia(
   // case is the row has no variants and consumers fall back to the
   // original. Logged at the boundary in `mediaVariants.ts`.
   if (validated.detectedMime.startsWith('image/')) {
-    const processed = await processImageVariants(validated.bytes, storagePath, input.uploadsDir)
+    const processed = await processImageVariants(db, validated.bytes, dispatched.storagePath)
     if (processed) {
       const upgraded = await setMediaAssetVariants(db, asset.id, {
         width: processed.width,
@@ -223,18 +258,21 @@ export async function acceptUploadedMedia(
 
 /**
  * Replace the binary backing an existing asset. Public URL stays stable —
- * the asset row keeps its `id` and `public_path` so every page tree / content
- * entry / avatar reference is automatically updated.
+ * the asset row keeps its `id` so every page tree / content entry / avatar
+ * reference is automatically updated.
  *
  * Flow:
  *   1. Run the same security checks as a fresh upload (size + magic bytes).
- *   2. Look up the existing storage path so we can remove the old file
- *      after the new one is in place.
- *   3. Write the new file under a new storage path.
+ *   2. Look up the existing asset so we know which adapter wrote its
+ *      bytes (so we delete via the right one) and its current variants.
+ *   3. Dispatch the new binary write through whichever adapter is currently
+ *      elected for the role — that may be different from the one that
+ *      wrote the previous binary, and that's fine; the row records the
+ *      new adapter id alongside the new bytes.
  *   4. Update the row (`replaceMediaAssetBinary`).
- *   5. Remove the old on-disk binary. Failures here are non-fatal — the
- *      replacement already succeeded; the worst case is an orphaned file
- *      that a future GC can sweep.
+ *   5. Delete the previous bytes via the PREVIOUS adapter. Failures here
+ *      are non-fatal — the replacement already succeeded; the worst case
+ *      is orphaned bytes the user can sweep later.
  */
 export async function acceptReplacementMedia(
   db: DbClient,
@@ -244,42 +282,64 @@ export async function acceptReplacementMedia(
   const validated = await validateUploadedMedia(input)
   if (validated instanceof Response) return validated
 
+  const previous = await getMediaAsset(db, assetId)
+  if (!previous) {
+    return jsonResponse({ error: 'Media asset not found' }, { status: 404 })
+  }
   const previousStoragePath = await getMediaAssetStoragePath(db, assetId)
   if (!previousStoragePath) {
     return jsonResponse({ error: 'Media asset not found' }, { status: 404 })
   }
   // Snapshot the previous responsive variants BEFORE the row update so we
-  // can sweep them off disk after the replace lands. The new variant ladder
-  // is derived from the new binary's dimensions, so the old files are
-  // guaranteed to be orphaned regardless of width overlap.
+  // can sweep them off the backend after the replace lands. The new
+  // variant ladder is derived from the new binary's dimensions, so the
+  // old files are guaranteed to be orphaned regardless of width overlap.
   const previousVariants = await getMediaAssetVariants(db, assetId)
 
   const storageName = `${safeStorageStem(input.file.name)}${EXTENSION_FOR_MIME[validated.detectedMime]}`
-  const storagePath = `${nanoid()}-${storageName}`
-  await mkdir(input.uploadsDir, { recursive: true })
-  await writeFile(join(input.uploadsDir, storagePath), validated.bytes)
+  const suggestedStoragePath = buildSuggestedStoragePath(safeStorageStem(input.file.name), EXTENSION_FOR_MIME[validated.detectedMime])
+
+  let dispatched
+  try {
+    dispatched = await dispatchUpload(db, {
+      bytes: validated.bytes,
+      mimeType: validated.detectedMime,
+      suggestedStoragePath,
+      role: input.role,
+    })
+  } catch (err) {
+    if (err instanceof MediaStorageDispatchError) {
+      return jsonResponse({ error: err.message }, { status: err.status })
+    }
+    throw err
+  }
 
   const updated = await replaceMediaAssetBinary(db, assetId, {
-    filename: input.file.name || storagePath,
+    filename: input.file.name || storageName,
     mimeType: validated.detectedMime,
     sizeBytes: input.file.size,
-    storagePath,
+    storagePath: dispatched.storagePath,
+    publicPath: dispatched.publicUrl,
+    storageAdapterId: dispatched.storageAdapterId,
+    externallyHosted: dispatched.externallyHosted,
   })
   if (!updated) {
     // The asset disappeared between the lookup and the update (race against
-    // a parallel hard-delete). Remove the file we just wrote so we don't
-    // leak it, then 404.
-    await rm(join(input.uploadsDir, storagePath), { force: true })
+    // a parallel hard-delete). Clean up the bytes we just wrote so we
+    // don't leak them, then 404.
+    await dispatchDelete(dispatched.storageAdapterId, dispatched.storagePath).catch((err) => {
+      console.error('[mediaUpload] post-race cleanup failed (orphaned bytes):', err)
+    })
     return jsonResponse({ error: 'Media asset not found' }, { status: 404 })
   }
 
   // Stamp the fresh responsive output, then sweep the old binary + old
-  // variants off disk. The variants step runs AFTER the row-replace so a
-  // crash mid-pipeline leaves the asset with the new original but no
+  // variants off the backend. The variants step runs AFTER the row-replace
+  // so a crash mid-pipeline leaves the asset with the new original but no
   // variants — consumers fall back to the original gracefully.
   let finalAsset = updated
   if (validated.detectedMime.startsWith('image/')) {
-    const processed = await processImageVariants(validated.bytes, storagePath, input.uploadsDir)
+    const processed = await processImageVariants(db, validated.bytes, dispatched.storagePath)
     if (processed) {
       const upgraded = await setMediaAssetVariants(db, assetId, {
         width: processed.width,
@@ -311,11 +371,12 @@ export async function acceptReplacementMedia(
     if (cleared) finalAsset = cleared
   }
 
-  await rm(join(input.uploadsDir, previousStoragePath), { force: true })
-  await removeVariantFiles(previousVariants, input.uploadsDir)
+  // Sweep the previous bytes via THEIR adapter (not the currently elected
+  // one — the asset may have lived on a different backend before this
+  // replace). Variant cleanup honours each variant's own adapter id too.
+  await dispatchDelete(previous.storageAdapterId, previousStoragePath).catch((err) => {
+    console.error('[mediaUpload] previous-binary cleanup failed (orphaned bytes):', err)
+  })
+  await removeVariantFiles(previousVariants)
   return finalAsset
-}
-
-export function uploadsDirRequired(): Response {
-  return jsonResponse({ error: 'Uploads directory is not configured' }, { status: 500 })
 }

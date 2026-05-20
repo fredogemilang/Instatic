@@ -21,6 +21,7 @@ import type { Page, PageNode } from '@core/page-tree/schemas'
 import type { IModuleRegistry } from '@core/module-engine/types'
 import type { CmsMediaAsset } from '@core/persistence/cmsMedia'
 import type { DbClient } from '../db/client'
+import { materializeAssetMapForClient } from './mediaPresentation'
 
 // Re-export under the client-shared type name so RenderContext can type
 // the map without crossing the server boundary. The repo's `MediaAsset`
@@ -184,5 +185,10 @@ export async function prefetchMediaAssets(
     `
     if (rows[0]) map.set(path, mapRow(rows[0]))
   }
-  return map
+  // Apply the `media.url.transform` filter chain to every asset's URLs
+  // (publicPath + variants[*].path). The map KEY stays the page tree's
+  // stored token so the renderer's O(1) lookup still works; the VALUE is
+  // rewritten so transformer plugins (passive CDN, image-CDN) take effect
+  // on the published page AND the editor preview iframe in one place.
+  return materializeAssetMapForClient(map)
 }

@@ -119,8 +119,15 @@ describe('plugin sandbox invariants', () => {
     // host accepts from the worker. Anything not in this list is rejected
     // before any side effect. Locking the list down prevents accidental
     // surface expansion.
+    //
+    // The regex accepts either `export const ALLOWED_API_TARGETS` or a
+    // module-private `const ALLOWED_API_TARGETS` — the constant is internal
+    // to the protocol module today (consumers reach it via parseApiCall),
+    // but the test cares about the *contents* not the visibility.
     const source = await read('server/plugins/workerProtocol.ts')
-    const allowedListMatch = source.match(/export const ALLOWED_API_TARGETS = \[([\s\S]*?)\] as const/)
+    const allowedListMatch = source.match(
+      /(?:export\s+)?const ALLOWED_API_TARGETS = \[([\s\S]*?)\] as const/,
+    )
     expect(allowedListMatch).not.toBeNull()
     const listBody = allowedListMatch![1]
     const literals = (listBody.match(/'[a-z][a-zA-Z.]+'/g) ?? []).map((s) => s.slice(1, -1)).sort()
@@ -129,6 +136,9 @@ describe('plugin sandbox invariants', () => {
       'cms.hooks.filter',
       'cms.hooks.on',
       'cms.loops.registerSource',
+      'cms.media.registerStorageAdapter',
+      'cms.media.registerUrlTransformer',
+      'cms.media.registerVariantDelegate',
       'cms.routes.register',
       'cms.schedule.cancel',
       'cms.schedule.register',
@@ -137,6 +147,8 @@ describe('plugin sandbox invariants', () => {
       'cms.storage.delete',
       'cms.storage.list',
       'cms.storage.update',
+      'crypto.digest',
+      'crypto.signHmac',
       'network.abort',
       'network.fetch',
     ])

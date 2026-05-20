@@ -44,6 +44,13 @@ function makeFakeDb(): DbClient {
     if (normalized.includes('from installed_plugins')) {
       return { rows: [], rowCount: 0 }
     }
+    // `collectFrontendInjections` reads elected media storage adapters so
+    // their declared CSP origins can extend `img-src` / `media-src` in
+    // the preview iframe's CSP. No adapter is elected in these tests, so
+    // an empty result lands the preview on the local-disk defaults.
+    if (normalized.includes('from active_media_storage_adapter')) {
+      return { rows: [], rowCount: 0 }
+    }
     throw new Error(`Unhandled SQL: ${sql}`)
   }
 

@@ -132,6 +132,27 @@ export const PLUGIN_CAPABILITIES: PluginCapability[] = [
     surfaces: ['server'],
   },
   {
+    permission: 'media.storage.adapter',
+    label: 'Provide a media storage backend',
+    description: 'Allows the plugin to register an exclusive storage adapter that the host elects per asset role (original / variant / avatar / font). The adapter issues signed upload targets; the host streams bytes directly. Required for S3, R2, GCS, Azure, and similar backends.',
+    risk: 'dangerous',
+    surfaces: ['server', 'cms'],
+  },
+  {
+    permission: 'media.url.transform',
+    label: 'Rewrite media URLs at render time',
+    description: 'Allows the plugin to register a pure URL transformer applied to every media path (originals + responsive variants) in the publisher, editor preview, and admin media library. Typical use: passive CDN URL prefixing.',
+    risk: 'medium',
+    surfaces: ['server', 'cms'],
+  },
+  {
+    permission: 'media.variant.delegate',
+    label: 'Delegate responsive variant generation to an external service',
+    description: "Allows the plugin to replace the host's local image-variant ladder with a URL template (image-transform CDNs — Cloudflare Images, Imgix, Bunny Optimizer). Only one such plugin can win per host.",
+    risk: 'high',
+    surfaces: ['server', 'cms'],
+  },
+  {
     permission: 'unstable.internals',
     label: 'Use unstable internal APIs',
     description: 'Reserved for trusted first-party plugins that need unstable host internals.',

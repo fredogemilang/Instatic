@@ -18,6 +18,7 @@ import { hardenUploadResponse, serveAdminApp, serveStaticFile } from './static'
 import { registry } from '@core/module-engine/registry'
 import type { CssBundleFile } from '@core/publisher/siteCssBundle'
 import { buildSiteCssBundle } from './publish/siteCssBundle'
+import { mediaStorageRegistry } from '@core/plugins/mediaStorageRegistry'
 
 const VITE_DEV_URL = 'http://localhost:5173'
 
@@ -63,6 +64,7 @@ const routes: readonly RouteHandler[] = [
   tryServeRuntimeAsset,
   tryServeRuntimePackageNamespace,
   tryServeSiteCssNamespace,
+  tryServeMediaRedirect,
   tryServeStaticAsset,
   tryServeUpload,
   tryServeAdminApp,
@@ -215,6 +217,70 @@ async function tryServeRuntimePackageNamespace(req: Request, _runtime: ServerRun
 async function tryServeSiteCssNamespace(req: Request, runtime: ServerRuntime, _url: URL, pathname: string): Promise<Response | null> {
   if (req.method !== 'GET' || !pathname.startsWith('/_pb/css/')) return null
   return (await serveSiteCss(runtime.db, pathname)) ?? new Response('Not found', { status: 404 })
+}
+
+/**
+ * Resolve a media asset request that lives on a plugin-registered storage
+ * adapter with `servingMode !== 'public-url'`.
+ *
+ * `dispatchUpload` synthesises a host-owned URL of the shape
+ *   /_pb/media/<adapterId>/<storagePath>
+ * for non-public-url writes, then stores that on `media_assets.public_path`
+ * (or inside each variant's `path`). Browsers hit this route; we ask the
+ * adapter for a freshly-signed read URL and 302-redirect.
+ *
+ * The route is exclusive: an unknown adapter id or missing `getReadUrl`
+ * returns 404 here rather than falling through to the public-slug handler.
+ * That keeps a misconfigured storage backend from being silently swallowed
+ * by the published-page renderer.
+ *
+ * Variants get the same treatment automatically — the variant URLs in
+ * `variants_json` carry this same shape, so the renderer's `<img srcset>`
+ * emission Just Works without per-variant DB indexing.
+ */
+async function tryServeMediaRedirect(
+  req: Request,
+  _runtime: ServerRuntime,
+  _url: URL,
+  pathname: string,
+): Promise<Response | null> {
+  if (!pathname.startsWith('/_pb/media/')) return null
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return new Response('Method not allowed', { status: 405 })
+  }
+  const match = pathname.match(/^\/_pb\/media\/([^/]+)\/(.+)$/)
+  if (!match) return new Response('Not found', { status: 404 })
+  const adapterId = decodeURIComponent(match[1])
+  const storagePath = decodeURIComponent(match[2])
+  // Local-disk asset URLs never use this route (the dispatcher's
+  // `buildSignedRedirectUrl` only fires for non-built-in adapters with
+  // `servingMode !== 'public-url'`). A request that pretends to be one is
+  // an attacker probe — 404 it.
+  if (!adapterId) return new Response('Not found', { status: 404 })
+  const adapter = mediaStorageRegistry.resolveForRead(adapterId)
+  if (!adapter || !adapter.getReadUrl) {
+    return new Response('Not found', { status: 404 })
+  }
+  let signed: { url: string; expiresAt: number }
+  try {
+    // 1 hour TTL — long enough that browser-side fetches and CDN warm-ups
+    // succeed, short enough that a leaked signed URL becomes useless fast.
+    signed = await adapter.getReadUrl(storagePath, 3600)
+  } catch (err) {
+    console.error(`[router] adapter "${adapterId}" getReadUrl failed:`, err)
+    return new Response('Not found', { status: 404 })
+  }
+  // No cache header on the 302 itself — the redirect target is signed and
+  // expires; we want every browser navigation to hit us for a fresh signature
+  // rather than reuse a stale one.
+  return new Response(null, {
+    status: 302,
+    headers: {
+      'location': signed.url,
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+    },
+  })
 }
 
 async function tryServeStaticAsset(

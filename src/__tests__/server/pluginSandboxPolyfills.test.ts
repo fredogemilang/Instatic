@@ -629,3 +629,230 @@ describe('plugin sandbox: schedule register → dispatch round-trip', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// crypto.subtle bridge — functional integration through the real sandbox.
+//
+// These tests run the same WebCrypto subset a storage / auth plugin would
+// (S3 Sigv4, JWT signing, OAuth) and verify the outputs match Bun's
+// native crypto.subtle on the host. If the bridge regresses (wrong
+// algorithm, wrong base64 framing, key/data swapped, …) the test fails
+// loud with a hex mismatch, not a silent "signature rejected by AWS"
+// at deploy time.
+// ---------------------------------------------------------------------------
+
+/**
+ * Encode bytes to lowercase hex — used by the test to compare the
+ * VM's signature output against Bun's native one. The plugin code
+ * exercises the same helper inline (kept as a string-builder so it
+ * doesn't depend on any polyfill).
+ */
+function bytesToHex(bytes: Uint8Array): string {
+  let out = ''
+  for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, '0')
+  return out
+}
+
+/**
+ * Host-side reference: run the same crypto operation via Bun's native
+ * `crypto.subtle` so the test can assert byte-for-byte equality with
+ * what the sandboxed VM produced.
+ */
+async function referenceHmacSha256Hex(key: string, data: string): Promise<string> {
+  const enc = new TextEncoder()
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const sig = await crypto.subtle.sign({ name: 'HMAC' }, cryptoKey, enc.encode(data))
+  return bytesToHex(new Uint8Array(sig))
+}
+
+async function referenceSha256Hex(data: string): Promise<string> {
+  const enc = new TextEncoder()
+  const digest = await crypto.subtle.digest('SHA-256', enc.encode(data))
+  return bytesToHex(new Uint8Array(digest))
+}
+
+/**
+ * Build an env whose hostCall ACTUALLY services `crypto.digest` and
+ * `crypto.signHmac` via Bun's native crypto.subtle — same code path
+ * the production worker host uses. This lets the test verify the
+ * sandbox's `globalThis.crypto.subtle` polyfill end-to-end without
+ * spinning up a full Worker.
+ */
+function makeCryptoEnv(pluginId: string, recorder: RecorderEntry[]): PluginVmEnv {
+  return {
+    pluginId,
+    manifestVersion: '1.0.0',
+    grantedPermissions: [],
+    assetBasePath: `/uploads/plugins/${pluginId}/1.0.0`,
+    settings: {},
+    hostCall: async (target, args) => {
+      recorder.push({ target, args })
+      if (target === 'crypto.digest') {
+        const { algorithm, data } = (args[0] ?? {}) as { algorithm: string; data: string }
+        const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0))
+        const digest = await crypto.subtle.digest(algorithm, bytes.buffer.slice(0))
+        return btoa(String.fromCharCode(...new Uint8Array(digest)))
+      }
+      if (target === 'crypto.signHmac') {
+        const { hash, key, data } = (args[0] ?? {}) as { hash: string; key: string; data: string }
+        const keyBytes = Uint8Array.from(atob(key), (c) => c.charCodeAt(0))
+        const dataBytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0))
+        const importedKey = await crypto.subtle.importKey(
+          'raw',
+          keyBytes.buffer.slice(0),
+          { name: 'HMAC', hash },
+          false,
+          ['sign'],
+        )
+        const sig = await crypto.subtle.sign({ name: 'HMAC' }, importedKey, dataBytes.buffer.slice(0))
+        return btoa(String.fromCharCode(...new Uint8Array(sig)))
+      }
+      return null
+    },
+    log: () => { /* swallow */ },
+  }
+}
+
+describe('plugin sandbox: crypto.subtle bridge', () => {
+  it('crypto.subtle.digest(SHA-256, string) matches the host reference', async () => {
+    const recorder: RecorderEntry[] = []
+    const vm = await createPluginVm({
+      env: makeCryptoEnv('acme.crypto', recorder),
+      pluginSource: `
+        ;(function () {
+          const __plugin_exports = (globalThis.__plugin_exports = {});
+          __plugin_exports.activate = async function activate() {
+            const digest = await crypto.subtle.digest('SHA-256', 'AWS4 the quick brown fox');
+            // The plugin converts the ArrayBuffer to lowercase hex without
+            // any polyfill — same code an AWS Sigv4 implementation runs.
+            const view = new Uint8Array(digest);
+            let hex = '';
+            for (let i = 0; i < view.length; i++) hex += view[i].toString(16).padStart(2, '0');
+            await __hostCall('test.record', [{ hex: hex }]);
+          };
+        })();
+      `,
+    })
+    try {
+      await vm.runLifecycle('activate')
+      const reported = recorder.find((e) => e.target === 'test.record')?.args[0] as { hex: string }
+      const expected = await referenceSha256Hex('AWS4 the quick brown fox')
+      expect(reported.hex).toBe(expected)
+    } finally {
+      vm.dispose()
+    }
+  })
+
+  it('importKey + sign produces a Sigv4-style HMAC-SHA256 byte-for-byte match', async () => {
+    const recorder: RecorderEntry[] = []
+    const vm = await createPluginVm({
+      env: makeCryptoEnv('acme.crypto', recorder),
+      pluginSource: `
+        ;(function () {
+          const __plugin_exports = (globalThis.__plugin_exports = {});
+          __plugin_exports.activate = async function activate() {
+            const key = await crypto.subtle.importKey(
+              'raw',
+              'AWS4test-secret-access-key',
+              { name: 'HMAC', hash: 'SHA-256' },
+              false,
+              ['sign'],
+            );
+            const sig = await crypto.subtle.sign({ name: 'HMAC' }, key, '20260520');
+            const view = new Uint8Array(sig);
+            let hex = '';
+            for (let i = 0; i < view.length; i++) hex += view[i].toString(16).padStart(2, '0');
+            await __hostCall('test.record', [{ hex: hex }]);
+          };
+        })();
+      `,
+    })
+    try {
+      await vm.runLifecycle('activate')
+      const reported = recorder.find((e) => e.target === 'test.record')?.args[0] as { hex: string }
+      const expected = await referenceHmacSha256Hex('AWS4test-secret-access-key', '20260520')
+      expect(reported.hex).toBe(expected)
+    } finally {
+      vm.dispose()
+    }
+  })
+
+  it('full Sigv4 key-derivation chain produces a deterministic signing key', async () => {
+    // This is the exact 4-HMAC chain AWS S3 / DynamoDB / STS etc. require
+    // before signing the canonical request. Running it end-to-end here
+    // proves the sandbox is enough to build a real S3 storage plugin.
+    const recorder: RecorderEntry[] = []
+    const vm = await createPluginVm({
+      env: makeCryptoEnv('acme.crypto', recorder),
+      pluginSource: `
+        ;(function () {
+          const __plugin_exports = (globalThis.__plugin_exports = {});
+          async function hmac(keyBytes, message) {
+            const key = await crypto.subtle.importKey(
+              'raw', keyBytes,
+              { name: 'HMAC', hash: 'SHA-256' },
+              false, ['sign'],
+            );
+            const sig = await crypto.subtle.sign({ name: 'HMAC' }, key, message);
+            return new Uint8Array(sig);
+          }
+          __plugin_exports.activate = async function activate() {
+            const secret = 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY';
+            const k1 = await hmac('AWS4' + secret, '20150830');
+            const k2 = await hmac(k1, 'us-east-1');
+            const k3 = await hmac(k2, 'iam');
+            const k4 = await hmac(k3, 'aws4_request');
+            let hex = '';
+            for (let i = 0; i < k4.length; i++) hex += k4[i].toString(16).padStart(2, '0');
+            await __hostCall('test.record', [{ signingKeyHex: hex }]);
+          };
+        })();
+      `,
+    })
+    try {
+      await vm.runLifecycle('activate')
+      const reported = recorder.find((e) => e.target === 'test.record')?.args[0] as { signingKeyHex: string }
+      // The AWS docs publish this exact derivation as a Sigv4 test
+      // vector — if our bridge agrees, we know the plugin can produce
+      // correct AWS signatures.
+      expect(reported.signingKeyHex)
+        .toBe('c4afb1cc5771d871763a393e44b703571b55cc28424d1a5e86da6ed3c154a4b9')
+    } finally {
+      vm.dispose()
+    }
+  })
+
+  it('rejects unsupported algorithms with a clear error', async () => {
+    const recorder: RecorderEntry[] = []
+    const vm = await createPluginVm({
+      env: makeCryptoEnv('acme.crypto', recorder),
+      pluginSource: `
+        ;(function () {
+          const __plugin_exports = (globalThis.__plugin_exports = {});
+          __plugin_exports.activate = async function activate() {
+            let caught = null;
+            try {
+              await crypto.subtle.digest('MD5', 'hello');
+            } catch (err) {
+              caught = err && err.message;
+            }
+            await __hostCall('test.record', [{ caught: caught }]);
+          };
+        })();
+      `,
+    })
+    try {
+      await vm.runLifecycle('activate')
+      const reported = recorder.find((e) => e.target === 'test.record')?.args[0] as { caught: string }
+      expect(reported.caught).toContain('Unsupported digest algorithm')
+    } finally {
+      vm.dispose()
+    }
+  })
+})

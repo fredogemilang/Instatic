@@ -102,6 +102,22 @@ export interface PluginVm {
   runSchedule: (scheduleId: string, maxDurationMs: number) => Promise<void>
   /** Update the VM's settings mirror so subsequent api.cms.settings.get() sees the new values. */
   updateSettings: (next: Record<string, string | number | boolean>) => Promise<void>
+  /**
+   * Invoke a method on a plugin-registered media storage adapter. The host
+   * uses this when the upload pipeline needs the adapter to sign an upload
+   * plan or commit / cleanup. Bytes are NEVER carried through this call —
+   * the adapter only signs URLs; the host streams payloads outside the VM.
+   *
+   * `method` is one of `beginWrite`, `finalizeWrite`, `abortWrite`,
+   * `delete`, `getReadUrl`, `verify` (see `MediaStorageAdapter` in
+   * `src/core/plugin-sdk/types.ts`).
+   */
+  runMediaAdapterCall: (adapterId: string, method: string, args: unknown[]) => Promise<unknown>
+  /**
+   * Apply a registered URL transformer. Receives `{ path, ctx }`, returns
+   * either the rewritten path (string) or `null` for "no change".
+   */
+  runMediaUrlTransformer: (transformerId: string, payload: { path: string; ctx: unknown }) => Promise<string | null>
   dispose: () => void
 }
 
@@ -412,6 +428,187 @@ globalThis.AbortSignal = {
   },
 };
 
+// ------- crypto.subtle — WebCrypto-compatible shim --------------------------
+// Storage / auth plugins need SHA-256 + HMAC-SHA256 (AWS Sigv4, JWT signing,
+// OAuth, presigned URLs). Without a host bridge they'd have to vendor a
+// pure-JS HMAC implementation — possible but error-prone.
+//
+// Exposed surface (matches the WebCrypto spec subset every plugin actually
+// uses):
+//   • crypto.subtle.digest(algorithm, data) → Promise<ArrayBuffer>
+//   • crypto.subtle.importKey('raw', key, { name: 'HMAC', hash }, extractable, ['sign'])
+//       → Promise<CryptoKey>   // opaque handle wrapping raw bytes
+//   • crypto.subtle.sign({ name: 'HMAC' }, key, data) → Promise<ArrayBuffer>
+//
+// Inputs accept any BufferSource (ArrayBuffer, Uint8Array, etc.) OR a
+// string (UTF-8 encoded into bytes inside the shim — the most common
+// caller shape for AWS canonical-request strings). Outputs are
+// ArrayBuffer; callers wrap in Uint8Array as usual.
+//
+// Bytes cross the host bridge as base64-encoded strings. Inputs are
+// size-capped on the host (8 MB after decode); AWS signing strings are
+// always < 4 KB so the cap is comfortable.
+function __utf8Encode(str) {
+  // QuickJS doesn't ship TextEncoder, but we only need UTF-8 of a
+  // string we control here. Implementing the encoder inline keeps the
+  // surface minimal — and the bytes get base64'd straight away.
+  const out = [];
+  for (let i = 0; i < str.length; i++) {
+    let c = str.charCodeAt(i);
+    if (c < 0x80) {
+      out.push(c);
+    } else if (c < 0x800) {
+      out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+    } else if (c >= 0xd800 && c <= 0xdbff) {
+      // Surrogate pair — combine with the next code unit.
+      const next = str.charCodeAt(++i);
+      const cp = 0x10000 + (((c & 0x3ff) << 10) | (next & 0x3ff));
+      out.push(
+        0xf0 | (cp >> 18),
+        0x80 | ((cp >> 12) & 0x3f),
+        0x80 | ((cp >> 6) & 0x3f),
+        0x80 | (cp & 0x3f),
+      );
+    } else {
+      out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+    }
+  }
+  return new Uint8Array(out);
+}
+
+const __B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+function __bytesToBase64(bytes) {
+  let out = '';
+  let i = 0;
+  for (; i + 2 < bytes.length; i += 3) {
+    const triplet = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+    out += __B64_CHARS[(triplet >> 18) & 0x3f]
+      + __B64_CHARS[(triplet >> 12) & 0x3f]
+      + __B64_CHARS[(triplet >> 6) & 0x3f]
+      + __B64_CHARS[triplet & 0x3f];
+  }
+  const rem = bytes.length - i;
+  if (rem === 1) {
+    const a = bytes[i];
+    out += __B64_CHARS[a >> 2] + __B64_CHARS[(a << 4) & 0x3f] + '==';
+  } else if (rem === 2) {
+    const a = bytes[i];
+    const b = bytes[i + 1];
+    out += __B64_CHARS[a >> 2]
+      + __B64_CHARS[((a << 4) | (b >> 4)) & 0x3f]
+      + __B64_CHARS[(b << 2) & 0x3f]
+      + '=';
+  }
+  return out;
+}
+
+const __B64_DECODE = new Uint8Array(128);
+for (let i = 0; i < __B64_CHARS.length; i++) __B64_DECODE[__B64_CHARS.charCodeAt(i)] = i;
+
+function __base64ToBytes(base64) {
+  // Strip trailing '=' padding for the length computation but tolerate
+  // its presence on input (we just stop at the first '=').
+  let padded = base64;
+  while (padded.length % 4 !== 0) padded += '=';
+  const padCount = (padded.endsWith('==') ? 2 : padded.endsWith('=') ? 1 : 0);
+  const byteLength = (padded.length * 3) / 4 - padCount;
+  const out = new Uint8Array(byteLength);
+  let o = 0;
+  for (let i = 0; i < padded.length; i += 4) {
+    const a = __B64_DECODE[padded.charCodeAt(i)] || 0;
+    const b = __B64_DECODE[padded.charCodeAt(i + 1)] || 0;
+    const c = padded.charCodeAt(i + 2) === 0x3d ? 0 : (__B64_DECODE[padded.charCodeAt(i + 2)] || 0);
+    const d = padded.charCodeAt(i + 3) === 0x3d ? 0 : (__B64_DECODE[padded.charCodeAt(i + 3)] || 0);
+    out[o++] = (a << 2) | (b >> 4);
+    if (o < byteLength) out[o++] = ((b << 4) & 0xff) | (c >> 2);
+    if (o < byteLength) out[o++] = ((c << 6) & 0xff) | d;
+  }
+  return out;
+}
+
+function __cryptoInputToBase64(input) {
+  if (typeof input === 'string') return __bytesToBase64(__utf8Encode(input));
+  if (input instanceof Uint8Array) return __bytesToBase64(input);
+  if (input instanceof ArrayBuffer) return __bytesToBase64(new Uint8Array(input));
+  if (input && typeof input === 'object' && input.buffer instanceof ArrayBuffer) {
+    // TypedArray view (Int8Array / DataView / etc.). Slice into a
+    // fresh Uint8Array so we don't accidentally read past byteLength.
+    return __bytesToBase64(new Uint8Array(
+      input.buffer.slice(input.byteOffset || 0, (input.byteOffset || 0) + input.byteLength),
+    ));
+  }
+  throw new TypeError('Crypto input must be a string, ArrayBuffer, or BufferSource');
+}
+
+function __cryptoNormalizeAlgorithm(algorithm) {
+  if (typeof algorithm === 'string') return algorithm;
+  if (algorithm && typeof algorithm === 'object' && typeof algorithm.name === 'string') return algorithm.name;
+  throw new TypeError('Crypto algorithm must be a string or { name } object');
+}
+
+function __cryptoNormalizeHash(hash) {
+  if (typeof hash === 'string') return hash;
+  if (hash && typeof hash === 'object' && typeof hash.name === 'string') return hash.name;
+  throw new TypeError("Hash algorithm must be a string or { name } object");
+}
+
+const __CRYPTO_SUPPORTED_HASHES = ['SHA-256', 'SHA-1', 'SHA-512'];
+
+globalThis.crypto = globalThis.crypto || {};
+globalThis.crypto.subtle = {
+  digest: async function digest(algorithm, data) {
+    const name = __cryptoNormalizeAlgorithm(algorithm);
+    if (__CRYPTO_SUPPORTED_HASHES.indexOf(name) < 0) {
+      throw new Error('Unsupported digest algorithm: ' + name);
+    }
+    const base64 = __cryptoInputToBase64(data);
+    const resultBase64 = await __hostCall('crypto.digest', [{ algorithm: name, data: base64 }]);
+    const bytes = __base64ToBytes(String(resultBase64));
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  },
+  importKey: async function importKey(format, keyData, algorithm, _extractable, keyUsages) {
+    if (format !== 'raw') {
+      throw new TypeError("Only 'raw' key format is supported in this sandbox.");
+    }
+    const algoName = __cryptoNormalizeAlgorithm(algorithm);
+    if (algoName !== 'HMAC') {
+      throw new TypeError("Only HMAC keys are supported in this sandbox.");
+    }
+    const hashName = __cryptoNormalizeHash(algorithm && algorithm.hash);
+    if (__CRYPTO_SUPPORTED_HASHES.indexOf(hashName) < 0) {
+      throw new Error('Unsupported HMAC hash: ' + hashName);
+    }
+    if (!Array.isArray(keyUsages) || keyUsages.indexOf('sign') < 0) {
+      throw new TypeError("HMAC importKey requires usages to include 'sign'.");
+    }
+    return {
+      __cryptoKey: true,
+      type: 'secret',
+      algorithm: { name: 'HMAC', hash: { name: hashName } },
+      extractable: false,
+      usages: ['sign'],
+      __raw: __cryptoInputToBase64(keyData),
+    };
+  },
+  sign: async function sign(algorithm, key, data) {
+    if (!key || !key.__cryptoKey) {
+      throw new TypeError('Sign requires a CryptoKey returned by importKey.');
+    }
+    const algoName = __cryptoNormalizeAlgorithm(algorithm);
+    if (algoName !== 'HMAC') {
+      throw new TypeError('Only HMAC signing is supported in this sandbox.');
+    }
+    const dataBase64 = __cryptoInputToBase64(data);
+    const sigBase64 = await __hostCall('crypto.signHmac', [{
+      hash: key.algorithm.hash.name,
+      key: key.__raw,
+      data: dataBase64,
+    }]);
+    const bytes = __base64ToBytes(String(sigBase64));
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  },
+};
+
 // ------- gated fetch -------
 // Plugins with the 'network.outbound' permission AND a matching entry in
 // the manifest's networkAllowedHosts can issue outbound HTTP. The host
@@ -503,6 +700,13 @@ globalThis.__plugin_handlers = {
   filters: {},
   loopSources: {},
   schedules: {},
+  // Media subsystem — each adapter is keyed by its namespaced id; each
+  // entry is the { beginWrite, finalizeWrite, abortWrite, delete,
+  // getReadUrl?, verify, readStream? } record the plugin handed to
+  // api.cms.media.registerStorageAdapter. URL transformers are keyed by
+  // a host-minted transformer id (mirroring the hook-filter pattern).
+  mediaAdapters: {},
+  mediaUrlTransformers: {},
 };
 
 // ------- the api object plugins receive -------
@@ -669,6 +873,98 @@ globalThis.__buildApi = function buildApi() {
     },
   };
 
+  // ---- media subsystem -----------------------------------------------------
+  // Three independent surfaces under api.cms.media. The callbacks live INSIDE
+  // the VM (stored under __plugin_handlers.mediaAdapters / mediaUrlTransformers);
+  // the host only knows the adapter id + metadata. The host calls back into
+  // the VM via __runMediaAdapterCall / __runMediaUrlTransformer when it
+  // actually needs to upload/delete/transform a path.
+
+  function registerStorageAdapter(adapter) {
+    assertPermission('media.storage.adapter');
+    if (!adapter || typeof adapter !== 'object') throw new TypeError('registerStorageAdapter: adapter must be an object');
+    if (typeof adapter.id !== 'string' || !adapter.id) throw new TypeError("registerStorageAdapter: 'id' is required");
+    if (adapter.id.indexOf(meta.id + '.') !== 0) {
+      throw new Error('registerStorageAdapter: adapter id "' + adapter.id + '" must start with the plugin id "' + meta.id + '."');
+    }
+    if (typeof adapter.label !== 'string' || !adapter.label) throw new TypeError("registerStorageAdapter: 'label' is required");
+    if (!Array.isArray(adapter.roles) || adapter.roles.length === 0) {
+      throw new TypeError("registerStorageAdapter: 'roles' must be a non-empty array");
+    }
+    if (typeof adapter.servingMode !== 'string') throw new TypeError("registerStorageAdapter: 'servingMode' is required");
+    if (typeof adapter.beginWrite !== 'function') throw new TypeError("registerStorageAdapter: 'beginWrite' must be a function");
+    if (typeof adapter.finalizeWrite !== 'function') throw new TypeError("registerStorageAdapter: 'finalizeWrite' must be a function");
+    if (typeof adapter.abortWrite !== 'function') throw new TypeError("registerStorageAdapter: 'abortWrite' must be a function");
+    if (typeof adapter['delete'] !== 'function') throw new TypeError("registerStorageAdapter: 'delete' must be a function");
+    if (typeof adapter.verify !== 'function') throw new TypeError("registerStorageAdapter: 'verify' must be a function");
+    // Mode-specific constraints — the host re-validates but throwing here
+    // surfaces the bug at activation time instead of first-use.
+    if (adapter.servingMode === 'proxy' && typeof adapter.readStream !== 'function') {
+      throw new TypeError("registerStorageAdapter: servingMode 'proxy' requires a 'readStream' function");
+    }
+    if (adapter.servingMode !== 'proxy' && typeof adapter.getReadUrl !== 'function') {
+      throw new TypeError("registerStorageAdapter: servingMode '" + adapter.servingMode + "' requires a 'getReadUrl' function");
+    }
+    // Stash the live callback bag — keyed by id so the host's call-into-VM
+    // round-trip can find it without iterating.
+    globalThis.__plugin_handlers.mediaAdapters[adapter.id] = {
+      beginWrite: adapter.beginWrite,
+      finalizeWrite: adapter.finalizeWrite,
+      abortWrite: adapter.abortWrite,
+      delete: adapter['delete'],
+      getReadUrl: typeof adapter.getReadUrl === 'function' ? adapter.getReadUrl : null,
+      verify: adapter.verify,
+      readStream: typeof adapter.readStream === 'function' ? adapter.readStream : null,
+    };
+    // Normalise CSP origins — accept either array of objects or undefined.
+    const cspOrigins = Array.isArray(adapter.cspOrigins)
+      ? adapter.cspOrigins.map(function (entry) {
+        return { directive: String(entry.directive), origin: String(entry.origin) };
+      })
+      : undefined;
+    return call('cms.media.registerStorageAdapter', [{
+      adapterId: adapter.id,
+      label: String(adapter.label),
+      roles: adapter.roles.slice(),
+      servingMode: String(adapter.servingMode),
+      hasGetReadUrl: typeof adapter.getReadUrl === 'function',
+      hasReadStream: typeof adapter.readStream === 'function',
+      cspOrigins: cspOrigins,
+    }]);
+  }
+
+  function registerUrlTransformer(fn) {
+    assertPermission('media.url.transform');
+    if (typeof fn !== 'function') throw new TypeError('registerUrlTransformer: argument must be a function');
+    const transformerId = __nextId('mediaUrlT');
+    globalThis.__plugin_handlers.mediaUrlTransformers[transformerId] = fn;
+    return call('cms.media.registerUrlTransformer', [{ transformerId: transformerId }]);
+  }
+
+  function registerVariantDelegate(delegate) {
+    assertPermission('media.variant.delegate');
+    if (!delegate || typeof delegate !== 'object') throw new TypeError('registerVariantDelegate: argument must be an object');
+    if (typeof delegate.id !== 'string' || !delegate.id) throw new TypeError("registerVariantDelegate: 'id' is required");
+    if (delegate.id.indexOf(meta.id + '.') !== 0) {
+      throw new Error('registerVariantDelegate: id "' + delegate.id + '" must start with the plugin id "' + meta.id + '."');
+    }
+    if (typeof delegate.variantUrlTemplate !== 'string') {
+      throw new TypeError("registerVariantDelegate: 'variantUrlTemplate' must be a string");
+    }
+    if (!Array.isArray(delegate.widths) || delegate.widths.length === 0) {
+      throw new TypeError("registerVariantDelegate: 'widths' must be a non-empty array");
+    }
+    if (!Array.isArray(delegate.formats) || delegate.formats.length === 0) {
+      throw new TypeError("registerVariantDelegate: 'formats' must be a non-empty array");
+    }
+    return call('cms.media.registerVariantDelegate', [{
+      delegateId: delegate.id,
+      variantUrlTemplate: delegate.variantUrlTemplate,
+      widths: delegate.widths.slice(),
+      formats: delegate.formats.slice(),
+    }]);
+  }
+
   return {
     plugin: {
       id: meta.id,
@@ -711,6 +1007,11 @@ globalThis.__buildApi = function buildApi() {
       loops: { registerSource: registerSource },
       settings: settingsApi,
       schedule: scheduleApi,
+      media: {
+        registerStorageAdapter: registerStorageAdapter,
+        registerUrlTransformer: registerUrlTransformer,
+        registerVariantDelegate: registerVariantDelegate,
+      },
     },
   };
 };
@@ -828,6 +1129,42 @@ globalThis.__runSchedule = async function runSchedule(scheduleId) {
     return;
   }
   await handler();
+};
+
+/**
+ * Generic adapter dispatch. The host calls this when it needs to invoke a
+ * method on a plugin-registered MediaStorageAdapter (beginWrite, finalizeWrite,
+ * abortWrite, delete, getReadUrl, verify). One runner instead of six so the
+ * dispatcher's surface stays narrow and the per-method routing happens
+ * inside the VM via a property lookup on the handler bag.
+ *
+ * argsJson is the JSON-encoded argument array for the method (so
+ * beginWrite receives one object, delete receives one string, etc.). The
+ * runner returns JSON-stringified value so the host's evalString helper
+ * can carry the result back.
+ */
+globalThis.__runMediaAdapterCall = async function runMediaAdapterCall(adapterId, method, argsJson) {
+  const adapter = globalThis.__plugin_handlers.mediaAdapters[adapterId];
+  if (!adapter) throw new Error('Media adapter not registered: ' + adapterId);
+  const fn = adapter[method];
+  if (typeof fn !== 'function') throw new Error('Media adapter "' + adapterId + '" does not implement "' + method + '"');
+  const argsArray = JSON.parse(argsJson);
+  // .apply doesn't work cleanly through QuickJS' function wrapping; spread
+  // into a regular call. Adapter methods accept 0..2 arguments in v1.
+  const result = await fn(argsArray[0], argsArray[1]);
+  return JSON.stringify(result === undefined ? null : result);
+};
+
+globalThis.__runMediaUrlTransformer = async function runMediaUrlTransformer(transformerId, payloadJson) {
+  const fn = globalThis.__plugin_handlers.mediaUrlTransformers[transformerId];
+  if (typeof fn !== 'function') {
+    // Pass-through fallback. The host treats a null return as "no rewrite,
+    // chain through to the next transformer's input value".
+    return JSON.stringify(null);
+  }
+  const payload = JSON.parse(payloadJson);
+  const next = await fn(payload.path, payload.ctx);
+  return JSON.stringify(typeof next === 'string' ? next : null);
 };
 
 globalThis.__updateSettings = function updateSettings(nextJson) {
@@ -1095,6 +1432,25 @@ export async function createPluginVm(args: {
       async updateSettings(next) {
         const json = JSON.stringify(next)
         await evalVoid(ctx, `__updateSettings(${JSON.stringify(json)})`)
+      },
+
+      async runMediaAdapterCall(adapterId, method, callArgs) {
+        const argsJson = JSON.stringify(callArgs ?? [])
+        const resultJson = await evalString(
+          ctx,
+          `__runMediaAdapterCall(${JSON.stringify(adapterId)}, ${JSON.stringify(method)}, ${JSON.stringify(argsJson)})`,
+        )
+        return JSON.parse(resultJson) as unknown
+      },
+
+      async runMediaUrlTransformer(transformerId, payload) {
+        const payloadJson = JSON.stringify(payload)
+        const resultJson = await evalString(
+          ctx,
+          `__runMediaUrlTransformer(${JSON.stringify(transformerId)}, ${JSON.stringify(payloadJson)})`,
+        )
+        const parsed = JSON.parse(resultJson) as unknown
+        return typeof parsed === 'string' ? parsed : null
       },
 
       dispose() {
