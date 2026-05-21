@@ -13,7 +13,6 @@ import {
   getPublishedDataRowByRoute,
   getDataRowRedirectByRoute,
 } from '../../../server/repositories/data'
-import { renderDataRowDocumentHtml } from '../../../server/publish/dataRenderer'
 import { handleServerRequest } from '../../../server/router'
 import { createFakeDb } from './dbTestFake'
 
@@ -101,6 +100,10 @@ describe('data CMS repository', () => {
   })
 
   it('creates a data table with persisted field settings', async () => {
+    // Tracks rows the template-seeding path inserts so we can return
+    // shaped responses to `select` queries that follow.
+    let seededPageRow: { id: string; cells: Record<string, unknown>; slug: string } | null = null
+
     const db = makeDataFakeDb([
       (sql, params) => {
         if (!sql.startsWith('insert into data_tables')) return undefined
@@ -126,6 +129,92 @@ describe('data CMS repository', () => {
           rowCount: 1,
         }
       },
+      // postType creation triggers default-entry-template seeding. The
+      // seeding helper:
+      //   1. lists existing page rows to check whether a template already
+      //      targets this table's slug (returns empty → none exist),
+      //   2. picks an available slug (`<slug>-template`),
+      //   3. inserts a draft data_row,
+      //   4. re-reads the row,
+      //   5. transactions a publishDataRow which writes a data_row_version,
+      //      updates the data_row to status=published, and reads the
+      //      previous-published-route + version-number.
+      (sql) => {
+        // Step 1: existence check.
+        if (sql.startsWith("select cells_json from data_rows") && sql.includes("table_id = 'pages'")) {
+          return { rows: [], rowCount: 0 }
+        }
+        return undefined
+      },
+      (sql) => {
+        // Step 2: slug collision check.
+        if (sql.startsWith('select id from data_rows') && sql.includes('and slug = ')) {
+          return { rows: [], rowCount: 0 }
+        }
+        return undefined
+      },
+      (sql, params) => {
+        // Step 3: insert seeded page row.
+        if (sql.startsWith('insert into data_rows')) {
+          seededPageRow = {
+            id: String(params[0]),
+            cells: params[2] as Record<string, unknown>,
+            slug: String(params[3]),
+          }
+          return { rows: [{ id: seededPageRow.id }], rowCount: 1 }
+        }
+        return undefined
+      },
+      (sql, params) => {
+        // Steps 4 / re-read after insert + publish: getDataRow.
+        if (sql.startsWith('select') && sql.includes('from data_rows') && sql.includes('left join') && seededPageRow) {
+          if (String(params[0]) !== seededPageRow.id) return undefined
+          return {
+            rows: [{
+              id: seededPageRow.id,
+              table_id: 'pages',
+              cells_json: seededPageRow.cells,
+              slug: seededPageRow.slug,
+              status: 'draft',
+              author_user_id: null,
+              author_name: null,
+              author_role_slug: null,
+              author_role_name: null,
+              created_by_user_id: null,
+              updated_by_user_id: null,
+              published_by_user_id: null,
+              published_by_name: null,
+              published_by_role_slug: null,
+              published_by_role_name: null,
+              published_at: null,
+              created_at: rowDate('2026-05-01T10:00:00Z'),
+              updated_at: rowDate('2026-05-01T10:00:00Z'),
+              active_version_id: null,
+              scheduled_publish_at: null,
+            }],
+            rowCount: 1,
+          }
+        }
+        return undefined
+      },
+      (sql) => {
+        // Step 5: publishDataRow's previous-route lookup (returns empty
+        // since this is the first publish), version-number max, version
+        // insert, status update.
+        if (sql.startsWith('select data_row_versions.slug as previous_slug')) {
+          return { rows: [], rowCount: 0 }
+        }
+        if (sql.startsWith('select coalesce(max(version_number)')) {
+          return { rows: [{ next: 1 }], rowCount: 1 }
+        }
+        if (sql.startsWith('insert into data_row_versions')) {
+          return { rows: [], rowCount: 1 }
+        }
+        if (sql.startsWith('update data_rows') && sql.includes("set status = 'published'")) {
+          return { rows: [{ id: seededPageRow?.id ?? '' }], rowCount: 1 }
+        }
+        return undefined
+      },
     ])
 
     await expect(createDataTable(db, {
@@ -143,6 +232,14 @@ describe('data CMS repository', () => {
       slug: 'products',
       fields: defaultFields,
     })
+
+    // Verify the seeding side-effect actually ran: a template page row
+    // got inserted with the right template config.
+    expect(seededPageRow).not.toBeNull()
+    const cells = (seededPageRow as unknown as { cells: Record<string, unknown> } | null)?.cells ?? {}
+    expect(cells.templateEnabled).toBe(true)
+    expect(cells.templateContext).toBe('entry')
+    expect(cells.templateTableSlug).toBe('products')
   })
 
   it('updates table identity, route, labels, and field settings', async () => {
@@ -320,132 +417,15 @@ describe('data CMS repository', () => {
   })
 })
 
-describe('data CMS rendering', () => {
-  it('renders markdown data row as safe public HTML', () => {
-    const html = renderDataRowDocumentHtml({
-      id: 'version_1',
-      rowId: 'row_1',
-      tableId: 'posts',
-      tableSlug: 'posts',
-      tableKind: 'postType',
-      tableRouteBase: '/posts',
-      versionNumber: 1,
-      cells: {
-        title: 'Hello <script>alert(1)</script>',
-        slug: 'hello',
-        body: [
-          '# Heading',
-          '',
-          'Paragraph with [link](https://example.com).',
-          '',
-          '![Alt image](/uploads/image.png)',
-          '',
-          '@[video](/uploads/movie.mp4)',
-        ].join('\n'),
-        featuredMedia: null,
-        seoTitle: 'SEO Hello',
-        seoDescription: 'Description',
-      },
-      slug: 'hello',
-      featuredMediaId: null,
-      featuredMediaPath: null,
-      authorUserId: null,
-      authorName: null,
-      authorRoleSlug: null,
-      authorRoleName: null,
-      publishedByUserId: null,
-      publishedByName: null,
-      publishedByRoleSlug: null,
-      publishedByRoleName: null,
-      publishedAt: '2026-05-01T10:00:00.000Z',
-      createdAt: '2026-05-01T10:00:00.000Z',
-    })
-
-    expect(html).toContain('<!DOCTYPE html>')
-    expect(html).toContain('<title>SEO Hello</title>')
-    expect(html).toContain('<h1>Heading</h1>')
-    expect(html).toContain('<a href="https://example.com"')
-    expect(html).toContain('<img src="/uploads/image.png" alt="Alt image"')
-    expect(html).toContain('<video controls src="/uploads/movie.mp4"')
-    expect(html).not.toContain('<script>')
-  })
-
-  it('resolves {page.*} and {currentEntry.*} tokens embedded in cells', () => {
-    const html = renderDataRowDocumentHtml({
-      id: 'version_2',
-      rowId: 'row_2',
-      tableId: 'posts',
-      tableSlug: 'posts',
-      tableKind: 'postType',
-      tableRouteBase: '/posts',
-      versionNumber: 1,
-      cells: {
-        title: 'My Post',
-        slug: 'my-post',
-        body: 'Welcome to {page.title} — see {currentEntry.title}!',
-        featuredMedia: null,
-        seoTitle: '',
-        seoDescription: '',
-      },
-      slug: 'my-post',
-      featuredMediaId: null,
-      featuredMediaPath: null,
-      authorUserId: null,
-      authorName: null,
-      authorRoleSlug: null,
-      authorRoleName: null,
-      publishedByUserId: null,
-      publishedByName: null,
-      publishedByRoleSlug: null,
-      publishedByRoleName: null,
-      publishedAt: '2026-05-01T10:00:00.000Z',
-      createdAt: '2026-05-01T10:00:00.000Z',
-    })
-
-    // The fallback renderer synthesises a `page` frame from the row, so
-    // `{page.title}` maps to the row's title. `{currentEntry.title}`
-    // resolves against the entry stack frame.
-    expect(html).toContain('Welcome to My Post — see My Post!')
-  })
-
-  it('emits the token fallback when a value is missing', () => {
-    const html = renderDataRowDocumentHtml({
-      id: 'version_3',
-      rowId: 'row_3',
-      tableId: 'posts',
-      tableSlug: 'posts',
-      tableKind: 'postType',
-      tableRouteBase: '/posts',
-      versionNumber: 1,
-      cells: {
-        title: 'Authored',
-        slug: 'authored',
-        body: 'Hello {viewer.displayName|guest}!',
-        featuredMedia: null,
-        seoTitle: '',
-        seoDescription: '',
-      },
-      slug: 'authored',
-      featuredMediaId: null,
-      featuredMediaPath: null,
-      authorUserId: null,
-      authorName: null,
-      authorRoleSlug: null,
-      authorRoleName: null,
-      publishedByUserId: null,
-      publishedByName: null,
-      publishedByRoleSlug: null,
-      publishedByRoleName: null,
-      publishedAt: '2026-05-01T10:00:00.000Z',
-      createdAt: '2026-05-01T10:00:00.000Z',
-    })
-
-    expect(html).toContain('Hello guest!')
-  })
-})
-
 describe('data CMS public routes', () => {
-  it('renders published data rows without a page template using the document fallback', async () => {
+  it('returns 404 when a postType row has no matching entry template', async () => {
+    // Defensive contract: `createDataTable` auto-seeds an entry template
+    // for every postType table, and the boot backfill catches any older
+    // table that's missing one. So `renderPublishedDataRowTemplate`
+    // returning `null` here represents a corrupt install (template was
+    // hard-deleted, no published site snapshot, etc.). The dispatcher
+    // surfaces that as a 404 rather than inventing a half-styled
+    // fallback document.
     const db = makeDataFakeDb([
       (sql) => {
         if (sql.startsWith('select id, name, version, enabled, lifecycle_status')) {
@@ -454,13 +434,13 @@ describe('data CMS public routes', () => {
         return undefined
       },
       (sql) => {
-        // getPublishedPageBySlug — now queries data_row_versions.snapshot_json
+        // getPublishedPageBySlug — no snapshot for this slug.
         if (sql.startsWith('select data_row_versions.snapshot_json')) {
           return { rows: [], rowCount: 0 }
         }
         return undefined
       },
-      (sql, params) => {
+      (sql) => {
         if (!sql.startsWith('select data_row_versions.id')) return undefined
         return {
           rows: [{
@@ -486,14 +466,26 @@ describe('data CMS public routes', () => {
           rowCount: 1,
         }
       },
+      (sql) => {
+        // No redirect for this slug either.
+        if (sql.startsWith('select id, table_id, from_route_base')) {
+          return { rows: [], rowCount: 0 }
+        }
+        return undefined
+      },
+      (sql) => {
+        if (sql.startsWith('select count(*) as count from site')) {
+          return { rows: [{ count: 1 }], rowCount: 1 }
+        }
+        if (sql.startsWith('select count(*) as count') && sql.includes('from users')) {
+          return { rows: [{ count: 1 }], rowCount: 1 }
+        }
+        return undefined
+      },
     ])
 
     const res = await handleServerRequest(new Request('http://localhost/products/some-product'), { db })
-    const html = await res.text()
 
-    expect(res.status).toBe(200)
-    expect(res.headers.get('content-type')).toContain('text/html')
-    expect(html).toContain('<h1>Some product</h1>')
-    expect(html).toContain('<p>A product body.</p>')
+    expect(res.status).toBe(404)
   })
 })

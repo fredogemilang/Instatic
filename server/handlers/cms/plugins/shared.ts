@@ -39,6 +39,7 @@ import {
   getInstalledPlugin,
   listInstalledPlugins,
   listPluginCrashes,
+  type InstalledPluginResult,
 } from '../../../repositories/plugins'
 import { collectEnabledAdminPages } from '@core/plugins/manifest'
 import { assertPluginPathWithin } from '../../../plugins/runtime'
@@ -86,21 +87,66 @@ export async function recordPluginAuditEvent(
 // Response payloads
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a minimal `InstalledPlugin` stub for a plugin whose `manifest_json`
+ * cannot be parsed. The stub carries `lifecycleStatus: 'error'` and the parse
+ * error in `lastError` so the admin UI can display the problem and offer a
+ * Remove button. `name` and `version` come from the row's own columns — they
+ * are written at install time independently of `manifest_json` and are always
+ * reliable.
+ */
+function brokenPluginStub(
+  result: Extract<InstalledPluginResult, { kind: 'broken' }>,
+): InstalledPlugin {
+  const stubManifest: PluginManifest = {
+    id: result.id,
+    name: result.name,
+    version: result.version,
+    apiVersion: 1,
+    permissions: [],
+    resources: [],
+    adminPages: [],
+  }
+  return {
+    id: result.id,
+    name: result.name,
+    version: result.version,
+    enabled: false,
+    lifecycleStatus: 'error',
+    lastError: result.reason,
+    grantedPermissions: [],
+    manifest: stubManifest,
+    settings: {},
+    installedAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  }
+}
+
 export async function pluginsPayload(db: DbClient) {
-  const plugins = await listInstalledPlugins(db)
+  const results = await listInstalledPlugins(db)
+  // Materialise every result — ok or broken — as an InstalledPlugin for the
+  // wire. Broken plugins get a stub with lifecycleStatus='error' so the admin
+  // UI can surface the parse error and offer a Remove button.
+  const asPlugins = results.map((r) => (r.kind === 'ok' ? r.plugin : brokenPluginStub(r)))
   // Attach recent crash events per plugin so the admin UI can render the
   // "Recent issues" panel without an extra round trip per card. Cap at 10
   // most recent — older events stay in the DB but the UI only shows the
   // recent slice.
   const pluginsWithCrashes = await Promise.all(
-    plugins.map(async (plugin) => ({
+    asPlugins.map(async (plugin) => ({
       ...plugin,
       recentCrashes: await listPluginCrashes(db, plugin.id, 10),
     })),
   )
+  // Only properly-parsed plugins contribute admin page nav entries — broken
+  // plugins have stub manifests with empty adminPages arrays anyway, but
+  // filtering explicitly makes the intent clear.
+  const okPlugins = results
+    .filter((r): r is Extract<InstalledPluginResult, { kind: 'ok' }> => r.kind === 'ok')
+    .map((r) => r.plugin)
   return {
     plugins: pluginsWithCrashes,
-    adminPages: collectEnabledAdminPages(plugins),
+    adminPages: collectEnabledAdminPages(okPlugins),
   }
 }
 
@@ -248,7 +294,7 @@ export async function getEnabledPluginResource(
   pluginId: string,
   resourceId: string,
 ): Promise<PluginResource | null> {
-  const plugin = await getInstalledPlugin(db, pluginId)
-  if (!plugin?.enabled) return null
-  return findPluginResource(plugin.manifest, resourceId)
+  const result = await getInstalledPlugin(db, pluginId)
+  if (!result || result.kind !== 'ok' || !result.plugin.enabled) return null
+  return findPluginResource(result.plugin.manifest, resourceId)
 }

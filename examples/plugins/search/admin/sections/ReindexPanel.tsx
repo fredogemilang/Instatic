@@ -5,25 +5,45 @@
  * "Clear index" shows an inline confirm state to prevent accidental use.
  * We do NOT use window.confirm() — per project rules.
  *
- * "Reindex all" works by asking the operator to re-publish all pages via
- * the site editor's Publish All action. The search plugin has no API to
- * enumerate published pages — indexing happens automatically when pages are
- * published (via the publish.html filter). This is documented clearly in
- * the README.
+ * "Reindex all" calls POST /reindex which triggers api.cms.pages.republishAll()
+ * on the server side, re-running the publish pipeline for every published page
+ * and rebuilding the search index from scratch.
  */
 import { useCallback, useState } from 'react'
 import { Alert, Button, Card, Heading, Stack, Text } from '@pagebuilder/host-ui'
 import { usePluginRoutes } from '@pagebuilder/host-hooks'
-import { OkResponseSchema } from '../apiSchemas'
+import { OkResponseSchema, ReindexResponseSchema } from '../apiSchemas'
 import styles from './ReindexPanel.module.css'
 
 export function ReindexPanel() {
   const routes = usePluginRoutes()
 
+  const [reindexing, setReindexing] = useState(false)
+  const [reindexMessage, setReindexMessage] = useState<string | null>(null)
+  const [reindexError, setReindexError] = useState<string | null>(null)
+
   const [clearConfirm, setClearConfirm] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [clearMessage, setClearMessage] = useState<string | null>(null)
   const [clearError, setClearError] = useState<string | null>(null)
+
+  const handleReindex = useCallback(async () => {
+    setReindexing(true)
+    setReindexMessage(null)
+    setReindexError(null)
+    try {
+      const body = await routes.json('reindex', ReindexResponseSchema, { method: 'POST' })
+      if (body.ok) {
+        setReindexMessage(`Reindexed ${body.count} page${body.count === 1 ? '' : 's'}.`)
+      } else {
+        setReindexError(body.message ?? 'Reindex failed.')
+      }
+    } catch (err) {
+      setReindexError(err instanceof Error ? err.message : 'Reindex failed.')
+    } finally {
+      setReindexing(false)
+    }
+  }, [routes])
 
   const handleClear = useCallback(async () => {
     setClearing(true)
@@ -48,24 +68,33 @@ export function ReindexPanel() {
     <Stack gap={12}>
       <Heading level={4}>Index Management</Heading>
 
-      {/* Reindex all — informational (no server-side page enumeration possible) */}
+      {/* Reindex all */}
       <Card padding={16}>
         <Stack gap={10}>
           <Text className={styles.sectionTitle}>Reindex all published pages</Text>
           <Text variant="muted">
-            The search plugin indexes each page automatically when it is published. To rebuild the
-            full index from scratch, use the <strong>Publish All</strong> action in the site editor
-            — this runs every page through the publish pipeline, which indexes its content. There is
-            no in-plugin bulk-crawl API because the plugin sandbox does not have access to a
-            published-pages enumeration endpoint.
+            Re-runs the publish pipeline for every published page, automatically updating the search
+            index. Use this to rebuild the index from scratch after configuring a new backend or
+            changing indexing settings.
           </Text>
-          <Alert tone="info" title="How to rebuild the index">
-            1. Click <strong>Clear index</strong> below to remove stale documents.
-            <br />
-            2. Open the site editor and use <strong>Publish All</strong> to re-publish every page.
-            <br />
-            Each page will be indexed automatically as it publishes.
-          </Alert>
+          {reindexMessage && (
+            <Alert tone="success" title="Reindex complete">
+              {reindexMessage}
+            </Alert>
+          )}
+          {reindexError && (
+            <Alert tone="danger" title="Reindex failed">
+              {reindexError}
+            </Alert>
+          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void handleReindex()}
+            disabled={reindexing}
+          >
+            {reindexing ? 'Reindexing…' : 'Reindex all pages'}
+          </Button>
         </Stack>
       </Card>
 

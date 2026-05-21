@@ -46,6 +46,7 @@ import {
 } from '@site/store/clipboard/clipboardStorage'
 import { resolveInsertLocation } from '@site/store/insertLocation'
 import type { EditorStoreSliceCreator } from '@site/store/types'
+import { buildSiteHelpers } from './site/helpers'
 
 /**
  * In-memory snapshot of the latest copy/cut. Mirrors the persisted payload
@@ -194,6 +195,8 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
   set,
   get,
 ) => {
+  const { mutateSiteState } = buildSiteHelpers(set, get)
+
   // Hydrate the in-memory entry from localStorage at slice creation. The
   // store is built once per session, so this runs at editor mount only.
   const persisted = readClipboardPayload()
@@ -400,18 +403,16 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
         return targetClasses[classId] ? classId : null
       }
 
-      // Snapshot history once; the entire paste is a single undo step.
-      get().pushHistory()
+      // Commit history once; the entire paste is a single undo step.
       const newRootIds: string[] = []
-      set((draft) => {
-        if (!draft.site) return
-        const draftPage = draft.site.pages.find((p) => p.id === draft.activePageId)
-        if (!draftPage) return
+      mutateSiteState((draft, site) => {
+        const draftPage = site.pages.find((p) => p.id === draft.activePageId)
+        if (!draftPage) return false
 
         // 1. Materialise added classes into the target site.
         for (const plan of plans.values()) {
-          if (plan.kind === 'add' && !draft.site.classes[plan.id]) {
-            draft.site.classes[plan.id] = plan.cls
+          if (plan.kind === 'add' && !site.classes[plan.id]) {
+            site.classes[plan.id] = plan.cls
           }
         }
 
@@ -432,8 +433,7 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
           if (typeof runningIndex === 'number') runningIndex += 1
         }
 
-        draft.site.updatedAt = Date.now()
-        draft.hasUnsavedChanges = true
+        return newRootIds.length > 0
       })
 
       return newRootIds.length > 0 ? newRootIds : null

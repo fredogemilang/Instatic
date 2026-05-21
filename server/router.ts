@@ -1,14 +1,13 @@
 import { handleAgentRequest, handleAgentToolResult } from './handlers/agent'
 import { handleCmsRequest } from './handlers/cms'
-import { handlePublicTrackerRequest, isPublicTrackerPath } from './handlers/cms/tracker'
 import type { DbClient } from './db/client'
+import { applyPublishedHtmlPipeline } from './publish/publishedHtmlPipeline'
 import {
   getDataRowRedirectByRoute,
   getPublishedDataRowByRoute,
 } from './repositories/data/publish'
 import { getLatestPublishedSiteSnapshot, getPublishedPageBySlug } from './repositories/publish'
 import { renderPublishedDataRowTemplate, renderPublishedSnapshot } from './publish/publicRenderer'
-import { renderDataRowDocumentHtml } from './publish/dataRenderer'
 import { getSetupStatus } from './repositories/setup'
 import { getPublishedRuntimeAsset } from './repositories/runtimeAsset'
 import { handleLoopRequest, isLoopRuntimeAssetPath, serveLoopRuntimeAsset } from './handlers/cms/loop'
@@ -60,7 +59,6 @@ const routes: readonly RouteHandler[] = [
   tryServeCmsApi,
   tryServeLoopRuntimeAsset,
   tryServeLoop,
-  tryServePublicTracker,
   tryServeRuntimeAsset,
   tryServeRuntimePackageNamespace,
   tryServeSiteCssNamespace,
@@ -159,17 +157,6 @@ function tryServeLoopRuntimeAsset(req: Request, _runtime: ServerRuntime, _url: U
 function tryServeLoop(req: Request, runtime: ServerRuntime, url: URL, pathname: string): Promise<Response> | null {
   if (!pathname.startsWith('/_pb/loop/')) return null
   return handleLoopRequest(req, url, { db: runtime.db })
-}
-
-/**
- * Frontend tracker — the runtime injected into published pages POSTs
- * structured events here. No admin auth: the endpoint is public by design,
- * events are scoped per plugin grant, and abuse mitigation belongs at the
- * edge (rate limit / CSRF) for the host operator to configure.
- */
-function tryServePublicTracker(req: Request, runtime: ServerRuntime, _url: URL, pathname: string): Promise<Response> | null {
-  if (!isPublicTrackerPath(pathname)) return null
-  return handlePublicTrackerRequest(req, runtime.db)
 }
 
 async function tryServeRuntimeAsset(req: Request, runtime: ServerRuntime, _url: URL, pathname: string): Promise<Response | null> {
@@ -356,10 +343,13 @@ async function tryServePublishedPage(req: Request, runtime: ServerRuntime, url: 
   if (req.method !== 'GET') return null
   const snapshot = await getPublishedPageBySlug(runtime.db, publicSlugFromPath(url.pathname))
   if (!snapshot) return null
-  return new Response(await renderPublishedSnapshot(snapshot, { db: runtime.db, url }), {
+  const rendered = await renderPublishedSnapshot(snapshot, { db: runtime.db, url })
+  const html = await applyPublishedHtmlPipeline(rendered, runtime.db)
+  return new Response(html, {
     headers: { 'content-type': 'text/html; charset=utf-8' },
   })
 }
+
 
 /**
  * Resolve a URL like `/posts/hello-world` against the data row registry.
@@ -378,17 +368,19 @@ async function tryServeContentRoute(req: Request, runtime: ServerRuntime, url: U
   const { db } = runtime
   const row = await getPublishedDataRowByRoute(db, route.tableRouteBase, route.rowSlug)
   if (row) {
+    // Every postType table has a default entry template auto-seeded into
+    // the `pages` table on creation (and the boot backfill catches any
+    // pre-existing table that's missing one). So the renderer must
+    // always produce HTML here; a `null` return means a corrupt install
+    // — the site snapshot is missing or no template matches the row's
+    // table slug. We surface that as a 404 rather than inventing a
+    // half-styled fallback document.
     const siteSnapshot = await getLatestPublishedSiteSnapshot(db)
-    const templateHtml = siteSnapshot
+    const rendered = siteSnapshot
       ? await renderPublishedDataRowTemplate(siteSnapshot, row, { db, url })
       : null
-    // Pass the published site + URL through so the fallback document
-    // can build proper page/site/route frames and resolve tokens like
-    // `{site.name}` and `{route.path}` in row cells.
-    const html = templateHtml ?? renderDataRowDocumentHtml(row, {
-      site: siteSnapshot?.site,
-      url,
-    })
+    if (!rendered) return null
+    const html = await applyPublishedHtmlPipeline(rendered, db)
     return new Response(html, {
       headers: { 'content-type': 'text/html; charset=utf-8' },
     })

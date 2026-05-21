@@ -1043,7 +1043,7 @@ describe('CMS plugin handlers', () => {
 
   it('crash counter respawns within budget then gives up after 3 crashes in 5min', async () => {
     const { recordCrashAndDecide, clearPluginCrashCounter } = await import(
-      '../../../server/plugins/pluginWorkerHost'
+      '../../../server/plugins/host/crashRecovery'
     )
     const id = `test.crash.${Date.now()}`
 

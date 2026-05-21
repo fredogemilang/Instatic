@@ -113,12 +113,19 @@ export const createSettingsSlice: EditorStoreSliceCreator<SettingsSlice> = (set)
 // Reverse bridge: when adminUi.openSettings/closeSettings is called from
 // the admin shell (e.g. via SettingsButton), mirror into the editor store
 // so existing readers (uiSlice flags, spotlight actions, tests) stay in
-// sync. `store.ts` wires the live editor store via `bindEditorStoreApi`
-// once it's constructed — the same one-shot pattern used for the agent
-// executor bridge (`setAgentStoreApi`).
+// sync. `store.ts` wires the live editor store via
+// `bindSettingsBridgeStoreApi` once it's constructed — the same one-shot
+// pattern used for the agent executor bridge (`setAgentStoreApi`).
 let editorStoreApi: StoreApi<EditorStore> | null = null
 
-export function bindEditorStoreApi(api: StoreApi<EditorStore>): void {
+/**
+ * Wire the editor store into the settings ↔ adminUi reverse bridge. Called
+ * once from `store.ts` after the live store is constructed. The name avoids
+ * colliding with `@core/plugins/runtime`'s same-purpose binder for the
+ * plugin runtime — both used to be called `bindEditorStoreApi` and shadowed
+ * each other at import time.
+ */
+export function bindSettingsBridgeStoreApi(api: StoreApi<EditorStore>): void {
   editorStoreApi = api
   bindEditorSettingsBridge((open, section) => {
     if (!editorStoreApi || bridgeReentrancyGuard) return

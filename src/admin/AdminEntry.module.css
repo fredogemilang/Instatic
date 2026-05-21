@@ -4,35 +4,33 @@
    spinner) live in preauth/AdminPreAuthForm.module.css. */
 
 .page {
-  display: grid;
-  min-height: 100vh;
-  place-items: center;
-  padding: 32px 16px;
-  background: var(--editor-bg);
-  color: var(--editor-text);
-  font-family: system-ui, sans-serif;
+    display: grid;
+    min-height: 100vh;
+    place-items: center;
+    padding: 32px 16px;
+    background: var(--editor-bg);
+    color: var(--editor-text);
+    font-family: system-ui, sans-serif;
 }
 
 .panel {
-  width: min(100%, 360px);
-  padding: 24px;
-  border: 1px solid var(--editor-border-med);
-  border-radius: 8px;
-  background: var(--editor-surface);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
+    width: min(100%, 360px);
+    padding: 24px;
+    border-radius: 16px;
+    background: var(--editor-surface);
 }
 
 .title {
-  margin: 0 0 18px;
-  color: var(--editor-text-bright);
-  font-size: 20px;
-  font-weight: 650;
-  letter-spacing: 0;
+    margin: 0 0 18px;
+    color: var(--editor-text-bright);
+    font-size: 20px;
+    font-weight: 650;
+    letter-spacing: 0;
 }
 
 .error {
-  margin: 0;
-  color: var(--editor-danger-lighter);
-  font-size: 12px;
-  line-height: 1.45;
+    margin: 0;
+    color: var(--editor-danger-lighter);
+    font-size: 12px;
+    line-height: 1.45;
 }

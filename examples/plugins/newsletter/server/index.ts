@@ -23,7 +23,7 @@ const mod: ServerPluginModule = {
 
     // Seed a default General list so subscribe forms work out of the box.
     const lists = api.cms.storage.collection('lists')
-    const existing = await lists.list()
+    const { records: existing } = await lists.list()
     if (existing.length === 0) {
       await lists.create({
         name: 'General',
@@ -66,7 +66,7 @@ const mod: ServerPluginModule = {
     const collections = ['subscribers', 'lists', 'broadcasts', 'deliveries']
     for (const name of collections) {
       const col = api.cms.storage.collection(name)
-      const all = await col.list()
+      const { records: all } = await col.list({ limit: 1000 })
       await Promise.all(all.map((r) => col.delete(r.id)))
       api.plugin.log(`Newsletter plugin removed ${all.length} ${name} records.`)
     }

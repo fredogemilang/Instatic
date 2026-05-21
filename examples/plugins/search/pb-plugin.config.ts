@@ -29,6 +29,7 @@ export default definePlugin({
     permissions.cmsRoutes,
     permissions.cmsHooks,
     permissions.networkOutbound,
+    permissions.cmsPagesPublish,
   ],
 
   networkAllowedHosts: [
@@ -45,9 +46,9 @@ export default definePlugin({
       pluralLabel: 'Queries',
       fields: [
         { id: 'query', label: 'Query', type: 'text', required: true },
-        { id: 'result-count', label: 'Result Count', type: 'number' },
-        { id: 'took-ms', label: 'Took (ms)', type: 'number' },
-        { id: 'searched-at', label: 'Searched At', type: 'date' },
+        { id: 'resultCount', label: 'Result Count', type: 'number' },
+        { id: 'tookMs', label: 'Took (ms)', type: 'number' },
+        { id: 'searchedAt', label: 'Searched At', type: 'date' },
       ],
     },
   ],

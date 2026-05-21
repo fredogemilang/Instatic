@@ -81,7 +81,8 @@ export function registerOgImageJob(api: ServerPluginApi): void {
 
       let allRecords: PluginRecord[]
       try {
-        allRecords = await api.cms.storage.collection('seo-entries').list()
+        const { records } = await api.cms.storage.collection('seo-entries').list()
+        allRecords = records
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         api.plugin.log('[seo-suite] og-image-daily: failed to list seo-entries:', message)

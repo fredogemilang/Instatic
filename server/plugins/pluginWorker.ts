@@ -47,8 +47,8 @@ import type {
   SerializedResponse,
   UnloadPluginRequest,
   WorkerToMainMessage,
-} from './workerProtocol'
-import { createPluginVm, type PluginVm } from './quickjsHost'
+} from './protocol/messages'
+import { createPluginVm, type PluginVm } from './quickjs/vm'
 
 // ---------------------------------------------------------------------------
 // Source shim — convert raw ESM `export function name(...)` declarations
@@ -360,7 +360,7 @@ async function handleRunHookFilter(msg: RunHookFilterRequest): Promise<void> {
     return
   }
   try {
-    const next = await vm.runHookFilter(msg.filterId, msg.value)
+    const next = await vm.runHookFilter(msg.filterId, msg.value, msg.context)
     send({ kind: 'hook-filter-result', correlationId: msg.correlationId, ok: true, value: next })
   } catch (err) {
     send({

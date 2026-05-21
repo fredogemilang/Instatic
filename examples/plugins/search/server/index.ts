@@ -14,24 +14,11 @@
  *   GET  /status          (plugins.manage)  — index stats + backend info
  *   POST /clear           (plugins.manage)  — delete all documents from the index
  *   GET  /analytics       (plugins.manage)  — top queries / top no-results
+ *   POST /reindex         (reindex.all)     — republish all pages to rebuild the index
  *
  * Hooks:
- *   publish.before → store pending { pageId, siteId } so publish.html has context
- *   publish.html   → extract + upsert the rendered page HTML into the search index
- *   publish.after  → clean up pending state
- *
- * Indexing design:
- *   The `publish.html` filter is the ONLY hook that gives us both:
- *     • the full rendered HTML (to extract title/headings/content), AND
- *     • a synchronous execution context (the filter runs inline during publish).
- *   The `publish.before` hook stores the current pageId in a Map so the filter
- *   can look it up. The QuickJS VM is single-threaded and the host serialises
- *   hook/filter calls through the worker, so no interleaving is possible.
- *
- *   "Reindex all" from the admin UI is NOT supported programmatically — the
- *   plugin has no API to enumerate all published pages. To rebuild the full
- *   index, the operator should use the site editor's "Publish All" action,
- *   which fires the publish pipeline (and therefore this filter) for each page.
+ *   publish.html — extract + upsert the rendered page HTML into the search index.
+ *                  The 2nd-arg context provides { pageId, slug } directly.
  */
 import type { ServerPluginApi, ServerPluginModule } from '@pagebuilder/plugin-sdk'
 import { createMeiliSearchBackend } from './backends/meilisearch'
@@ -101,14 +88,6 @@ function isExcluded(slug: string, excludePaths: string[]): boolean {
  */
 function slugToDocId(slug: string): string {
   return slug.replace(/^\//, '').replace(/\//g, '_') || 'root'
-}
-
-/**
- * Derive a URL path slug from the CMS pageId.
- * pageId might be "about" or "/about" or a UUID — we normalise to "/about".
- */
-function pageIdToSlug(pageId: string): string {
-  return pageId.startsWith('/') ? pageId : `/${pageId}`
 }
 
 // ---------------------------------------------------------------------------
@@ -241,47 +220,25 @@ const mod: ServerPluginModule = {
       }
     })
 
-    // ── Per-publish indexing ─────────────────────────────────────────────
-    //
-    // Indexing uses two cooperating hooks:
-    //
-    //  1. publish.before  — stores the current page's id/slug in a Map so the
-    //                       publish.html filter has context. The QuickJS VM is
-    //                       single-threaded; the host serialises all hook/filter
-    //                       calls through the worker queue, so there is no risk
-    //                       of interleaving across concurrent publish requests.
-    //
-    //  2. publish.html    — fires with the FULL rendered HTML synchronously
-    //                       during the publish pipeline. This is the only point
-    //                       where we have both the page content AND execution
-    //                       context to index it. We extract title/headings/
-    //                       content and upsert the document — then return the
-    //                       HTML unchanged (we are a pass-through filter).
-    //
-    //  3. publish.after   — cleanup only: remove the pending entry.
-
-    // Map<siteId, { slug: string }> — set by publish.before, consumed by publish.html.
-    const pendingPublish = new Map<string, { slug: string }>()
-
-    api.cms.hooks.on('publish.before', async (evt) => {
-      if (!evt.pageId) return
-      const slug = pageIdToSlug(evt.pageId)
-      pendingPublish.set(evt.siteId, { slug })
+    // ── Admin: reindex all ───────────────────────────────────────────────
+    // Re-publishes every published page, which triggers the publish.html
+    // filter for each page and rebuilds the search index from scratch.
+    api.cms.routes.post('/reindex', 'reindex.all', async () => {
+      try {
+        const { count } = await api.cms.pages.republishAll()
+        return { ok: true, count }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        return { ok: false, count: 0, message }
+      }
     })
 
-    api.cms.hooks.filter('publish.html', async (html, _ctx) => {
+    // ── Per-publish indexing ─────────────────────────────────────────────
+    // The publish.html filter fires with the full rendered HTML. The 2nd-arg
+    // context provides { pageId, slug } directly — no Map bridge needed.
+    api.cms.hooks.filter('publish.html', async (html, { slug }) => {
       // Must ALWAYS return html — we are a pass-through filter.
       if (!backend || typeof html !== 'string') return html
-
-      // Find the pending entry. If not set (publish.before didn't fire for
-      // this request), skip indexing rather than guessing.
-      // Look for any pending entry — in single-publish mode there is one.
-      // If multiple sites published simultaneously, pick the first available
-      // (this is safe because the VM is single-threaded: only one publish
-      // pipeline can be active at a time).
-      const entries = Array.from(pendingPublish.entries())
-      if (entries.length === 0) return html
-      const [siteId, { slug }] = entries[0]
 
       const excludePaths = parseExcludePaths(api)
       if (isExcluded(slug, excludePaths)) {
@@ -303,16 +260,7 @@ const mod: ServerPluginModule = {
         api.plugin.log('Search plugin: upsert failed:', message)
       }
 
-      // Clean up so the next publish starts fresh.
-      pendingPublish.delete(siteId)
-
       return html
-    })
-
-    api.cms.hooks.on('publish.after', async (evt) => {
-      // Clean up any leftover pending entry (e.g. if publish.html filter
-      // didn't run due to an upstream error).
-      if (evt.siteId) pendingPublish.delete(evt.siteId)
     })
 
     api.plugin.log('Search plugin activated.')
@@ -324,9 +272,9 @@ const mod: ServerPluginModule = {
 
   async uninstall(api: ServerPluginApi) {
     const queries = api.cms.storage.collection('queries')
-    const all = await queries.list()
-    await Promise.all(all.map((r) => queries.delete(r.id)))
-    api.plugin.log(`Search plugin uninstalled, removed ${all.length} query log entries.`)
+    const { records } = await queries.list({ limit: 1000 })
+    await Promise.all(records.map((r) => queries.delete(r.id)))
+    api.plugin.log(`Search plugin uninstalled, removed ${records.length} query log entries.`)
   },
 }
 

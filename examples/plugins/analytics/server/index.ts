@@ -1,9 +1,15 @@
 /**
  * Analytics plugin — server entrypoint.
  *
- * Wires together storage, routes, hooks, and scheduled jobs using the
- * plugin server SDK. Delegates heavy lifting to the sibling modules:
- *   - ingest.ts  — tracker.event handler + visitor hashing
+ * Wires together storage, routes, and scheduled jobs using the plugin
+ * server SDK. The plugin owns its frontend pipeline end-to-end: the
+ * tracker IIFE in `frontend/tracker.ts` POSTs to this plugin's own
+ * `/runtime/ingest` route (registered below). The host provides no
+ * tracker channel — the only generic surface this plugin uses is
+ * `cms.routes.postPublic`.
+ *
+ * Delegates heavy lifting to the sibling modules:
+ *   - ingest.ts  — incoming event handler + visitor hashing
  *   - rollup.ts  — daily aggregation + retention prune
  *   - stats.ts   — dashboard query helpers
  *   - csv.ts     — CSV serialization for export
@@ -56,17 +62,6 @@ const mod: ServerPluginModule = {
     const events     = api.cms.storage.collection('events')
     const dailyStats = api.cms.storage.collection('daily-stats')
 
-    // ── tracker.event hook ─────────────────────────────────────────
-    api.cms.hooks.on('tracker.event', async (evt) => {
-      if (evt.pluginId !== api.plugin.id && evt.pluginId !== '__implicit__') return
-      try {
-        await handleTrackerEvent(api, evt)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        api.plugin.log('[analytics] ingest failed:', msg)
-      }
-    })
-
     // ── settings.changed ───────────────────────────────────────────
     api.cms.hooks.on('settings.changed', (payload) => {
       if (
@@ -94,16 +89,12 @@ const mod: ServerPluginModule = {
 
     // GET /live — last 5 minutes of raw events (at most 100)
     api.cms.routes.get('/live', 'plugins.manage', async () => {
-      const all = await events.list()
-      const cutoff = Date.now() - 5 * 60_000
-      const recent = all
-        .filter(r => {
-          const at = String(r.data['received-at'] ?? r.createdAt)
-          return new Date(at).getTime() >= cutoff
-        })
-        .slice(-100)
-        .reverse()
-      return { ok: true, events: recent }
+      const cutoffIso = new Date(Date.now() - 5 * 60_000).toISOString()
+      const { records } = await events.list({
+        filter: { receivedAt: { gte: cutoffIso } },
+        limit: 100,
+      })
+      return { ok: true, events: records.slice(-100).reverse() }
     })
 
     // GET /export.csv?resource=events|daily-stats&range=30d
@@ -118,14 +109,16 @@ const mod: ServerPluginModule = {
       let filename: string
 
       if (resource === 'daily-stats') {
-        const rows = await dailyStats.list()
+        const { records: rows } = await dailyStats.list({
+          filter: { date: { gte: cutoff.slice(0, 10) } },
+          limit: 1000,
+        })
         csvBody = dailyStatsToCsv(rows)
         filename = `analytics-daily-stats-${rangeParam}.csv`
       } else {
-        const all = await events.list()
-        const filtered = all.filter(r => {
-          const at = String(r.data['received-at'] ?? r.createdAt)
-          return at >= cutoff
+        const { records: filtered } = await events.list({
+          filter: { receivedAt: { gte: cutoff } },
+          limit: 1000,
         })
         csvBody = eventsToCsv(filtered)
         filename = `analytics-events-${rangeParam}.csv`
@@ -143,6 +136,41 @@ const mod: ServerPluginModule = {
     })
 
     // ── Public routes ──────────────────────────────────────────────
+
+    // POST /ingest — frontend tracker bundle POSTs every event here.
+    // Public by design (the tracker runs on the published page with no
+    // admin session). Validation, normalization, hashing, and storage
+    // all happen inside `handleTrackerEvent`.
+    api.cms.routes.postPublic('/ingest', async (ctx) => {
+      try {
+        const body = ctx.body as Record<string, unknown>
+        const eventName = typeof body.eventName === 'string' ? body.eventName : ''
+        if (!eventName) {
+          return { __response: true, status: 400, headers: {}, body: '{"error":"missing eventName"}' }
+        }
+        const payload = body.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)
+          ? body.payload as Record<string, unknown>
+          : {}
+        await handleTrackerEvent(api, {
+          eventName,
+          payload,
+          visitorId:  typeof body.visitorId  === 'string' ? body.visitorId  : undefined,
+          sessionId:  typeof body.sessionId  === 'string' ? body.sessionId  : undefined,
+          pagePath:   typeof body.pagePath   === 'string' ? body.pagePath   : undefined,
+          referrer:   typeof body.referrer   === 'string' ? body.referrer   : undefined,
+          country:    typeof body.country    === 'string' ? body.country    : undefined,
+          isAdmin:    body.isAdmin === true,
+          userAgent:  typeof body.userAgent  === 'string' ? body.userAgent  : undefined,
+          clientTime: typeof body.clientTime === 'string' ? body.clientTime : undefined,
+          receivedAt: new Date().toISOString(),
+        })
+        return { ok: true }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        api.plugin.log('[analytics] ingest failed:', msg)
+        return { __response: true, status: 500, headers: {}, body: '{"error":"ingest failed"}' }
+      }
+    })
 
     // GET /geo — country lookup from CF-IPCountry header (cached per session by tracker)
     api.cms.routes.getPublic('/geo', async (ctx) => {
@@ -209,15 +237,27 @@ const mod: ServerPluginModule = {
   },
 
   async uninstall(api: ServerPluginApi) {
-    // Clean up all stored data on uninstall
+    // Clean up all stored data on uninstall — drain each collection in batches of 1000
     const eventsCol = api.cms.storage.collection('events')
     const statsCol  = api.cms.storage.collection('daily-stats')
-    const [allEvents, allStats] = await Promise.all([eventsCol.list(), statsCol.list()])
-    await Promise.all([
-      ...allEvents.map(r => eventsCol.delete(r.id)),
-      ...allStats.map(r => statsCol.delete(r.id)),
-    ])
-    api.plugin.log(`[analytics] uninstalled — removed ${allEvents.length} events, ${allStats.length} daily-stats rows`)
+
+    let eventsRemoved = 0
+    while (true) {
+      const { records, totalCount } = await eventsCol.list({ limit: 1000 })
+      if (totalCount === 0 || records.length === 0) break
+      await Promise.all(records.map(r => eventsCol.delete(r.id)))
+      eventsRemoved += records.length
+    }
+
+    let statsRemoved = 0
+    while (true) {
+      const { records, totalCount } = await statsCol.list({ limit: 1000 })
+      if (totalCount === 0 || records.length === 0) break
+      await Promise.all(records.map(r => statsCol.delete(r.id)))
+      statsRemoved += records.length
+    }
+
+    api.plugin.log(`[analytics] uninstalled — removed ${eventsRemoved} events, ${statsRemoved} daily-stats rows`)
   },
 }
 

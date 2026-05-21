@@ -91,14 +91,21 @@ export async function buildRuntimePreviewDocument(
     mediaAssets,
   }).html
 
-  // Mirror the published-page path: pull each enabled plugin's frontend
-  // bundle + tracker runtime into the document and relax the CSP the same
-  // way `renderPublishedSnapshot` does. Without this, the iframe preview
-  // would block plugin frontend scripts (their `<script>` tags wouldn't
-  // be emitted at all) and any `networkAllowedHosts` declared by plugins
-  // wouldn't reach the CSP `connect-src` — visitor-side `fetch()` to
-  // external hosts (e.g. a glTF model URL) would 'default-src 'self''
-  // even though the published page would allow them.
+  // Mirror the published-page path: pull each enabled plugin's
+  // `frontend.assets[]` into the document and relax the CSP the same way
+  // the public renderer + dispatcher pipeline does. Without this, the
+  // iframe preview would block plugin scripts (their `<script>` tags
+  // wouldn't be emitted at all) and any `networkAllowedHosts` declared
+  // by plugins wouldn't reach `connect-src` — visitor-side `fetch()` to
+  // external hosts would fail under `default-src 'self'` even though the
+  // published page would allow them.
+  //
+  // The preview iframe does NOT fire `publish.before / publish.html /
+  // publish.after` — those mutate persisted state and aren't safe to run
+  // on every keystroke. Plugins that need to rewrite the HTML in the
+  // preview can hook frontend injection (which IS shared) and emit the
+  // same CSP envelope; full HTML filtering is reserved for the real
+  // publish path.
   const html = input.db
     ? injectFrontendAssets(baseHtml, await collectFrontendInjections(input.db))
     : baseHtml

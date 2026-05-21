@@ -65,10 +65,13 @@ describe('variant delegate election', () => {
   })
 
   it('the variant delegate registry is torn down on plugin disable/uninstall/crash', async () => {
-    const source = await read('server/plugins/pluginWorkerHost.ts')
-    // Three teardown sites: the load-reset path, the crash path, the
-    // unload path. Counting the call sites locks in the invariant.
-    const teardowns = source.match(/mediaVariantDelegateRegistry\.unregisterPlugin/g) ?? []
+    // Three teardown sites spread across the host modules:
+    //   - host/rpc.ts: loadPluginInWorker (reset before reload) and unloadPluginInWorker
+    //   - host/crashRecovery.ts: handleWorkerCrash
+    const rpcSource = await read('server/plugins/host/rpc.ts')
+    const crashSource = await read('server/plugins/host/crashRecovery.ts')
+    const combined = rpcSource + crashSource
+    const teardowns = combined.match(/mediaVariantDelegateRegistry\.unregisterPlugin/g) ?? []
     expect(teardowns.length).toBeGreaterThanOrEqual(3)
   })
 })

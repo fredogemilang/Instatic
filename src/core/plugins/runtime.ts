@@ -17,10 +17,11 @@ import {
  * paint.
  *
  * Instead, the editor store wires itself in at construction time via
- * `bindEditorStoreApi(useEditorStore)` (see `src/admin/pages/site/store/
- * store.ts`). On non-editor admin pages where the editor store is never
- * loaded, the injection never fires — `api.store.*` then throws when
- * called, which is the correct behaviour (no editor → no editor store).
+ * `bindPluginRuntimeStoreApi(useEditorStore)` (see `src/admin/pages/site/
+ * store/store.ts`). On non-editor admin pages where the editor store is
+ * never loaded, the injection never fires — `api.store.*` then throws
+ * when called, which is the correct behaviour (no editor → no editor
+ * store).
  *
  * The plugin SDK is a public-looking contract today, but pre-release
  * stability lets us flip this to a different shape later if needed
@@ -30,7 +31,18 @@ import {
  */
 let editorStoreApi: StoreApi<EditorStore> | null = null
 
-export function bindEditorStoreApi(api: StoreApi<unknown>): void {
+/**
+ * Wire the editor store into the plugin runtime so granted plugins can call
+ * `api.store.read()` / `api.store.transaction()`. The runtime intentionally
+ * does NOT statically import the editor store (that would drag it into the
+ * admin-shell bundle); this binder fills the slot once `useEditorStore` is
+ * constructed in `src/admin/pages/site/store/store.ts`.
+ *
+ * The name distinguishes this from the settings-bridge binder in
+ * `settingsSlice.ts` — both used to be exported as `bindEditorStoreApi`
+ * and required call-site aliases to disambiguate.
+ */
+export function bindPluginRuntimeStoreApi(api: StoreApi<unknown>): void {
   editorStoreApi = api as StoreApi<EditorStore>
 }
 
@@ -488,7 +500,7 @@ export function createEditorPluginApi(
         collection(resourceId) {
           assertPluginPermission(manifest, 'cms.storage')
           return {
-            list: () => listCmsPluginResourceRecords(manifest.id, resourceId, fetchImpl),
+            list: (options) => listCmsPluginResourceRecords(manifest.id, resourceId, fetchImpl, '/admin/api/cms', options),
             create: (data) => createCmsPluginResourceRecord(manifest.id, resourceId, data, fetchImpl),
             update: (recordId, data) => updateCmsPluginResourceRecord(manifest.id, resourceId, recordId, data, fetchImpl),
             delete: (recordId) => deleteCmsPluginResourceRecord(manifest.id, resourceId, recordId, fetchImpl),

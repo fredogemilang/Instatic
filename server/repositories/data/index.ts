@@ -34,6 +34,9 @@ export {
   updateDataRowTable,
   updateDataRowStatus,
   updateDataRowAuthor,
+  scheduleDataRowPublish,
+  cancelScheduledPublish,
+  listDuePublishSchedules,
 } from './rows'
 
 export {
@@ -41,3 +44,8 @@ export {
   getPublishedDataRowByRoute,
   getDataRowRedirectByRoute,
 } from './publish'
+
+export {
+  ensureDefaultEntryTemplate,
+  backfillDefaultEntryTemplates,
+} from './templateSeeding'

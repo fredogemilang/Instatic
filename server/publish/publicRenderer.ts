@@ -10,8 +10,6 @@ import { prefetchMediaAssets } from './mediaPrefetch'
 import type { PublishedDataRow } from '@core/data/schemas'
 import type { DbClient } from '../db/client'
 import type { PublishedPageSnapshot } from '../repositories/publish'
-import { hookBus } from '@core/plugins/hookBus'
-import { collectFrontendInjections, injectFrontendAssets } from './frontendInjections'
 
 /**
  * URL prefix where the Bun server exposes the per-site CSS bundle. Mirrors
@@ -23,6 +21,23 @@ const CSS_ASSET_BASE_URL = '/_pb/css/'
 /** URL prefix for the loop data endpoint serving infinite-load fragments. */
 const LOOP_ENDPOINT_BASE_URL = '/_pb/loop/'
 
+/**
+ * Renderer output — raw HTML body without plugin asset injection or the
+ * `publish.html` filter applied. Post-processing runs ONCE at the
+ * dispatcher (see `applyPublishedHtmlPipeline` in `server/router.ts`) so
+ * every HTML-emitting path — pages, post templates, and the fallback
+ * standalone data-row document — goes through the same pipeline. Adding
+ * a new HTML-emitting code path means wiring it into the dispatcher
+ * pipeline, not duplicating injection logic.
+ */
+export interface RendererOutput {
+  html: string
+  /** Identifies what was rendered, for the publish.html filter context. */
+  pageId: string
+  slug: string
+  siteId: string
+}
+
 export interface RenderPublishedSnapshotContext {
   db: DbClient
   /** Optional request URL — when present, drives per-loop pagination. */
@@ -32,21 +47,15 @@ export interface RenderPublishedSnapshotContext {
 export async function renderPublishedSnapshot(
   snapshot: PublishedPageSnapshot,
   ctx: RenderPublishedSnapshotContext,
-): Promise<string> {
+): Promise<RendererOutput> {
   const page = snapshot.site.pages.find((candidate) => candidate.id === snapshot.pageRowId)
   if (!page) throw new Error(`Published page "${snapshot.pageRowId}" not found in snapshot`)
-  await hookBus.emit('publish.before', { siteId: snapshot.site.id, pageId: snapshot.pageRowId })
   const cssBundle = buildSiteCssBundle(snapshot.site, registry)
-  // Pre-fetches run in parallel — none depends on the others and each hits
-  // the DB independently. `collectFrontendInjections` is folded in here
-  // because `publishPage` doesn't need it; running it concurrently saves a
-  // round-trip on every published-page render.
-  const [loopData, mediaAssets, frontendInjections] = await Promise.all([
+  const [loopData, mediaAssets] = await Promise.all([
     prefetchLoopData(page, snapshot.site, ctx.db, ctx.url),
     prefetchMediaAssets(page, registry, ctx.db),
-    collectFrontendInjections(ctx.db),
   ])
-  const baseHtml = publishPage(page, snapshot.site, registry, {
+  const html = publishPage(page, snapshot.site, registry, {
     runtimeAssets: snapshot.runtimeAssets,
     runtimePackageImportmap: snapshot.runtimePackageImportmap,
     cssEmission: 'external',
@@ -63,28 +72,23 @@ export async function renderPublishedSnapshot(
       ? { entryStack: [], route: buildRouteFrame(ctx.url.toString()) }
       : undefined,
   }).html
-  const withInjections = injectFrontendAssets(baseHtml, frontendInjections)
-  const filtered = await hookBus.applyFilter('publish.html', withInjections)
-  await hookBus.emit('publish.after', { siteId: snapshot.site.id, pageId: snapshot.pageRowId })
-  return filtered
+  return { html, pageId: snapshot.pageRowId, slug: page.slug, siteId: snapshot.site.id }
 }
 
 export async function renderPublishedDataRowTemplate(
   snapshot: PublishedPageSnapshot,
   row: PublishedDataRow,
   ctx: RenderPublishedSnapshotContext,
-): Promise<string | null> {
+): Promise<RendererOutput | null> {
   const template = selectEntryTemplate(snapshot.site, row.tableSlug)
   if (!template) return null
 
-  await hookBus.emit('publish.before', { siteId: snapshot.site.id, pageId: template.id })
   const cssBundle = buildSiteCssBundle(snapshot.site, registry)
-  const [loopData, mediaAssets, frontendInjections] = await Promise.all([
+  const [loopData, mediaAssets] = await Promise.all([
     prefetchLoopData(template, snapshot.site, ctx.db, ctx.url),
     prefetchMediaAssets(template, registry, ctx.db),
-    collectFrontendInjections(ctx.db),
   ])
-  const baseHtml = publishPage(template, snapshot.site, registry, {
+  const html = publishPage(template, snapshot.site, registry, {
     // Seed the entry stack with the published row + route frame from
     // the request URL. Loop interceptors push/pop iteration items on
     // top of this stack; nodes outside any loop resolve their
@@ -103,12 +107,5 @@ export async function renderPublishedDataRowTemplate(
     mediaAssets,
     loopEndpointBaseUrl: LOOP_ENDPOINT_BASE_URL,
   }).html
-  const withInjections = injectFrontendAssets(baseHtml, frontendInjections)
-  const filtered = await hookBus.applyFilter('publish.html', withInjections)
-  await hookBus.emit('publish.after', { siteId: snapshot.site.id, pageId: template.id })
-  return filtered
+  return { html, pageId: template.id, slug: template.slug, siteId: snapshot.site.id }
 }
-
-// `injectFrontendAssets` lives in `frontendInjections.ts` so the preview
-// runtime (`buildRuntimePreviewDocument`) can call the same helper — both
-// surfaces must yield identical HTML + CSP so previews match published.

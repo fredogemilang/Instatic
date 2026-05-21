@@ -10,7 +10,7 @@ describe('CMS plugin records client', () => {
   it('lists and creates plugin resource records with session credentials', async () => {
     const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
 
-    const records = await listCmsPluginResourceRecords('acme.books', 'books', async (input, init) => {
+    const result = await listCmsPluginResourceRecords('acme.books', 'books', async (input, init) => {
       calls.push({ input, init })
       return new Response(JSON.stringify({
         records: [{
@@ -21,6 +21,7 @@ describe('CMS plugin records client', () => {
           createdAt: '2026-05-01T10:00:00.000Z',
           updatedAt: '2026-05-01T10:00:00.000Z',
         }],
+        totalCount: 1,
       }), { status: 200 })
     })
 
@@ -40,7 +41,8 @@ describe('CMS plugin records client', () => {
       }), { status: 201 })
     })
 
-    expect(records[0].data.title).toBe('Invisible Cities')
+    expect(result.records[0].data.title).toBe('Invisible Cities')
+    expect(result.totalCount).toBe(1)
     expect(calls[0]).toMatchObject({
       input: '/admin/api/cms/plugins/acme.books/resources/books/records',
       init: { method: 'GET', credentials: 'include' },
@@ -54,6 +56,34 @@ describe('CMS plugin records client', () => {
       },
     })
     expect(calls[1].init?.body).toBe(JSON.stringify({ data: { title: 'The Dispossessed' } }))
+  })
+
+  it('encodes filter and orderBy options as query parameters', async () => {
+    const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
+
+    const result = await listCmsPluginResourceRecords(
+      'acme.books',
+      'books',
+      async (input, init) => {
+        calls.push({ input, init })
+        return new Response(JSON.stringify({
+          records: [],
+          totalCount: 0,
+        }), { status: 200 })
+      },
+      '/admin/api/cms',
+      { filter: { status: 'active' }, orderBy: { title: 'asc' }, limit: 20, offset: 5 },
+    )
+
+    expect(result.records).toHaveLength(0)
+    expect(result.totalCount).toBe(0)
+    const url = String(calls[0].input)
+    expect(url).toContain('filter=')
+    expect(url).toContain('orderBy=')
+    expect(url).toContain('limit=20')
+    expect(url).toContain('offset=5')
+    expect(decodeURIComponent(url)).toContain('"status":"active"')
+    expect(decodeURIComponent(url)).toContain('"title":"asc"')
   })
 
   it('updates and deletes plugin resource records', async () => {
@@ -101,5 +131,12 @@ describe('CMS plugin records client', () => {
       listCmsPluginResourceRecords('acme.books', 'books', async () =>
         new Response(JSON.stringify({ error: 'Plugin resource not found' }), { status: 404 })),
     ).rejects.toThrow('Plugin resource not found')
+  })
+
+  it('returns totalCount=0 when server omits it (backward compat)', async () => {
+    const result = await listCmsPluginResourceRecords('acme.books', 'books', async () =>
+      new Response(JSON.stringify({ records: [] }), { status: 200 }))
+    expect(result.totalCount).toBe(0)
+    expect(result.records).toHaveLength(0)
   })
 })

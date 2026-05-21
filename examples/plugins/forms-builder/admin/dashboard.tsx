@@ -5,7 +5,7 @@
  *   1. Stats row   — Today / This Week / This Month / Total counts.
  *   2. 30-day chart — daily bar chart via Bars from host-ui.
  *   3. Filter bar  — form slug selector + status filter.
- *   4. Table       — paginated submission rows.
+ *   4. Table       — paginated submission rows with server-side filtering.
  *   5. Drawer      — full detail view with field table + Resend action.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -33,14 +33,14 @@ import type { Static } from '@sinclair/typebox'
 
 const SubmissionRecordDataSchema = Type.Object(
   {
-    'form-id':       Type.Optional(Type.String()),
-    'page-path':     Type.Optional(Type.String()),
-    'submitted-at':  Type.Optional(Type.String()),
-    'payload':       Type.Optional(Type.String()),
-    'ip-hash':       Type.Optional(Type.String()),
-    'user-agent':    Type.Optional(Type.String()),
-    'status':        Type.Optional(Type.String()),
-    'error-message': Type.Optional(Type.String()),
+    formId:       Type.Optional(Type.String()),
+    pagePath:     Type.Optional(Type.String()),
+    submittedAt:  Type.Optional(Type.String()),
+    payload:      Type.Optional(Type.String()),
+    ipHash:       Type.Optional(Type.String()),
+    userAgent:    Type.Optional(Type.String()),
+    status:       Type.Optional(Type.String()),
+    errorMessage: Type.Optional(Type.String()),
   },
   { additionalProperties: true },
 )
@@ -56,9 +56,16 @@ const SubmissionRecordSchema = Type.Object({
 
 const SubmissionsResponseSchema = Type.Object({
   submissions: Type.Array(SubmissionRecordSchema),
+  totalCount: Type.Integer({ minimum: 0 }),
 })
 
 type SubmissionRecord = Static<typeof SubmissionRecordSchema>
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const PAGE_SIZE = 25
 
 // ---------------------------------------------------------------------------
 // Utility helpers
@@ -105,7 +112,7 @@ function build30DayHistogram(submissions: SubmissionRecord[]): number[] {
   const counts = new Array<number>(30).fill(0)
   const now = startOfDay(new Date())
   for (const s of submissions) {
-    const ts = s.data['submitted-at'] ?? s.createdAt
+    const ts = s.data['submittedAt'] ?? s.createdAt
     const dayAgo = Math.floor((now - startOfDay(new Date(ts))) / (24 * 60 * 60 * 1000))
     if (dayAgo >= 0 && dayAgo < 30) {
       counts[29 - dayAgo] = (counts[29 - dayAgo] ?? 0) + 1
@@ -187,17 +194,17 @@ function SubmissionDrawer({ record, onClose, onResend, resending }: DrawerProps)
         {/* Metadata */}
         <Stack gap={4}>
           <Text variant="muted">Form</Text>
-          <Text>{String(record.data['form-id'] ?? '—')}</Text>
+          <Text>{String(record.data['formId'] ?? '—')}</Text>
         </Stack>
         <Stack gap={4}>
           <Text variant="muted">Page</Text>
-          <Text>{String(record.data['page-path'] || '—')}</Text>
+          <Text>{String(record.data['pagePath'] || '—')}</Text>
         </Stack>
         <Stack gap={4}>
           <Text variant="muted">Submitted</Text>
           <Text>
-            {record.data['submitted-at']
-              ? formatDate(String(record.data['submitted-at']))
+            {record.data['submittedAt']
+              ? formatDate(String(record.data['submittedAt']))
               : '—'}
           </Text>
         </Stack>
@@ -205,20 +212,20 @@ function SubmissionDrawer({ record, onClose, onResend, resending }: DrawerProps)
           <Text variant="muted">Status</Text>
           <Text>{statusLabel(record.data['status'] as string | undefined)}</Text>
         </Stack>
-        {record.data['error-message'] ? (
+        {record.data['errorMessage'] ? (
           <Alert tone="danger" title="Delivery error">
-            {String(record.data['error-message'])}
+            {String(record.data['errorMessage'])}
           </Alert>
         ) : null}
         <Stack gap={4}>
           <Text variant="muted">IP Hash</Text>
           <Text variant="mono">
-            {String(record.data['ip-hash'] ?? '—').slice(0, 16)}…
+            {String(record.data['ipHash'] ?? '—').slice(0, 16)}…
           </Text>
         </Stack>
         <Stack gap={4}>
           <Text variant="muted">User Agent</Text>
-          <Text variant="muted">{String(record.data['user-agent'] || '—')}</Text>
+          <Text variant="muted">{String(record.data['userAgent'] || '—')}</Text>
         </Stack>
 
         <Separator />
@@ -259,83 +266,121 @@ function SubmissionDrawer({ record, onClose, onResend, resending }: DrawerProps)
 
 function FormsDashboard() {
   const routes = usePluginRoutes()
+
+  // Table data — server-filtered, paginated
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([])
+  const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [page, setPage] = useState(0)
+
+  // Unfiltered data for stats / histogram / form-ID picker
+  const [allSubmissions, setAllSubmissions] = useState<SubmissionRecord[]>([])
+  const [globalTotal, setGlobalTotal] = useState(0)
+
+  // Filter state
   const [filterForm, setFilterForm] = useState<string>('')
   const [filterStatus, setFilterStatus] = useState<string>('')
+
+  // Drawer + resend
   const [selected, setSelected] = useState<SubmissionRecord | null>(null)
   const [resending, setResending] = useState(false)
   const [resendError, setResendError] = useState<string | null>(null)
 
+  // ---------------------------------------------------------------------------
+  // Fetch ALL submissions (no filter, up to 1000) for stats / histogram / picker
+  // ---------------------------------------------------------------------------
+  const loadAll = useCallback(async () => {
+    try {
+      const data = await routes.json(
+        'submissions?limit=1000&offset=0',
+        SubmissionsResponseSchema,
+      )
+      setAllSubmissions(data.submissions)
+      setGlobalTotal(data.totalCount)
+    } catch (_err) {
+      // Non-fatal: stats may be empty or stale, don't surface an error banner
+    }
+  }, [routes])
+
+  // ---------------------------------------------------------------------------
+  // Fetch filtered + paginated submissions for the table
+  // ---------------------------------------------------------------------------
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await routes.json('submissions', SubmissionsResponseSchema)
+      const params = new URLSearchParams()
+      if (filterForm) params.set('formId', filterForm)
+      if (filterStatus) params.set('status', filterStatus)
+      params.set('limit', String(PAGE_SIZE))
+      params.set('offset', String(page * PAGE_SIZE))
+      const data = await routes.json(
+        `submissions?${params.toString()}`,
+        SubmissionsResponseSchema,
+      )
       setSubmissions(data.submissions)
+      setTotalCount(data.totalCount)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load submissions')
     } finally {
       setLoading(false)
     }
-  }, [routes])
+  }, [routes, filterForm, filterStatus, page])
+
+  useEffect(() => {
+    void loadAll()
+  }, [loadAll])
 
   useEffect(() => {
     void load()
   }, [load])
 
-  // Stats
-  const total = submissions.length
+  // ---------------------------------------------------------------------------
+  // Stats — derived from the unfiltered allSubmissions
+  // ---------------------------------------------------------------------------
   const todayCount = useMemo(
     () =>
-      submissions.filter((s) => {
-        const ts = s.data['submitted-at'] as string | undefined
+      allSubmissions.filter((s) => {
+        const ts = s.data['submittedAt'] as string | undefined
         return ts != null && isToday(ts)
       }).length,
-    [submissions],
+    [allSubmissions],
   )
   const weekCount = useMemo(
     () =>
-      submissions.filter((s) => {
-        const ts = s.data['submitted-at'] as string | undefined
+      allSubmissions.filter((s) => {
+        const ts = s.data['submittedAt'] as string | undefined
         return ts != null && isThisWeek(ts)
       }).length,
-    [submissions],
+    [allSubmissions],
   )
   const monthCount = useMemo(
     () =>
-      submissions.filter((s) => {
-        const ts = s.data['submitted-at'] as string | undefined
+      allSubmissions.filter((s) => {
+        const ts = s.data['submittedAt'] as string | undefined
         return ts != null && isThisMonth(ts)
       }).length,
-    [submissions],
+    [allSubmissions],
   )
 
-  // 30-day bar chart
-  const histogram = useMemo(() => build30DayHistogram(submissions), [submissions])
-  const todayIndex = 29 // always the last bar
+  // 30-day bar chart — derived from allSubmissions
+  const histogram = useMemo(() => build30DayHistogram(allSubmissions), [allSubmissions])
+  const todayIndex = 29
 
-  // Distinct form IDs for filter
+  // Distinct form IDs for the filter picker — derived from allSubmissions
   const formIds = useMemo(() => {
     const ids = new Set<string>()
-    for (const s of submissions) {
-      const fid = s.data['form-id'] as string | undefined
+    for (const s of allSubmissions) {
+      const fid = s.data['formId'] as string | undefined
       if (fid) ids.add(fid)
     }
     return Array.from(ids).sort()
-  }, [submissions])
+  }, [allSubmissions])
 
-  // Filtered submissions
-  const filtered = useMemo(() => {
-    return submissions.filter((s) => {
-      if (filterForm && (s.data['form-id'] as string | undefined) !== filterForm) return false
-      if (filterStatus && (s.data['status'] as string | undefined) !== filterStatus) return false
-      return true
-    })
-  }, [submissions, filterForm, filterStatus])
-
+  // ---------------------------------------------------------------------------
   // Resend action
+  // ---------------------------------------------------------------------------
   const handleResend = useCallback(
     async (id: string) => {
       setResending(true)
@@ -355,6 +400,14 @@ function FormsDashboard() {
     },
     [routes, load],
   )
+
+  // ---------------------------------------------------------------------------
+  // Pagination helpers
+  // ---------------------------------------------------------------------------
+  const pageStart = page * PAGE_SIZE + 1
+  const pageEnd = Math.min((page + 1) * PAGE_SIZE, totalCount)
+  const hasPrev = page > 0
+  const hasNext = (page + 1) * PAGE_SIZE < totalCount
 
   return (
     <Stack gap={24}>
@@ -380,11 +433,11 @@ function FormsDashboard() {
         <StatCard label="Today" count={todayCount} />
         <StatCard label="This Week" count={weekCount} />
         <StatCard label="This Month" count={monthCount} />
-        <StatCard label="Total" count={total} />
+        <StatCard label="Total" count={globalTotal} />
       </Stack>
 
       {/* 30-day chart */}
-      {total > 0 && (
+      {globalTotal > 0 && (
         <Card padding={16}>
           <Stack direction="column" gap={8} height={180}>
             <Text variant="muted">Last 30 days</Text>
@@ -407,7 +460,7 @@ function FormsDashboard() {
             { label: 'All forms', value: '' },
             ...formIds.map((id) => ({ label: id, value: id })),
           ]}
-          onChange={(v) => setFilterForm(v)}
+          onChange={(v) => { setFilterForm(v); setPage(0) }}
         />
         <Select<string>
           label="Status"
@@ -418,9 +471,14 @@ function FormsDashboard() {
             { label: 'Sent', value: 'sent' },
             { label: 'Failed', value: 'failed' },
           ]}
-          onChange={(v) => setFilterStatus(v)}
+          onChange={(v) => { setFilterStatus(v); setPage(0) }}
         />
-        <Button variant="ghost" size="sm" onClick={() => void load()} disabled={loading}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => { void loadAll(); void load() }}
+          disabled={loading}
+        >
           {loading ? 'Loading…' : 'Refresh'}
         </Button>
       </Stack>
@@ -428,7 +486,7 @@ function FormsDashboard() {
       {/* Submissions table */}
       {loading ? (
         <Text variant="muted">Loading submissions…</Text>
-      ) : filtered.length === 0 ? (
+      ) : submissions.length === 0 ? (
         <EmptyState
           title="No submissions"
           body={
@@ -438,148 +496,177 @@ function FormsDashboard() {
           }
         />
       ) : (
-        <div
-          style={{
-            overflowX: 'auto',
-            border: '1px solid var(--editor-border)',
-            borderRadius: 'var(--editor-radius)',
-          }}
-        >
-          <table
+        <>
+          {/* Showing X–Y of Z + pagination controls */}
+          <Stack direction="row" gap={12} align="center" justify="between">
+            <Text variant="muted">
+              Showing {pageStart}–{pageEnd} of {totalCount}
+            </Text>
+            <Stack direction="row" gap={8}>
+              <Button variant="ghost" size="sm" disabled={!hasPrev} onClick={() => setPage((p) => p - 1)}>
+                Prev
+              </Button>
+              <Button variant="ghost" size="sm" disabled={!hasNext} onClick={() => setPage((p) => p + 1)}>
+                Next
+              </Button>
+            </Stack>
+          </Stack>
+
+          <div
             style={{
-              width: '100%',
-              borderCollapse: 'collapse',
-              fontSize: '0.875rem',
+              overflowX: 'auto',
+              border: '1px solid var(--editor-border)',
+              borderRadius: 'var(--editor-radius)',
             }}
           >
-            <thead>
-              <tr
-                style={{
-                  borderBottom: '1px solid var(--editor-border)',
-                  background: 'var(--editor-surface-2)',
-                }}
-              >
-                {['Date', 'Form', 'Page', 'Status', 'IP (short)', 'Actions'].map((h) => (
-                  <th
-                    key={h}
-                    style={{
-                      padding: '8px 12px',
-                      textAlign: 'left',
-                      color: 'var(--editor-text-secondary)',
-                      fontWeight: 500,
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((s, idx) => (
+            <table
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: '0.875rem',
+              }}
+            >
+              <thead>
                 <tr
-                  key={s.id}
                   style={{
-                    borderBottom:
-                      idx < filtered.length - 1 ? '1px solid var(--editor-border)' : 'none',
-                    background:
-                      selected?.id === s.id
-                        ? 'var(--editor-selection)'
-                        : 'transparent',
-                    cursor: 'pointer',
+                    borderBottom: '1px solid var(--editor-border)',
+                    background: 'var(--editor-surface-2)',
                   }}
-                  onClick={() => setSelected(s)}
                 >
-                  <td style={{ padding: '8px 12px', color: 'var(--editor-text)' }}>
-                    {s.data['submitted-at']
-                      ? formatDate(String(s.data['submitted-at']))
-                      : '—'}
-                  </td>
-                  <td style={{ padding: '8px 12px', color: 'var(--editor-text)' }}>
-                    {String(s.data['form-id'] ?? '—')}
-                  </td>
-                  <td
+                  {['Date', 'Form', 'Page', 'Status', 'IP (short)', 'Actions'].map((h) => (
+                    <th
+                      key={h}
+                      style={{
+                        padding: '8px 12px',
+                        textAlign: 'left',
+                        color: 'var(--editor-text-secondary)',
+                        fontWeight: 500,
+                      }}
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {submissions.map((s, idx) => (
+                  <tr
+                    key={s.id}
                     style={{
-                      padding: '8px 12px',
-                      color: 'var(--editor-text-secondary)',
-                      maxWidth: '180px',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      borderBottom:
+                        idx < submissions.length - 1 ? '1px solid var(--editor-border)' : 'none',
+                      background:
+                        selected?.id === s.id
+                          ? 'var(--editor-selection)'
+                          : 'transparent',
+                      cursor: 'pointer',
                     }}
-                    title={String(s.data['page-path'] ?? '')}
+                    onClick={() => setSelected(s)}
                   >
-                    {String(s.data['page-path'] || '—')}
-                  </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    {(() => {
-                      const st = s.data['status'] as string | undefined
-                      return (
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            padding: '2px 8px',
-                            borderRadius: 'var(--editor-radius-sm)',
-                            fontSize: '0.8125rem',
-                            fontWeight: 500,
-                            background:
-                              st === 'sent'
-                                ? 'var(--editor-success-bg)'
-                                : st === 'failed'
-                                  ? 'var(--editor-danger-bg)'
-                                  : 'var(--editor-surface-3)',
-                            color:
-                              st === 'sent'
-                                ? 'var(--editor-success-text)'
-                                : st === 'failed'
-                                  ? 'var(--editor-danger-text)'
-                                  : 'var(--editor-text-secondary)',
+                    <td style={{ padding: '8px 12px', color: 'var(--editor-text)' }}>
+                      {s.data['submittedAt']
+                        ? formatDate(String(s.data['submittedAt']))
+                        : '—'}
+                    </td>
+                    <td style={{ padding: '8px 12px', color: 'var(--editor-text)' }}>
+                      {String(s.data['formId'] ?? '—')}
+                    </td>
+                    <td
+                      style={{
+                        padding: '8px 12px',
+                        color: 'var(--editor-text-secondary)',
+                        maxWidth: '180px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={String(s.data['pagePath'] ?? '')}
+                    >
+                      {String(s.data['pagePath'] || '—')}
+                    </td>
+                    <td style={{ padding: '8px 12px' }}>
+                      {(() => {
+                        const st = s.data['status'] as string | undefined
+                        return (
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              padding: '2px 8px',
+                              borderRadius: 'var(--editor-radius-sm)',
+                              fontSize: '0.8125rem',
+                              fontWeight: 500,
+                              background:
+                                st === 'sent'
+                                  ? 'var(--editor-success-bg)'
+                                  : st === 'failed'
+                                    ? 'var(--editor-danger-bg)'
+                                    : 'var(--editor-surface-3)',
+                              color:
+                                st === 'sent'
+                                  ? 'var(--editor-success-text)'
+                                  : st === 'failed'
+                                    ? 'var(--editor-danger-text)'
+                                    : 'var(--editor-text-secondary)',
+                            }}
+                          >
+                            {statusLabel(st)}
+                          </span>
+                        )
+                      })()}
+                    </td>
+                    <td
+                      style={{
+                        padding: '8px 12px',
+                        color: 'var(--editor-text-muted)',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.8125rem',
+                      }}
+                    >
+                      {String(s.data['ipHash'] ?? '').slice(0, 8)}
+                    </td>
+                    <td style={{ padding: '8px 12px' }}>
+                      <Stack direction="row" gap={6}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setSelected(s)
                           }}
                         >
-                          {statusLabel(st)}
-                        </span>
-                      )
-                    })()}
-                  </td>
-                  <td
-                    style={{
-                      padding: '8px 12px',
-                      color: 'var(--editor-text-muted)',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: '0.8125rem',
-                    }}
-                  >
-                    {String(s.data['ip-hash'] ?? '').slice(0, 8)}
-                  </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    <Stack direction="row" gap={6}>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setSelected(s)
-                        }}
-                      >
-                        View
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={resending}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          void handleResend(s.id)
-                        }}
-                      >
-                        Resend
-                      </Button>
-                    </Stack>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                          View
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={resending}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void handleResend(s.id)
+                          }}
+                        >
+                          Resend
+                        </Button>
+                      </Stack>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Bottom pagination controls (mirrors top) */}
+          {(hasPrev || hasNext) && (
+            <Stack direction="row" gap={8} justify="end">
+              <Button variant="ghost" size="sm" disabled={!hasPrev} onClick={() => setPage((p) => p - 1)}>
+                Prev
+              </Button>
+              <Button variant="ghost" size="sm" disabled={!hasNext} onClick={() => setPage((p) => p + 1)}>
+                Next
+              </Button>
+            </Stack>
+          )}
+        </>
       )}
 
       {/* Drawer */}

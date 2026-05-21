@@ -42,17 +42,18 @@ async function read(relative: string): Promise<string> {
 
 describe('sandbox crypto bridge', () => {
   it('worker protocol exposes crypto.digest and crypto.signHmac', async () => {
-    const source = await read('server/plugins/workerProtocol.ts')
-    expect(source).toContain("'crypto.digest'")
-    expect(source).toContain("'crypto.signHmac'")
+    const targetsSource = await read('server/plugins/protocol/targets.ts')
+    const cryptoSource = await read('server/plugins/protocol/schemas/crypto.ts')
+    expect(targetsSource).toContain("'crypto.digest'")
+    expect(targetsSource).toContain("'crypto.signHmac'")
     // Schemas must exist for both targets — without them the host
     // would accept malformed payloads.
-    expect(source).toContain('CryptoDigestArgSchema')
-    expect(source).toContain('CryptoSignHmacArgSchema')
+    expect(cryptoSource).toContain('CryptoDigestArgSchema')
+    expect(cryptoSource).toContain('CryptoSignHmacArgSchema')
   })
 
   it('VM bootstrap exposes the WebCrypto subset routed through __hostCall', async () => {
-    const source = await read('server/plugins/quickjsHost.ts')
+    const source = await read('server/plugins/quickjs/bootstrap/crypto.ts')
     // The three callable surfaces a plugin uses:
     expect(source).toMatch(/globalThis\.crypto\.subtle\s*=\s*\{/)
     expect(source).toMatch(/digest:\s*async function/)
@@ -64,25 +65,24 @@ describe('sandbox crypto bridge', () => {
   })
 
   it('host dispatcher uses Bun-native crypto.subtle (no vendored package)', async () => {
-    const source = await read('server/plugins/pluginWorkerHost.ts')
-    // The two cases must reach into the platform's crypto.subtle.
-    expect(source).toMatch(/case 'crypto\.digest'/)
-    expect(source).toMatch(/case 'crypto\.signHmac'/)
-    expect(source).toContain('crypto.subtle.digest(')
-    expect(source).toContain('crypto.subtle.importKey(')
-    expect(source).toContain('crypto.subtle.sign(')
+    const dispatchSource = await read('server/plugins/host/apiDispatch.ts')
+    const cryptoHandlerSource = await read('server/plugins/host/handlers/crypto.ts')
+    // The two case labels must exist in apiDispatch.ts.
+    expect(dispatchSource).toMatch(/case 'crypto\.digest'/)
+    expect(dispatchSource).toMatch(/case 'crypto\.signHmac'/)
+    // The handler must reach into the platform's native crypto.subtle.
+    expect(cryptoHandlerSource).toContain('crypto.subtle.digest(')
+    expect(cryptoHandlerSource).toContain('crypto.subtle.importKey(')
+    expect(cryptoHandlerSource).toContain('crypto.subtle.sign(')
     // Sanity: no third-party crypto library snuck in.
-    expect(source).not.toContain('crypto-js')
-    expect(source).not.toContain('jose')
+    expect(cryptoHandlerSource).not.toContain('crypto-js')
+    expect(cryptoHandlerSource).not.toContain('jose')
   })
 
   it('crypto targets are not permission-gated', async () => {
-    const source = await read('server/plugins/pluginWorkerHost.ts')
-    // The dispatch cases for storage / hooks / etc. all begin with an
-    // `assertHostPluginPermission(...)` call. The crypto cases must NOT
-    // — they're pure computation, same model as Math / JSON.
-    const cryptoBlock = source.match(/case 'crypto\.digest':[\s\S]*?case 'crypto\.signHmac':[\s\S]*?return\s*\}/)
-    expect(cryptoBlock).not.toBeNull()
-    expect(cryptoBlock![0]).not.toContain('assertHostPluginPermission')
+    const cryptoHandlerSource = await read('server/plugins/host/handlers/crypto.ts')
+    // The crypto handlers are pure computation — same model as Math / JSON.
+    // They must NOT call assertHostPluginPermission.
+    expect(cryptoHandlerSource).not.toContain('assertHostPluginPermission')
   })
 })

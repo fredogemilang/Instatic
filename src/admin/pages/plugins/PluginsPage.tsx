@@ -99,6 +99,7 @@ export function PluginsPage() {
                 onOpenSchedules={(p) => vm.setSchedulesPluginId(p.id)}
                 onInstallPack={(p) => void vm.installPluginPack(p)}
                 onRestart={(p) => void vm.restartPlugin(p)}
+                onReinstall={() => fileInputRef.current?.click()}
                 onToggle={(p) => void vm.togglePlugin(p)}
                 onRemove={(p) => vm.setPendingRemove(p)}
               />

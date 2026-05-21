@@ -61,9 +61,9 @@ const mod: ServerPluginModule = {
     // the dashboard even if old history still exists.
     api.cms.routes.get('/status', 'plugins.manage', async () => {
       const configuredUrls = parseUrls(api.cms.settings.get('urls') ?? '')
-      const all = await api.cms.storage.collection('checks').list()
+      const { records } = await api.cms.storage.collection('checks').list()
       const byUrl = new Map<string, CheckRecord[]>()
-      for (const row of all) {
+      for (const row of records) {
         const data = row.data as unknown as CheckRecord
         const list = byUrl.get(data.url) ?? []
         list.push(data)
@@ -167,8 +167,8 @@ const mod: ServerPluginModule = {
       maxDurationMs: 30_000,
       handler: async () => {
         const cutoff = Date.now() - 24 * 60 * 60 * 1000
-        const all = await api.cms.storage.collection('checks').list()
-        const recent = all.filter(
+        const { records } = await api.cms.storage.collection('checks').list()
+        const recent = records.filter(
           (r) => new Date((r.data as { 'checked-at': string })['checked-at']).getTime() >= cutoff,
         )
         const total = recent.length

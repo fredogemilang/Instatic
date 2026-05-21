@@ -577,7 +577,13 @@ describe('Toolbar — structural requirements', () => {
     expect(src).toContain('publishDisabled={disabled || state === \'published\'}')
     expect(src).toContain('Save draft')
     expect(src).toContain('Preview page')
-    expect(src).toContain('Open live page')
+    // "Open live page" used to live in this menu — it's now a dedicated
+    // icon button (OpenLivePageButton) next to the avatar in the Toolbar
+    // shell so it's reachable from every admin route, not just the Site
+    // editor. Asserting it's gone from the menu keeps the two surfaces
+    // from drifting back into a duplicate action.
+    expect(src).not.toContain("label: 'Open live page'")
+    expect(src).not.toContain("'toolbar-open-page-new-tab-action'")
     expect(src).toContain("'Retry publish'")
     expect(src).not.toContain("label: 'Live'")
     expect(src).not.toContain("'Publish failed'")

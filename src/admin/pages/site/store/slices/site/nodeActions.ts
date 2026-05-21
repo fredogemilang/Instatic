@@ -102,6 +102,13 @@ function duplicateNodeWithScopedClasses(
   return duplicateNode(tree, nodeId, { nodeIdMap, classIdRemap })
 }
 
+function recordPatchChanges(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): boolean {
+  return Object.entries(patch).some(([key, value]) => !Object.is(current[key], value))
+}
+
 export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
   const { get, set, mutatePage, mutateActiveTree, mutateActiveTreeAndSite } = helpers
 
@@ -110,7 +117,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       const mod = registry.get(moduleId)
       const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
       const newNode = createNode(moduleId, resolvedDefaults)
-      mutateActiveTree((tree) => insertNode(tree, newNode, parentId, index))
+      mutateActiveTree((tree) => {
+        insertNode(tree, newNode, parentId, index)
+        return true
+      })
       return newNode.id
     },
 
@@ -138,8 +148,8 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       )
 
       // Immediately materialize slot-instance children for each slot param the VC declares.
-      // `insertNode` → `mutateActiveTree` already pushed history; we mutate inside another
-      // set() call here to keep the slot-instance insertion as part of the same logical action.
+      // `insertNode` → `mutateActiveTree` already committed the undo snapshot; we mutate
+      // inside another set() call here to keep slot insertion in the same logical action.
       const currentSite = get().site
       const vc = currentSite?.visualComponents.find((v) => v.id === componentId)
       if (vc) {
@@ -173,41 +183,85 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     },
 
     deleteNode: (nodeId) => {
-      mutateActiveTree((tree) => deleteNode(tree, nodeId))
-      if (get().selectedNodeId === nodeId) set((state) => { state.selectedNodeId = null })
+      const deleted = mutateActiveTree((tree) => {
+        if (!tree.nodes[nodeId]) return false
+        deleteNode(tree, nodeId)
+        return true
+      })
+      if (deleted && get().selectedNodeId === nodeId) {
+        set((state) => { state.selectedNodeId = null })
+      }
     },
 
     updateNodeProps: (nodeId, patch) => {
-      mutateActiveTree((tree) => updateNodeProps(tree, nodeId, patch))
+      mutateActiveTree((tree) => {
+        const node = tree.nodes[nodeId]
+        if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
+        if (!recordPatchChanges(node.props, patch)) return false
+        updateNodeProps(tree, nodeId, patch)
+        return true
+      })
     },
 
     setBreakpointOverride: (nodeId, breakpointId, patch) => {
-      mutateActiveTree((tree) => setBreakpointOverride(tree, nodeId, breakpointId, patch))
+      mutateActiveTree((tree) => {
+        const node = tree.nodes[nodeId]
+        if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
+        if (!recordPatchChanges(node.breakpointOverrides[breakpointId] ?? {}, patch)) {
+          return false
+        }
+        setBreakpointOverride(tree, nodeId, breakpointId, patch)
+        return true
+      })
     },
 
     clearBreakpointOverride: (nodeId, breakpointId) => {
-      mutateActiveTree((tree) => clearBreakpointOverride(tree, nodeId, breakpointId))
+      mutateActiveTree((tree) => {
+        const node = tree.nodes[nodeId]
+        if (!node?.breakpointOverrides[breakpointId]) return false
+        clearBreakpointOverride(tree, nodeId, breakpointId)
+        return true
+      })
     },
 
     renameNode: (nodeId, label) => {
-      mutateActiveTree((tree) => renameNode(tree, nodeId, label))
+      mutateActiveTree((tree) => {
+        const node = tree.nodes[nodeId]
+        if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
+        const nextLabel = label.trim() || undefined
+        if (node.label === nextLabel) return false
+        renameNode(tree, nodeId, label)
+        return true
+      })
     },
 
     toggleNodeLocked: (nodeId) => {
-      mutateActiveTree((tree) => toggleNodeLocked(tree, nodeId))
+      mutateActiveTree((tree) => {
+        toggleNodeLocked(tree, nodeId)
+        return true
+      })
     },
 
     toggleNodeHidden: (nodeId) => {
-      mutateActiveTree((tree) => toggleNodeHidden(tree, nodeId))
+      mutateActiveTree((tree) => {
+        toggleNodeHidden(tree, nodeId)
+        return true
+      })
     },
 
     moveNode: (nodeId, newParentId, newIndex) => {
-      mutateActiveTree((tree) => moveNode(tree, nodeId, newParentId, newIndex))
+      mutateActiveTree((tree) => {
+        moveNode(tree, nodeId, newParentId, newIndex)
+        return true
+      })
     },
 
     moveNodes: (nodeIds, newParentId, newIndex) => {
       if (nodeIds.length === 0) return
-      mutateActiveTree((tree) => moveNodes(tree, nodeIds, newParentId, newIndex))
+      mutateActiveTree((tree) => {
+        moveNodes(tree, nodeIds, newParentId, newIndex)
+        return true
+      })
     },
 
     duplicateNode: (nodeId) => {
@@ -216,8 +270,9 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // alongside the node — otherwise the duplicate's classIds carry the
       // source's class id and editing one node restyles both. F-0005.
       mutateActiveTreeAndSite((tree, site) => {
-        if (!tree.nodes[nodeId]) return
+        if (!tree.nodes[nodeId]) return false
         newId = duplicateNodeWithScopedClasses(tree, site, nodeId)
+        return newId ? true : false
       })
       return newId
     },
@@ -233,6 +288,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           if (!tree.nodes[id] || id === tree.rootNodeId) continue
           newIds.push(duplicateNodeWithScopedClasses(tree, site, id))
         }
+        return newIds.length > 0
       })
       return newIds
     },
@@ -247,11 +303,14 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         const ordered = [...nodeIds].sort(
           (a, b) => depthInTree(tree, b) - depthInTree(tree, a),
         )
+        let changed = false
         for (const id of ordered) {
           if (id === tree.rootNodeId) continue
           if (!tree.nodes[id]) continue
           deleteNode(tree, id)
+          changed = true
         }
+        return changed
       })
     },
 
@@ -262,7 +321,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       const mod = registry.get(containerModuleId)
       const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
       let wrapperId = ''
-      mutateActiveTree((tree) => { wrapperId = wrapNode(tree, nodeId, containerModuleId, resolvedDefaults) })
+      mutateActiveTree((tree) => {
+        wrapperId = wrapNode(tree, nodeId, containerModuleId, resolvedDefaults)
+        return true
+      })
       return wrapperId
     },
 
@@ -275,6 +337,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       let wrapperId: string | null = null
       mutateActiveTree((tree) => {
         wrapperId = wrapNodes(tree, nodeIds, containerModuleId, resolvedDefaults)
+        return true
       })
       return wrapperId
     },
@@ -282,22 +345,34 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     setNodeDynamicBinding: (nodeId, propKey, binding) => {
       mutatePage((page) => {
         const node = page.nodes[nodeId]
-        if (!node) return
+        if (!node) return false
+        const current = node.dynamicBindings?.[propKey]
+        if (
+          current &&
+          current.source === binding.source &&
+          current.field === binding.field &&
+          current.format === binding.format &&
+          current.fallback === binding.fallback
+        ) {
+          return false
+        }
         node.dynamicBindings = {
           ...(node.dynamicBindings ?? {}),
           [propKey]: binding,
         }
+        return true
       })
     },
 
     clearNodeDynamicBinding: (nodeId, propKey) => {
       mutatePage((page) => {
         const node = page.nodes[nodeId]
-        if (!node?.dynamicBindings) return
+        if (!node?.dynamicBindings?.[propKey]) return false
         delete node.dynamicBindings[propKey]
         if (Object.keys(node.dynamicBindings).length === 0) {
           delete node.dynamicBindings
         }
+        return true
       })
     },
   }

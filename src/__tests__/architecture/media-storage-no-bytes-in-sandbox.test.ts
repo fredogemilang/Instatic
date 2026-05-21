@@ -60,14 +60,14 @@ describe('media storage — no bytes in sandbox', () => {
     expect(executor).not.toMatch(/__hostCall|callHostApi|quickjsHost/)
   })
 
-  it('quickjsHost.ts never imports the executor (no bytes-into-sandbox door)', async () => {
-    const quickjs = await read('server/plugins/quickjsHost.ts')
+  it('quickjs/vm.ts never imports the executor (no bytes-into-sandbox door)', async () => {
+    const quickjs = await read('server/plugins/quickjs/vm.ts')
     expect(quickjs).not.toContain('mediaUploadExecutor')
     expect(quickjs).not.toContain('executeUploadPlan')
   })
 
-  it('workerProtocol.ts forbids byte fields in adapter-call args', async () => {
-    const protocol = await read('server/plugins/workerProtocol.ts')
+  it('protocol/messages.ts forbids byte fields in adapter-call args', async () => {
+    const protocol = await read('server/plugins/protocol/messages.ts')
     // The `RunMediaAdapterCallRequest.args` type is `unknown` (deliberately
     // schemaless for the generic dispatcher), but the inline doc must
     // contain the explicit byte-free guarantee so future contributors see

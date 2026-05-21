@@ -24,7 +24,7 @@ import {
   computeNextRun,
   registerPluginSchedule,
   runScheduleNow,
-  tickOnce,
+  tickPluginScheduler,
 } from '../../../server/plugins/scheduler'
 import {
   getSchedule,
@@ -145,7 +145,7 @@ describe('plugin scheduler — DB', () => {
       // Mock the worker dispatch so we don't need a live VM. Two
       // concurrent run-now calls — only ONE should win the claim.
       const dispatch = mock(async () => ({ status: 'ok' as const, durationMs: 1 }))
-      mock.module('../../../server/plugins/pluginWorkerHost', () => ({
+      mock.module('../../../server/plugins/host/rpc', () => ({
         runScheduleInWorker: dispatch,
       }))
       const [first, second] = await Promise.all([
@@ -162,7 +162,7 @@ describe('plugin scheduler — DB', () => {
     }
   })
 
-  it('tickOnce no-ops when no schedules are due', async () => {
+  it('tickPluginScheduler no-ops when no schedules are due', async () => {
     const { db, cleanup } = await setupDb()
     try {
       await registerPluginSchedule(db, {
@@ -179,10 +179,10 @@ describe('plugin scheduler — DB', () => {
         where plugin_id = ${'test.sched'} and schedule_id = ${'test.sched.far-future'}
       `
       const dispatch = mock(async () => ({ status: 'ok' as const, durationMs: 1 }))
-      mock.module('../../../server/plugins/pluginWorkerHost', () => ({
+      mock.module('../../../server/plugins/host/rpc', () => ({
         runScheduleInWorker: dispatch,
       }))
-      await tickOnce(db)
+      await tickPluginScheduler(db)
       expect(dispatch).not.toHaveBeenCalled()
     } finally {
       await cleanup()

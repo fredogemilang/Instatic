@@ -73,8 +73,8 @@ async function handleWebhookEvent(
   const broadcasts = api.cms.storage.collection('broadcasts')
 
   // Find the delivery record by the Resend message ID.
-  const allDeliveries = await deliveries.list()
-  const delivery = allDeliveries.find((r) => r.data.resendId === resendId)
+  const { records: deliveryRecords } = await deliveries.list({ filter: { resendId: resendId }, limit: 1 })
+  const delivery = deliveryRecords[0]
 
   switch (eventType) {
     case 'email.bounced': {
@@ -86,8 +86,10 @@ async function handleWebhookEvent(
       // Mark subscriber as bounced.
       const toEmail = String(data.to ?? '')
       if (toEmail) {
-        const allSubs = await subs.list()
-        const sub = allSubs.find((r) => (r.data.email as string)?.toLowerCase() === toEmail.toLowerCase())
+        // like without wildcards is case-insensitive exact match:
+        //   lower(field) like lower('user@example.com') — no % anchors needed.
+        const { records: subRecords } = await subs.list({ filter: { email: { like: toEmail } }, limit: 1 })
+        const sub = subRecords[0]
         if (sub) {
           await subs.update(sub.id, { status: 'bounced' })
           await api.cms.hooks.emit('newsletter.unsubscribed', {
@@ -104,8 +106,8 @@ async function handleWebhookEvent(
       // Treat spam complaints as an immediate unsubscribe.
       const toEmail = String(data.to ?? '')
       if (toEmail) {
-        const allSubs = await subs.list()
-        const sub = allSubs.find((r) => (r.data.email as string)?.toLowerCase() === toEmail.toLowerCase())
+        const { records: subRecords } = await subs.list({ filter: { email: { like: toEmail } }, limit: 1 })
+        const sub = subRecords[0]
         if (sub) {
           await subs.update(sub.id, { status: 'unsubscribed', unsubscribedAt: new Date().toISOString() })
           await api.cms.hooks.emit('newsletter.unsubscribed', {
@@ -146,7 +148,7 @@ async function incrementBroadcastCounter(
   delta: number,
 ): Promise<void> {
   if (!broadcastId || delta === 0) return
-  const all = await broadcasts.list()
+  const { records: all } = await broadcasts.list()
   const bRecord = all.find((r) => r.id === broadcastId)
   if (!bRecord) return
   const current = Number(bRecord.data[field] ?? 0)

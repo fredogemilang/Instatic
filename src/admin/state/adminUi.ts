@@ -47,6 +47,22 @@ export interface AdminUiState {
   siteName: string
   siteFaviconUrl: string | null
   setSiteSummary: (summary: { name: string; faviconUrl: string | null }) => void
+
+  /**
+   * Slug of the page currently open in the Site editor. `null` on every
+   * non-editor admin route (Plugins / Users / Account / Dashboard / …) and
+   * also when the editor is in Visual Component edit mode (no active page).
+   *
+   * Powers the toolbar's "Open live page" icon button, which uses the slug
+   * to deep-link to the published page on the public site. When the slug is
+   * `null`, the button falls back to the site root.
+   *
+   * Written by `AdminCanvasLayout` from the editor store on every render.
+   * Non-editor layouts never write it, so the field naturally stays `null`
+   * there without either layout knowing about the other.
+   */
+  activePageSlug: string | null
+  setActivePageSlug: (slug: string | null) => void
 }
 
 /**
@@ -92,4 +108,7 @@ export const useAdminUi = create<AdminUiState>((set) => ({
   siteFaviconUrl: null,
   setSiteSummary: ({ name, faviconUrl }) =>
     set({ siteName: name, siteFaviconUrl: faviconUrl }),
+
+  activePageSlug: null,
+  setActivePageSlug: (slug) => set({ activePageSlug: slug }),
 }))

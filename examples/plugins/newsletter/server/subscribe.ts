@@ -8,7 +8,7 @@
  * Route URL prefix (all routes):
  *   /admin/api/cms/plugins/pagebuilder.newsletter/runtime
  */
-import type { ServerPluginApi } from '@pagebuilder/plugin-sdk'
+import type { ServerPluginApi, StorageFilterValue } from '@pagebuilder/plugin-sdk'
 import { generateToken, sendEmail } from './resend'
 import {
   renderConfirmPage,
@@ -113,10 +113,8 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
       : []
 
     try {
-      const all = await subs.list()
-      const existing = all.find(
-        (r) => (r.data as SubscriberData).email.toLowerCase() === email.toLowerCase(),
-      )
+      const { records: matchingSubs } = await subs.list({ filter: { email: { like: email } }, limit: 1 })
+      const existing = matchingSubs[0]
 
       const siteName = api.cms.settings.get<string>('fromName') ?? 'Newsletter'
 
@@ -128,7 +126,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
         // Re-subscribe: mark pending/confirmed again
         const confirmationToken = generateToken()
         const unsubscribeToken = data.unsubscribeToken || generateToken()
-        const allListRecords = await lists.list()
+        const { records: allListRecords } = await lists.list()
         const resolvedListIds = resolveListIds(requestedListIds, allListRecords)
         const doubleOptIn = api.cms.settings.get<boolean>('doubleOptIn') ?? true
         const newStatus = doubleOptIn ? 'pending' : 'confirmed'
@@ -158,7 +156,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
       }
 
       // New subscriber
-      const allListRecords = await lists.list()
+      const { records: allListRecords } = await lists.list()
       const resolvedListIds = resolveListIds(requestedListIds, allListRecords)
       const doubleOptIn = api.cms.settings.get<boolean>('doubleOptIn') ?? true
       const confirmationToken = generateToken()
@@ -205,8 +203,8 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
     if (!token) return htmlResponse(renderErrorPage('Invalid confirmation link.'))
 
     try {
-      const all = await subs.list()
-      const record = all.find((r) => (r.data as SubscriberData).confirmationToken === token)
+      const { records: all } = await subs.list({ filter: { confirmationToken: token }, limit: 1 })
+      const record = all[0]
 
       if (!record) return htmlResponse(renderErrorPage('This confirmation link is invalid or has already been used.'))
 
@@ -243,8 +241,8 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
     if (!token) return htmlResponse(renderErrorPage('Invalid unsubscribe link.'))
 
     try {
-      const all = await subs.list()
-      const record = all.find((r) => (r.data as SubscriberData).unsubscribeToken === token)
+      const { records: all } = await subs.list({ filter: { unsubscribeToken: token }, limit: 1 })
+      const record = all[0]
 
       if (!record) return htmlResponse(renderErrorPage('This unsubscribe link is invalid.'))
 
@@ -282,13 +280,13 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
     if (!token) return htmlResponse(renderErrorPage('Invalid preferences link.'))
 
     try {
-      const all = await subs.list()
-      const record = all.find((r) => (r.data as SubscriberData).unsubscribeToken === token)
+      const { records: all } = await subs.list({ filter: { unsubscribeToken: token }, limit: 1 })
+      const record = all[0]
 
       if (!record) return htmlResponse(renderErrorPage('This preferences link is invalid.'))
 
       const data = record.data as SubscriberData
-      const allListRecords = await lists.list()
+      const { records: allListRecords } = await lists.list()
       const allLists = allListRecords.map((r) => ({
         id: r.id,
         name: String(r.data.name ?? ''),
@@ -324,8 +322,8 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
     if (!token) return htmlResponse(renderErrorPage('Invalid preferences link.'))
 
     try {
-      const all = await subs.list()
-      const record = all.find((r) => (r.data as SubscriberData).unsubscribeToken === token)
+      const { records: all } = await subs.list({ filter: { unsubscribeToken: token }, limit: 1 })
+      const record = all[0]
 
       if (!record) return htmlResponse(renderErrorPage('This preferences link is invalid.'))
 
@@ -339,15 +337,33 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
   })
 
   // ── GET /subscribers ─────────────────────────────────────────────────────
-  // Admin: list all subscribers (supports ?status= and ?listId= filters).
+  // Admin: paginated subscriber list with server-side filters.
+  //   ?search=   — case-insensitive LIKE on email. Searching name would require
+  //               an OR clause across two fields, which the filter API does not
+  //               support (no OR combinator). Email-only search is an accepted
+  //               limitation documented here.
+  //   ?status=   — exact match on the status field.
+  //   ?listId=   — listIds is a JSON array; array-contains cannot be expressed
+  //               with the available operators (eq/like compare the whole
+  //               serialised value). Filtered in JS after fetching.
+  //   ?limit=    — page size (default 20, capped at 1000).
+  //   ?offset=   — number of records to skip (default 0).
   api.cms.routes.get('/subscribers', 'plugins.manage', async (ctx) => {
     try {
       const url = new URL(ctx.req.url)
       const statusFilter = url.searchParams.get('status') ?? ''
       const listIdFilter = url.searchParams.get('listId') ?? ''
+      const searchParam = url.searchParams.get('search') ?? ''
+      const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') ?? '20', 10), 1), 1000)
+      const offset = Math.max(parseInt(url.searchParams.get('offset') ?? '0', 10), 0)
 
-      const all = await subs.list()
-      let filtered = all.map((r) => {
+      const filter: Record<string, StorageFilterValue> = {}
+      if (statusFilter) filter.status = statusFilter
+      if (searchParam) filter.email = { like: `%${searchParam}%` }
+
+      const { records, totalCount } = await subs.list({ filter, limit, offset })
+
+      let subscribers = records.map((r) => {
         const d = r.data as SubscriberData
         return {
           id: r.id,
@@ -362,14 +378,11 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
         }
       })
 
-      if (statusFilter) {
-        filtered = filtered.filter((s) => s.status === statusFilter)
-      }
       if (listIdFilter) {
-        filtered = filtered.filter((s) => s.listIds.includes(listIdFilter))
+        subscribers = subscribers.filter((s) => s.listIds.includes(listIdFilter))
       }
 
-      return { ok: true, subscribers: filtered }
+      return { ok: true, subscribers, totalCount }
     } catch (err) {
       console.error('[newsletter] GET /subscribers error:', err)
       return { error: err instanceof Error ? err.message : 'Failed to list subscribers' }
@@ -387,11 +400,8 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
 
       if (!isValidEmail(email)) return { error: 'Invalid email address' }
 
-      const all = await subs.list()
-      const existing = all.find(
-        (r) => (r.data as SubscriberData).email.toLowerCase() === email.toLowerCase(),
-      )
-      if (existing) return { error: 'Subscriber already exists' }
+      const { records: matchingSubs } = await subs.list({ filter: { email: { like: email } }, limit: 1 })
+      if (matchingSubs.length > 0) return { error: 'Subscriber already exists' }
 
       const record = await subs.create({
         email,
@@ -437,7 +447,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
   // ── GET /subscribers.csv ──────────────────────────────────────────────────
   api.cms.routes.get('/subscribers.csv', 'plugins.manage', async () => {
     try {
-      const all = await subs.list()
+      const { records: all } = await subs.list({ limit: 1000 })
       const headers = ['id', 'email', 'name', 'status', 'listIds', 'subscribedAt', 'confirmedAt']
       const rows = all.map((r) => {
         const d = r.data as SubscriberData
@@ -470,7 +480,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
   // ── GET/POST /stats ───────────────────────────────────────────────────────
   api.cms.routes.get('/stats', 'plugins.manage', async () => {
     try {
-      const allSubs = await subs.list()
+      const { records: allSubs, totalCount: totalSubs } = await subs.list({ limit: 1000 })
       const counts: Record<string, number> = { pending: 0, confirmed: 0, unsubscribed: 0, bounced: 0 }
       for (const r of allSubs) {
         const s = (r.data as SubscriberData).status
@@ -478,7 +488,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
       }
 
       const broadcasts = api.cms.storage.collection('broadcasts')
-      const allBroadcasts = await broadcasts.list()
+      const { records: allBroadcasts, totalCount: totalBroadcasts } = await broadcasts.list({ limit: 1000 })
       const bcastCounts: Record<string, number> = { draft: 0, scheduled: 0, sending: 0, sent: 0, failed: 0 }
       for (const r of allBroadcasts) {
         const s = String(r.data.status ?? 'draft')
@@ -486,19 +496,18 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
       }
 
       const deliveries = api.cms.storage.collection('deliveries')
-      const allDeliveries = await deliveries.list()
-      const totalDeliveries = allDeliveries.length
+      const { records: allDeliveries, totalCount: totalDeliveries } = await deliveries.list({ limit: 1000 })
       const openedDeliveries = allDeliveries.filter((r) => r.data.openedAt).length
       const clickedDeliveries = allDeliveries.filter((r) => r.data.clickedAt).length
 
       return {
         ok: true,
         subscribers: {
-          total: allSubs.length,
+          total: totalSubs,
           ...counts,
         },
         broadcasts: {
-          total: allBroadcasts.length,
+          total: totalBroadcasts,
           ...bcastCounts,
         },
         deliveries: {
@@ -517,7 +526,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
 
   api.cms.routes.get('/lists', 'plugins.manage', async () => {
     try {
-      const all = await lists.list()
+      const { records: all } = await lists.list()
       return {
         ok: true,
         lists: all.map((r) => ({

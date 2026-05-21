@@ -1,16 +1,12 @@
 /**
  * SEO Suite — publish.html filter + page-index maintenance.
  *
- * Per-request pipeline (single-threaded, safe to use module-level maps):
- *
- *   1. `publish.before` fires  → record currentPageId for this siteId.
- *   2. `publish.html` filter fires → inject <head> tags + upsert page-index.
- *   3. `publish.after` fires   → clean up currentPageId for this siteId.
- *
- * The seo-entries collection is cached in memory and invalidated whenever a
- * `content.entry.*` event mentions the `seo-entries` resource. The cache
- * removes one storage round-trip per published page at the cost of a tiny
- * memory footprint (one entry ≈ a few hundred bytes).
+ * The `publish.html` filter receives `{ siteId, pageId, slug }` directly in
+ * its context — no Map bridge is needed. The seo-entries collection is cached
+ * in memory and invalidated whenever a `content.entry.*` event mentions the
+ * `seo-entries` resource. The cache removes one storage round-trip per
+ * published page at the cost of a tiny memory footprint (one entry ≈ a few
+ * hundred bytes).
  */
 import type { ServerPluginApi, PluginRecord } from '@pagebuilder/plugin-sdk'
 import { Type } from '@sinclair/typebox'
@@ -101,9 +97,6 @@ function meta(name: string, value: string, prop?: boolean): string {
 // Module-level state — safe because the plugin VM is single-threaded.
 // ---------------------------------------------------------------------------
 
-/** Maps siteId → current pageId being published (cleared in publish.after). */
-const currentPageBySite = new Map<string, string>()
-
 /** In-memory cache of seo-entries; null means "not loaded yet". */
 let seoEntriesCache: PluginRecord[] | null = null
 
@@ -132,46 +125,15 @@ export function registerHeadInjection(api: ServerPluginApi): void {
     }
   })
 
-  // ── publish.before — record which page is rendering ──────────────────────
-  api.cms.hooks.on('publish.before', (evt) => {
-    const { siteId, pageId } = evt as { siteId: string; pageId?: string }
-    if (pageId) {
-      currentPageBySite.set(siteId, pageId)
-    }
-  })
-
-  // ── publish.after — clean up ──────────────────────────────────────────────
-  api.cms.hooks.on('publish.after', (evt) => {
-    const { siteId } = evt as { siteId: string }
-    currentPageBySite.delete(siteId)
-  })
-
   // ── publish.html filter — inject meta tags + maintain page-index ──────────
-  api.cms.hooks.filter('publish.html', async (html, _context) => {
+  api.cms.hooks.filter('publish.html', async (html, { pageId, slug }) => {
     if (typeof html !== 'string') return html
-
-    // Determine siteId from pluginId context — the filter context only carries
-    // pluginId, not siteId directly. We use the pluginId to look up which site
-    // is rendering by searching our map for the current entry.
-    // NOTE: Since the VM is single-threaded, only one page renders at a time.
-    // The first (and only) entry in currentPageBySite is safe to use.
-    let siteId: string | undefined
-    let pageId: string | undefined
-    for (const [sid, pid] of currentPageBySite.entries()) {
-      siteId = sid
-      pageId = pid
-      break
-    }
-
-    if (!pageId || !siteId) {
-      // Preview render or no page context — return unchanged.
-      return html
-    }
 
     // ── Load seo-entries (cached) ─────────────────────────────────────────
     try {
       if (seoEntriesCache === null) {
-        seoEntriesCache = await seoEntries.list()
+        const { records } = await seoEntries.list()
+        seoEntriesCache = records
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -272,9 +234,7 @@ export function registerHeadInjection(api: ServerPluginApi): void {
       )
     }
 
-    if (tags.length === 0) {
-      // Nothing to inject — skip and fall through to page-index maintenance.
-    } else {
+    if (tags.length > 0) {
       const injection = '\n' + tags.map((t) => `  ${t}`).join('\n') + '\n'
       const headCloseIndex = html.indexOf('</head>')
       if (headCloseIndex === -1) {
@@ -288,24 +248,15 @@ export function registerHeadInjection(api: ServerPluginApi): void {
     }
 
     // ── Upsert page-index ─────────────────────────────────────────────────
+    // slug comes from the filter context — no URL reverse-engineering needed.
     // Best-effort — never crash the publish pipeline on a storage failure.
     try {
-      // Derive slug from canonical URL.
-      let slug = ''
-      const urlToParse = canonicalUrl || (siteUrl ? `${siteUrl}/` : '')
-      if (urlToParse && siteUrl) {
-        const path = urlToParse.replace(siteUrl, '').replace(/^\//, '')
-        slug = path
-      }
-
-      const pageUrl = canonicalUrl || (siteUrl && slug ? `${siteUrl}/${slug}` : siteUrl)
+      const pageUrl = canonicalUrl || (siteUrl ? `${siteUrl}/${slug.replace(/^\//, '')}` : '')
       const now = new Date().toISOString()
 
       // Find the existing page-index record for this pageId.
-      const existing = await pageIndex.list()
-      const existingRecord = existing.find(
-        (r) => typeof r.data['page-id'] === 'string' && r.data['page-id'] === pageId,
-      )
+      const { records: existingPageRecords } = await pageIndex.list({ filter: { 'page-id': pageId } })
+      const existingRecord = existingPageRecords[0]
 
       const indexData: Record<string, unknown> = {
         'page-id': pageId,

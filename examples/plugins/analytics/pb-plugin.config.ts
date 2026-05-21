@@ -2,8 +2,10 @@
  * Analytics plugin — manifest and configuration.
  *
  * Self-hosted, privacy-first analytics. A Plausible/Fathom alternative built
- * on the host's frontend tracker. No third-party services. All data stays in
- * the CMS database.
+ * entirely inside the plugin: this plugin ships its own page-runtime IIFE
+ * (declared under `frontend.assets[]`) and its own public ingest route. The
+ * host provides only the substrate — declarative asset injection + public
+ * route registration — and contributes zero tracker code.
  *
  * NOTE: this file runs in the host's Bun process (not bundled), so it imports
  * from `@core/plugin-sdk` via the host's tsconfig paths. Plugin source files
@@ -24,8 +26,7 @@ export default definePlugin({
   icon: 'icon.svg',
 
   permissions: [
-    permissions.frontendScripts,
-    permissions.frontendTracker,
+    permissions.frontendAssets,
     permissions.adminNavigation,
     permissions.cmsStorage,
     permissions.cmsRoutes,
@@ -38,6 +39,22 @@ export default definePlugin({
     permissions.dashboardWidgetsRegister,
   ],
 
+  // Every tag the host injects on behalf of this plugin. Order here is
+  // preserved: the deferred external tracker bundle lands at the end of
+  // `<body>` so it doesn't block page rendering. The plugin owns the IIFE
+  // entirely — the host ships no shared runtime; analytics uses its own
+  // `window.__pb_analytics` namespace.
+  frontend: {
+    assets: [
+      {
+        kind: 'script',
+        src: 'frontend/tracker.js',
+        placement: 'body-end',
+        strategy: 'defer',
+      },
+    ],
+  },
+
   resources: [
     {
       id: 'events',
@@ -47,13 +64,13 @@ export default definePlugin({
       fields: [
         { id: 'name',          label: 'Event',           type: 'text',     required: true },
         { id: 'path',          label: 'Page Path',       type: 'text' },
-        { id: 'visitor-hash',  label: 'Visitor Hash',    type: 'text' },
+        { id: 'visitorHash',   label: 'Visitor Hash',    type: 'text' },
         { id: 'session',       label: 'Session ID',      type: 'text' },
         { id: 'referrer',      label: 'Referrer',        type: 'text' },
         { id: 'device',        label: 'Device',          type: 'text' },
         { id: 'country',       label: 'Country',         type: 'text' },
         { id: 'payload',       label: 'Payload JSON',    type: 'longtext' },
-        { id: 'received-at',   label: 'Received At',     type: 'date' },
+        { id: 'receivedAt',    label: 'Received At',      type: 'date' },
       ],
     },
     {

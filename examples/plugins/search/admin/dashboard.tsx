@@ -7,16 +7,11 @@
  *   Analytics  — top queries + top no-result queries
  *   Sync       — reindex all / clear index
  *
- * Tabs are implemented with native <button> elements carrying full
- * ARIA tablist/tab/tabpanel semantics. The @pagebuilder/host-ui Button
- * primitive does not expose `role`, `aria-selected`, or `aria-controls`
- * props required for a compliant tab widget — this is a §8 exception.
- *
- * Uses @pagebuilder/host-ui primitives for all non-tab controls and the
- * plugin's own routes via usePluginRoutes().
+ * Uses @pagebuilder/host-ui primitives including the Tabs compound component
+ * for full ARIA + keyboard navigation. Plugin routes via usePluginRoutes().
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, Button, Heading, Stack } from '@pagebuilder/host-ui'
+import { useCallback, useEffect, useState } from 'react'
+import { Alert, Button, Heading, Stack, Tabs, TabList, Tab, TabPanel } from '@pagebuilder/host-ui'
 import { usePluginRoutes } from '@pagebuilder/host-hooks'
 import { definePluginAdminApp } from '@pagebuilder/plugin-sdk'
 
@@ -27,23 +22,14 @@ import { ReindexPanel } from './sections/ReindexPanel'
 import styles from './dashboard.module.css'
 import { StatusResponseSchema, type StatusResponse } from './apiSchemas'
 
-type Tab = 'stats' | 'documents' | 'analytics' | 'sync'
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'stats', label: 'Stats' },
-  { id: 'documents', label: 'Documents' },
-  { id: 'analytics', label: 'Analytics' },
-  { id: 'sync', label: 'Settings sync' },
-]
+type SearchTab = 'stats' | 'documents' | 'analytics' | 'sync'
 
 function SearchDashboard() {
   const routes = usePluginRoutes()
-  const [activeTab, setActiveTab] = useState<Tab>('stats')
+  const [activeTab, setActiveTab] = useState<SearchTab>('stats')
   const [status, setStatus] = useState<StatusResponse | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
   const [statusError, setStatusError] = useState<string | null>(null)
-
-  const tabRefs = useRef<Map<Tab, HTMLButtonElement>>(new Map())
 
   const refreshStatus = useCallback(async () => {
     setStatusLoading(true)
@@ -61,20 +47,6 @@ function SearchDashboard() {
   useEffect(() => {
     void refreshStatus()
   }, [refreshStatus])
-
-  // Keyboard navigation: ArrowLeft / ArrowRight cycle through tabs.
-  const handleTabKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-      e.preventDefault()
-      const delta = e.key === 'ArrowRight' ? 1 : -1
-      const next = (currentIndex + delta + TABS.length) % TABS.length
-      const nextTab = TABS[next]
-      setActiveTab(nextTab.id)
-      tabRefs.current.get(nextTab.id)?.focus()
-    },
-    [],
-  )
 
   return (
     <div className={styles.root}>
@@ -98,61 +70,34 @@ function SearchDashboard() {
         </Alert>
       )}
 
-      {/* Tab bar — §8 exception: native <button> required for ARIA tablist semantics.
-          @pagebuilder/host-ui Button does not expose role/aria-selected/aria-controls. */}
-      <div
-        className={styles.tabs}
-        role="tablist"
-        aria-label="Search plugin sections"
-      >
-        {TABS.map((tab, i) => (
-          <button
-            key={tab.id}
-            id={`search-tab-${tab.id}`}
-            ref={(el) => {
-              if (el) tabRefs.current.set(tab.id, el)
-              else tabRefs.current.delete(tab.id)
-            }}
-            className={`${styles.tab} ${activeTab === tab.id ? styles.tabActive : ''}`}
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            aria-controls={`search-panel-${tab.id}`}
-            tabIndex={activeTab === tab.id ? 0 : -1}
-            onClick={() => setActiveTab(tab.id)}
-            onKeyDown={(e) => handleTabKeyDown(e, i)}
-            type="button"
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab panels */}
-      {TABS.map((tab) => (
-        <div
-          key={tab.id}
-          id={`search-panel-${tab.id}`}
-          role="tabpanel"
-          aria-labelledby={`search-tab-${tab.id}`}
-          hidden={activeTab !== tab.id}
-          className={styles.section}
-        >
-          {tab.id === 'stats' && (
-            <Stack gap={16}>
-              <StatsCard status={status} loading={statusLoading} />
-              {!statusLoading && status && !status.configured && (
-                <Alert tone="info" title="Not configured">
-                  Open <strong>Settings</strong> on the plugin card to set the search backend
-                  endpoint and API keys.
-                </Alert>
-              )}
-            </Stack>
-          )}
-          {tab.id === 'documents' && <DocumentsList />}
-          {tab.id === 'analytics' && <AnalyticsPanel />}
-          {tab.id === 'sync' && <ReindexPanel />}
-        </div>
-      ))}
+      <Tabs<SearchTab> value={activeTab} onChange={setActiveTab}>
+        <TabList ariaLabel="Search plugin sections">
+          <Tab value="stats">Stats</Tab>
+          <Tab value="documents">Documents</Tab>
+          <Tab value="analytics">Analytics</Tab>
+          <Tab value="sync">Settings sync</Tab>
+        </TabList>
+        <TabPanel value="stats">
+          <Stack gap={16}>
+            <StatsCard status={status} loading={statusLoading} />
+            {!statusLoading && status && !status.configured && (
+              <Alert tone="info" title="Not configured">
+                Open <strong>Settings</strong> on the plugin card to set the search backend
+                endpoint and API keys.
+              </Alert>
+            )}
+          </Stack>
+        </TabPanel>
+        <TabPanel value="documents">
+          <DocumentsList />
+        </TabPanel>
+        <TabPanel value="analytics">
+          <AnalyticsPanel />
+        </TabPanel>
+        <TabPanel value="sync">
+          <ReindexPanel />
+        </TabPanel>
+      </Tabs>
     </div>
   )
 }

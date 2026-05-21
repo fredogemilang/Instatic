@@ -423,7 +423,7 @@ describe('server plugin runtime SDK', () => {
     // Direct sandbox-level test — go straight at the VM so we can assert the
     // 5-second deadline kills the runaway. Going through the full install
     // flow would just propagate the same error wrapped in lifecycle prose.
-    const { createPluginVm } = await import('../../../server/plugins/quickjsHost')
+    const { createPluginVm } = await import('../../../server/plugins/quickjs/vm')
     const vm = await createPluginVm({
       pluginSource: `
         ;(function () {

@@ -38,6 +38,7 @@ import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
 import { pluginRuntime } from '@core/plugins/runtime'
 import type { RegisteredPluginToolbarButton } from '@core/plugin-sdk'
 import { AccountMenuButton } from '@admin/shared/AccountMenuButton'
+import { OpenLivePageButton } from '@admin/shared/OpenLivePageButton'
 import { Button } from '@ui/components/Button'
 import { cn } from '@ui/cn'
 import type { AdminWorkspace } from '@admin/workspace'
@@ -244,9 +245,15 @@ export function Toolbar({
 
           {/* ── Right section — caller-owned ─────────────────────────────── */}
           {rightSlot}
-          {/* AccountMenuButton always rendered, regardless of `rightSlot`.
-              Users may need to switch accounts / sign out from every admin
-              page (Users, Content, Plugins, etc.). */}
+          {/* OpenLivePageButton + AccountMenuButton are always rendered,
+              regardless of `rightSlot`. The first lets every admin route
+              jump to the live site in a new tab (deep-linking to the
+              active page when one is open in the canvas, falling back to
+              the site root elsewhere); the second is the account / sign-out
+              entry point. Both are reachable from Users / Content /
+              Plugins / etc. so they live in the toolbar shell, not in any
+              layout's right slot. */}
+          <OpenLivePageButton />
           <AccountMenuButton />
         </div>
       </header>

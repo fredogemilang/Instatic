@@ -13,11 +13,18 @@ export function createFrameworkPreferencesActions({
   return {
     updateFrameworkPreferences: (patch) => {
       mutateSite((site) => {
+        const entries = Object.entries(patch)
+        if (entries.length === 0) return false
+        const current = site.settings.framework?.preferences ?? DEFAULT_FRAMEWORK_PREFERENCES
+        const changed = entries.some(
+          ([key, value]) => !Object.is(current[key as keyof typeof current], value),
+        )
+        if (!changed) return false
         if (!site.settings.framework) {
           site.settings.framework = { colors: { tokens: [] } }
         }
-        const current = site.settings.framework.preferences ?? DEFAULT_FRAMEWORK_PREFERENCES
         site.settings.framework.preferences = { ...current, ...patch }
+        return true
       })
     },
   }

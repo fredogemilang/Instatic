@@ -18,7 +18,7 @@ export function registerSeoEntriesRoutes(api: ServerPluginApi): void {
   // ── GET /seo-entries — list all entries ──────────────────────────────────
   api.cms.routes.get('/seo-entries', 'plugins.manage', async () => {
     try {
-      const all = await seoEntries.list()
+      const { records: all } = await seoEntries.list()
       return { ok: true, entries: all }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -40,10 +40,8 @@ export function registerSeoEntriesRoutes(api: ServerPluginApi): void {
       }
 
       // Find the existing record for this pageId.
-      const all = await seoEntries.list()
-      const existing = all.find(
-        (r) => typeof r.data['page-id'] === 'string' && r.data['page-id'] === pageId,
-      )
+      const { records } = await seoEntries.list({ filter: { 'page-id': pageId } })
+      const existing = records[0]
 
       // Build the data payload — pick only known fields, preserving system
       // fields from the existing record.
@@ -88,7 +86,7 @@ export function registerSeoEntriesRoutes(api: ServerPluginApi): void {
   // ── GET /page-index — list the page index (for dashboard stats) ──────────
   api.cms.routes.get('/page-index', 'plugins.manage', async () => {
     try {
-      const all = await api.cms.storage.collection('page-index').list()
+      const { records: all } = await api.cms.storage.collection('page-index').list()
       return { ok: true, pages: all }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)

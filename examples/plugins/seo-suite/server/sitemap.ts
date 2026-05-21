@@ -11,26 +11,25 @@
  * Route handlers return `{ __response: true, status, headers, body }` —
  * the plugin worker serialises this shape into a real Response with the
  * correct Content-Type (see server/plugins/pluginWorker.ts:serializeRouteResult).
+ *
+ * The sitemap uses `api.cms.pages.list()` as its primary source of truth for
+ * published pages. A fresh-installed plugin produces a complete sitemap
+ * immediately without requiring any pages to have been published since install.
+ * The seo-entries storage collection is consulted only for per-page overrides
+ * (no-index flag, canonical URL).
  */
 import type { ServerPluginApi } from '@pagebuilder/plugin-sdk'
 import { Type } from '@sinclair/typebox'
 import { Value } from '@sinclair/typebox/value'
 
 // ---------------------------------------------------------------------------
-// TypeBox schema for a page-index row (resilient read from storage).
+// TypeBox schema for a seo-entries row (resilient read from storage).
 // ---------------------------------------------------------------------------
-
-const PageIndexRowSchema = Type.Object({
-  'page-id': Type.String(),
-  slug: Type.Optional(Type.String()),
-  url: Type.Optional(Type.String()),
-  title: Type.Optional(Type.String()),
-  'last-seen-at': Type.Optional(Type.String()),
-})
 
 const SeoEntryRowSchema = Type.Object({
   'page-id': Type.String(),
   'no-index': Type.Optional(Type.Union([Type.Boolean(), Type.String()])),
+  'canonical-url': Type.Optional(Type.String()),
 })
 
 // ---------------------------------------------------------------------------
@@ -72,42 +71,36 @@ export function registerSitemapRoutes(api: ServerPluginApi): void {
     try {
       const siteUrl = (api.cms.settings.get<string>('siteUrl') ?? '').replace(/\/$/, '')
 
-      const [pageIndexRecords, seoEntryRecords] = await Promise.all([
-        api.cms.storage.collection('page-index').list(),
+      // api.cms.pages.list() is the authoritative source of published pages.
+      // seo-entries are consulted only for per-page overrides.
+      const [pages, { records: seoEntryRecords }] = await Promise.all([
+        api.cms.pages.list(),
         api.cms.storage.collection('seo-entries').list(),
       ])
 
-      // Build a fast lookup for no-index flags by page-id.
+      // Build fast lookups by page-id from seo-entries.
       const noIndexByPageId = new Map<string, boolean>()
+      const canonicalByPageId = new Map<string, string>()
       for (const record of seoEntryRecords) {
         if (!Value.Check(SeoEntryRowSchema, record.data)) continue
-        const entry = record.data as { 'page-id': string; 'no-index'?: boolean | string }
+        const entry = record.data as { 'page-id': string; 'no-index'?: boolean | string; 'canonical-url'?: string }
         noIndexByPageId.set(entry['page-id'], isTruthy(entry['no-index']))
+        if (entry['canonical-url']) canonicalByPageId.set(entry['page-id'], entry['canonical-url'])
       }
 
       const urlEntries: string[] = []
 
-      for (const record of pageIndexRecords) {
-        if (!Value.Check(PageIndexRowSchema, record.data)) continue
-        const row = record.data as {
-          'page-id': string
-          slug?: string
-          url?: string
-          title?: string
-          'last-seen-at'?: string
-        }
-
+      for (const page of pages) {
         // Skip pages explicitly marked no-index.
-        if (noIndexByPageId.get(row['page-id'])) continue
+        if (noIndexByPageId.get(page.id)) continue
 
-        // Build the canonical URL for this page.
-        let loc = row.url ?? ''
-        if (!loc && row.slug) {
-          loc = `${siteUrl}/${row.slug.replace(/^\//, '')}`
-        }
+        // Canonical URL: seo-entry override takes precedence; fall back to
+        // siteUrl + slug.
+        const canonicalOverride = canonicalByPageId.get(page.id)
+        const loc = canonicalOverride || (siteUrl ? `${siteUrl}/${page.slug.replace(/^\//, '')}` : '')
         if (!loc) continue
 
-        const lastmod = toDateString(row['last-seen-at'])
+        const lastmod = toDateString(page.lastPublishedAt)
 
         urlEntries.push(
           `  <url>\n` +

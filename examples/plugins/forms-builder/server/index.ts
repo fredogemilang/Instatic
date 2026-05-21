@@ -8,6 +8,7 @@
  *   uninstall — remove all stored submissions
  */
 import type { ServerPluginApi, ServerPluginModule } from '@core/plugin-sdk'
+import type { StorageFilterValue } from '@core/plugin-sdk'
 import { registerSubmitRoute } from './submit'
 
 const mod: ServerPluginModule = {
@@ -23,10 +24,42 @@ const mod: ServerPluginModule = {
     // Public submission endpoint — unauthenticated POST from published pages
     registerSubmitRoute(api)
 
-    // Admin: list submissions
-    api.cms.routes.get('/submissions', 'plugins.manage', async () => {
-      const all = await submissions.list()
-      return { submissions: all }
+    // Admin: list submissions with server-side filtering and pagination.
+    //
+    // Supported query params:
+    //   formId    — filter by exact form ID (stored as data.formId)
+    //   status    — filter by status: 'pending' | 'sent' | 'failed'
+    //   dateGte   — ISO 8601 lower bound on data.submittedAt (inclusive)
+    //   dateLte   — ISO 8601 upper bound on data.submittedAt (inclusive)
+    //   limit     — page size (1–100, default 25)
+    //   offset    — record offset (default 0)
+    //
+    // Response: { submissions: PluginRecord[]; totalCount: number }
+    api.cms.routes.get('/submissions', 'plugins.manage', async (ctx) => {
+      const url = new URL(ctx.req.url)
+      const formId = url.searchParams.get('formId')
+      const status = url.searchParams.get('status')
+      const dateGte = url.searchParams.get('dateGte')
+      const dateLte = url.searchParams.get('dateLte')
+      const limit = Math.min(Math.max(1, Number(url.searchParams.get('limit') ?? '25')), 100)
+      const offset = Math.max(0, Number(url.searchParams.get('offset') ?? '0'))
+
+      const filter: Record<string, StorageFilterValue> = {}
+      if (formId) filter['formId'] = formId
+      if (status) filter['status'] = status
+      if (dateGte || dateLte) {
+        filter['submittedAt'] = {
+          ...(dateGte ? { gte: dateGte } : {}),
+          ...(dateLte ? { lte: dateLte } : {}),
+        }
+      }
+
+      const { records, totalCount } = await submissions.list({
+        filter: Object.keys(filter).length > 0 ? filter : undefined,
+        limit,
+        offset,
+      })
+      return { submissions: records, totalCount }
     })
 
     // Admin: resend email for a specific submission
@@ -35,7 +68,7 @@ const mod: ServerPluginModule = {
       const id = url.searchParams.get('id') ?? ''
       if (!id) return { error: 'Missing submission id' }
 
-      const all = await submissions.list()
+      const { records: all } = await submissions.list({ limit: 1000 })
       const record = all.find((r) => r.id === id)
       if (!record) return { error: 'Submission not found' }
 
@@ -51,10 +84,10 @@ const mod: ServerPluginModule = {
       try {
         await sendSubmissionEmail(
           {
-            formName: String(record.data['form-id'] ?? ''),
-            formId: String(record.data['form-id'] ?? ''),
-            pagePath: String(record.data['page-path'] ?? ''),
-            submittedAt: String(record.data['submitted-at'] ?? record.createdAt),
+            formName: String(record.data['formId'] ?? ''),
+            formId: String(record.data['formId'] ?? ''),
+            pagePath: String(record.data['pagePath'] ?? ''),
+            submittedAt: String(record.data['submittedAt'] ?? record.createdAt),
             fields: payload,
           },
           {
@@ -69,13 +102,13 @@ const mod: ServerPluginModule = {
               api.cms.settings.get<string>('subjectTemplate') ?? '{{form_name}} — new submission',
           },
         )
-        await submissions.update(id, { status: 'sent', 'error-message': '' })
+        await submissions.update(id, { status: 'sent', errorMessage: '' })
         return { ok: true }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         console.error('[plugin:pagebuilder.forms] Resend failed:', err)
         await submissions
-          .update(id, { status: 'failed', 'error-message': message })
+          .update(id, { status: 'failed', errorMessage: message })
           .catch((_e) => { /* non-fatal */ })
         return { error: message }
       }
@@ -97,7 +130,7 @@ const mod: ServerPluginModule = {
 
   async uninstall(api: ServerPluginApi) {
     const submissions = api.cms.storage.collection('submissions')
-    const all = await submissions.list()
+    const { records: all } = await submissions.list({ limit: 1000 })
     await Promise.all(all.map((r) => submissions.delete(r.id)))
     api.plugin.log(`Forms Builder removed ${all.length} submissions`)
   },

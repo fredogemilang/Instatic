@@ -1,46 +1,96 @@
 /**
- * Resolve frontend tags injected into published pages by enabled plugins.
+ * Frontend asset injection — build a per-render plan from every enabled
+ * plugin's manifest and splice the resulting tags into the published HTML.
  *
- * Two surfaces:
- *   • `frontend.scripts` — plugin ships a JS file under `entrypoints.frontend`
- *     (path inside the package zip). The file is served from the plugin's
- *     uploads URL prefix and loaded as a deferred `<script type="module">`
- *     just before `</body>`.
- *   • `frontend.tracker` — the host injects a tiny built-in tracker runtime
- *     once if any plugin has the permission. The runtime exposes
- *     `window.__pb.tracker.send(eventName, payload)` and the plugin's
- *     `frontend` script can call it.
+ * Single permission gating the whole surface: `frontend.assets`. Every tag
+ * is declared up front in the plugin's manifest under `frontend.assets[]`
+ * (see `FrontendAsset` in `@core/plugin-sdk/types`). The host does NOT ship
+ * any tag content of its own — no built-in tracker, no shared runtime, no
+ * special-cased scripts. If a plugin wants `window.__pb_analytics`, that
+ * plugin ships the IIFE that installs it. The host's job is to:
  *
- * Pure data assembly — no DOM, no fetch. Run from the publisher only.
+ *   1. Walk enabled plugins, gather their declared assets.
+ *   2. Resolve `src` / `href` against `assetBasePath` so URLs point at the
+ *      plugin's own upload directory.
+ *   3. Bucket by placement anchor: `head` / `head-end` / `body-start` / `body-end`.
+ *   4. Emit one tag per asset (no dedup beyond identical-attribute tags),
+ *      preserving per-plugin declaration order.
+ *   5. Relax the page CSP based on what the plan actually contains:
+ *        - inline script → `script-src` gets `'unsafe-inline'`
+ *        - inline style  → `style-src`  gets `'unsafe-inline'`
+ *        - external script/style: no relaxation needed (same-origin / allowlisted)
+ *        - plugin-declared `networkAllowedHosts` → appended to `connect-src`
+ *      Pure-meta plans get no CSP changes.
+ *
+ * Pure data assembly — no DOM, no fetch. Called from a single place at the
+ * dispatcher (`server/router.ts → tryServePublishedPage / tryServeContentRoute`),
+ * so every HTML-emitting render path gets the same treatment.
  */
 
 import type { DbClient } from '../db/client'
-import { listInstalledPlugins } from '../repositories/plugins'
+import { listInstalledPlugins, type InstalledPluginResult } from '../repositories/plugins'
 import { mediaStorageRegistry } from '@core/plugins/mediaStorageRegistry'
 import { listElectedAdapters } from '../repositories/mediaStorageAdapters'
+import type {
+  FrontendAsset,
+  FrontendAssetPlacement,
+  InstalledPlugin,
+} from '@core/plugin-sdk'
+
+// ---------------------------------------------------------------------------
+// Plan shape
+// ---------------------------------------------------------------------------
+
+const PLACEMENT_ORDER: ReadonlyArray<FrontendAssetPlacement> = [
+  'head',
+  'head-end',
+  'body-start',
+  'body-end',
+]
+
+/**
+ * A fully-resolved tag, ready to be spliced into the document. Carries its
+ * placement anchor so the splicer can bucket without re-walking the asset.
+ */
+interface ResolvedTag {
+  html: string
+  placement: FrontendAssetPlacement
+}
 
 export interface FrontendInjections {
-  headTags: string[]
-  bodyTags: string[]
+  /**
+   * Tags to splice at each placement anchor. Order within each bucket
+   * matches declaration order across plugins (plugins iterated alphabetically
+   * by id; within a plugin, in manifest order).
+   */
+  tags: Record<FrontendAssetPlacement, string[]>
+  /**
+   * Whether any inline `<script>` tag is present in the plan. When true,
+   * the page CSP gets `script-src 'unsafe-inline'`.
+   */
+  hasInlineScript: boolean
+  /**
+   * Whether any inline `<style>` tag (or `style-inline` asset) is present.
+   * When true, the page CSP gets `style-src 'unsafe-inline'`.
+   */
+  hasInlineStyle: boolean
+  /**
+   * Whether any external (src) `<script>` tag is present. When true, the
+   * page CSP keeps the relaxed `worker-src 'self' blob:` (matches the old
+   * behaviour for plugin bundles that spin up workers).
+   */
+  hasExternalScript: boolean
   /**
    * Union of `networkAllowedHosts` declared by every enabled plugin that
-   * contributed a body tag. Used by `injectFrontendAssets` to extend the
-   * page CSP's `connect-src` so visitor-side fetches from those plugins
-   * (e.g. a glTF model viewer pulling from a CDN) aren't blocked by the
-   * page's strict default of `connect-src 'self'`.
-   *
-   * Plain hostnames (`api.example.com`) match exactly; the leading `*.`
-   * wildcard matches one subdomain segment — same semantics the manifest
-   * schema enforces.
+   * contributed any frontend asset. Appended to the page CSP's
+   * `connect-src` so visitor-side `fetch()` from plugin frontend code
+   * reaches the hosts the manifest declared.
    */
   networkAllowedHosts: string[]
   /**
-   * CSP origins declared by elected media storage adapters. The publisher
-   * appends them to the matching CSP directive (`img-src`, `media-src`,
-   * `connect-src`) so the browser is allowed to load assets from the
-   * adapter's backend (e.g. `https://*.s3.amazonaws.com` for the S3
-   * adapter). Origins from non-elected adapters are NOT included —
-   * installed-but-inactive adapters don't pollute the CSP.
+   * CSP origins declared by elected media storage adapters. Appended to
+   * `img-src` / `media-src` / `connect-src` so the browser can load assets
+   * from the adapter's backend.
    */
   mediaCspOrigins: ReadonlyArray<{
     directive: 'img-src' | 'media-src' | 'connect-src'
@@ -48,39 +98,244 @@ export interface FrontendInjections {
   }>
 }
 
+// ---------------------------------------------------------------------------
+// Collection — walk installed plugins, build a plan
+// ---------------------------------------------------------------------------
+
+export async function collectFrontendInjections(db: DbClient): Promise<FrontendInjections> {
+  const results = await listInstalledPlugins(db)
+  const tags: Record<FrontendAssetPlacement, string[]> = {
+    'head': [],
+    'head-end': [],
+    'body-start': [],
+    'body-end': [],
+  }
+  const networkAllowedHostsSet = new Set<string>()
+  let hasInlineScript = false
+  let hasInlineStyle = false
+  let hasExternalScript = false
+
+  // Broken plugins (corrupt manifest_json) have no parseable frontend assets —
+  // skip them entirely. Only ok-parsed, enabled, non-error plugins contribute.
+  const okPlugins = results
+    .filter((r): r is Extract<InstalledPluginResult, { kind: 'ok' }> => r.kind === 'ok')
+    .map((r) => r.plugin)
+
+  // Sort by plugin id so the emitted tag order is deterministic across
+  // re-renders. Two plugins declaring the same placement get a stable
+  // top-down emission.
+  const eligible = okPlugins
+    .filter((p) => p.enabled && p.lifecycleStatus !== 'error')
+    .filter((p) => new Set(p.grantedPermissions).has('frontend.assets'))
+    .filter((p) => (p.manifest.frontend?.assets ?? []).length > 0)
+    .sort((a, b) => (a.manifest.id < b.manifest.id ? -1 : a.manifest.id > b.manifest.id ? 1 : 0))
+
+  for (const plugin of eligible) {
+    const assets = plugin.manifest.frontend?.assets ?? []
+    for (const asset of assets) {
+      const resolved = renderAsset(asset, plugin)
+      if (!resolved) continue
+      tags[resolved.placement].push(resolved.html)
+      switch (asset.kind) {
+        case 'script':
+          hasExternalScript = true
+          break
+        case 'script-inline':
+          hasInlineScript = true
+          break
+        case 'style-inline':
+          hasInlineStyle = true
+          break
+      }
+    }
+    for (const host of plugin.manifest.networkAllowedHosts ?? []) {
+      if (host) networkAllowedHostsSet.add(host)
+    }
+  }
+
+  return {
+    tags,
+    hasInlineScript,
+    hasInlineStyle,
+    hasExternalScript,
+    networkAllowedHosts: [...networkAllowedHostsSet].sort(),
+    mediaCspOrigins: await collectMediaAdapterCspOrigins(db),
+  }
+}
+
 /**
- * Inject `<script>` / `<link>` tags from enabled `frontend.scripts` /
- * `frontend.tracker` plugins into a publisher-rendered HTML document.
+ * Render a single declared asset to an HTML tag + placement bucket. Returns
+ * `null` when the asset is malformed in a way the manifest validator missed
+ * (defense in depth) or when an external asset is declared without a base
+ * path (the publisher can't form a URL).
+ */
+function renderAsset(asset: FrontendAsset, plugin: InstalledPlugin): ResolvedTag | null {
+  const placement = asset.placement ?? defaultPlacement(asset)
+
+  if (asset.kind === 'script') {
+    const url = resolveAssetUrl(plugin, asset.src)
+    if (!url) return null
+    const strategyAttrs = scriptStrategyAttrs(asset.strategy ?? 'defer')
+    const extra = formatAttrs(asset.attrs)
+    const pluginAttr = ` data-plugin-id="${escapeAttr(plugin.manifest.id)}"`
+    return {
+      html: `<script src="${escapeAttr(url)}"${strategyAttrs}${extra}${pluginAttr}></script>`,
+      placement,
+    }
+  }
+
+  if (asset.kind === 'script-inline') {
+    const extra = formatAttrs(asset.attrs)
+    const pluginAttr = ` data-plugin-id="${escapeAttr(plugin.manifest.id)}"`
+    // Inline `</script>` would close the wrapping tag. Standard escape.
+    const body = asset.content.replace(/<\/script/gi, '<\\/script')
+    return {
+      html: `<script${extra}${pluginAttr}>${body}</script>`,
+      placement,
+    }
+  }
+
+  if (asset.kind === 'style') {
+    const url = resolveAssetUrl(plugin, asset.href)
+    if (!url) return null
+    const extra = formatAttrs(asset.attrs)
+    const pluginAttr = ` data-plugin-id="${escapeAttr(plugin.manifest.id)}"`
+    return {
+      html: `<link rel="stylesheet" href="${escapeAttr(url)}"${extra}${pluginAttr}>`,
+      placement,
+    }
+  }
+
+  if (asset.kind === 'style-inline') {
+    const extra = formatAttrs(asset.attrs)
+    const pluginAttr = ` data-plugin-id="${escapeAttr(plugin.manifest.id)}"`
+    const body = asset.content.replace(/<\/style/gi, '<\\/style')
+    return {
+      html: `<style${extra}${pluginAttr}>${body}</style>`,
+      placement,
+    }
+  }
+
+  if (asset.kind === 'link') {
+    const extra = formatAttrs(asset.attrs)
+    const pluginAttr = ` data-plugin-id="${escapeAttr(plugin.manifest.id)}"`
+    return {
+      html: `<link${extra}${pluginAttr}>`,
+      placement,
+    }
+  }
+
+  if (asset.kind === 'meta') {
+    const extra = formatAttrs(asset.attrs)
+    const pluginAttr = ` data-plugin-id="${escapeAttr(plugin.manifest.id)}"`
+    return {
+      html: `<meta${extra}${pluginAttr}>`,
+      placement,
+    }
+  }
+
+  // Defensive: should be unreachable because TypeScript narrows the union.
+  return null
+}
+
+/**
+ * Per-kind default placement when the asset declaration omits it. Scripts
+ * default to `body-end` so they don't block the parser; styles, meta, link
+ * default to `head-end` so they're parsed before the body renders.
+ */
+function defaultPlacement(asset: FrontendAsset): FrontendAssetPlacement {
+  switch (asset.kind) {
+    case 'script':
+    case 'script-inline':
+      return 'body-end'
+    case 'style':
+    case 'style-inline':
+    case 'link':
+    case 'meta':
+      return 'head-end'
+  }
+}
+
+function scriptStrategyAttrs(strategy: 'defer' | 'async' | 'module' | 'sync'): string {
+  switch (strategy) {
+    case 'defer':
+      return ' defer'
+    case 'async':
+      return ' async'
+    case 'module':
+      return ' type="module"'
+    case 'sync':
+      return ''
+  }
+}
+
+function resolveAssetUrl(plugin: InstalledPlugin, relativePath: string): string | null {
+  const base = plugin.manifest.assetBasePath
+  if (!base) return null
+  return `${base.replace(/\/+$/g, '')}/${relativePath.replace(/^\/+/g, '')}`
+}
+
+function formatAttrs(attrs: Record<string, string> | undefined): string {
+  if (!attrs) return ''
+  // Skip the few reserved attributes the host owns ("src" on script, "href"
+  // on style, "data-plugin-id"). Authors who set those values can break the
+  // tag — silently dropping is safer than emitting two competing attributes.
+  const RESERVED = new Set(['src', 'href', 'rel', 'data-plugin-id', 'defer', 'async', 'type'])
+  const parts: string[] = []
+  for (const [name, value] of Object.entries(attrs)) {
+    if (RESERVED.has(name.toLowerCase())) continue
+    parts.push(`${name}="${escapeAttr(value)}"`)
+  }
+  return parts.length === 0 ? '' : ` ${parts.join(' ')}`
+}
+
+// ---------------------------------------------------------------------------
+// Splicer — apply a plan to a finished HTML document
+// ---------------------------------------------------------------------------
+
+/**
+ * Inject every plan tag into the document at its placement anchor, and
+ * rewrite the page CSP to match what the plan needs. Idempotent under
+ * repeated passes — each anchor splice is a string replacement, not an
+ * accumulator.
  *
- * Same shape applies to both real-publish output (`renderPublishedSnapshot`)
- * AND the editor's preview iframe (`buildRuntimePreviewDocument`) — both
- * paths must end up with identical injections + CSP so previews match
- * what visitors will see on the deployed page.
- *
- * Side effects:
- *   • Inline tracker runtime relaxes script-src to `'self' 'unsafe-inline'`
- *     (the tracker IIFE is inline and needs to execute on the page).
- *   • `networkAllowedHosts` aggregated by `collectFrontendInjections` get
- *     appended to `connect-src` and `img-src` so plugin frontend code
- *     can reach the hosts the manifest declared.
+ * Identical shape applies to both real-publish output and the editor's
+ * preview iframe (`buildRuntimePreviewDocument`).
  */
 export function injectFrontendAssets(
   html: string,
   injections: FrontendInjections,
 ): string {
   let next = html
-  if (injections.headTags.length > 0) {
-    const headTag = injections.headTags.join('\n')
-    next = next.includes('</head>')
-      ? next.replace('</head>', `${headTag}\n</head>`)
-      : `${headTag}\n${next}`
+
+  // Splice tags at each anchor in document order.
+  if (injections.tags.head.length > 0) {
+    const block = injections.tags.head.join('\n')
+    next = next.includes('<head>')
+      ? next.replace('<head>', `<head>\n${block}`)
+      : `${block}\n${next}`
   }
-  if (injections.bodyTags.length > 0) {
-    const bodyTag = injections.bodyTags.join('\n')
+  if (injections.tags['head-end'].length > 0) {
+    const block = injections.tags['head-end'].join('\n')
+    next = next.includes('</head>')
+      ? next.replace('</head>', `${block}\n</head>`)
+      : `${block}\n${next}`
+  }
+  if (injections.tags['body-start'].length > 0) {
+    const block = injections.tags['body-start'].join('\n')
+    next = /<body[^>]*>/i.test(next)
+      ? next.replace(/<body([^>]*)>/i, `<body$1>\n${block}`)
+      : `${block}\n${next}`
+  }
+  if (injections.tags['body-end'].length > 0) {
+    const block = injections.tags['body-end'].join('\n')
     next = next.includes('</body>')
-      ? next.replace('</body>', `${bodyTag}\n</body>`)
-      : `${next}\n${bodyTag}`
-    next = relaxCspForFrontendPlugins(next, injections.networkAllowedHosts)
+      ? next.replace('</body>', `${block}\n</body>`)
+      : `${next}\n${block}`
+  }
+
+  if (PLACEMENT_ORDER.some((p) => injections.tags[p].length > 0)) {
+    next = relaxCspForPlan(next, injections)
   }
   if (injections.mediaCspOrigins.length > 0) {
     next = appendMediaAdapterCspOrigins(next, injections.mediaCspOrigins)
@@ -88,20 +343,63 @@ export function injectFrontendAssets(
   return next
 }
 
+// ---------------------------------------------------------------------------
+// CSP rewriting
+// ---------------------------------------------------------------------------
+
+const CSP_META_PATTERN = /<meta http-equiv="Content-Security-Policy"\s+content="([^"]*)"\s*\/?>/i
+
+function relaxCspForPlan(html: string, plan: FrontendInjections): string {
+  return html.replace(CSP_META_PATTERN, (full, content: string) => {
+    let next = content
+
+    // Script: the published page's default CSP is `script-src 'none'`
+    // (publisher emits clean HTML — visitor pages should run zero
+    // host-supplied JS). Relaxation tiers:
+    //   • External `<script src=…>` from `frontend.assets[]`        → `'self'`
+    //     (sources live under `/uploads/plugins/<id>/<version>/…`,
+    //     same origin as the page itself)
+    //   • Inline `<script>` from `frontend.assets[]: 'script-inline'` → also adds
+    //     `'unsafe-inline'` on top
+    //   • Worker spawn from any plugin script → relax `worker-src`
+    //     to `'self' blob:`
+    if (plan.hasExternalScript || plan.hasInlineScript) {
+      const sources = plan.hasInlineScript
+        ? `'self' 'unsafe-inline'`
+        : `'self'`
+      next = next.replace(/script-src [^;]*;/i, `script-src ${sources};`)
+      next = next.replace(/worker-src [^;]*;/i, `worker-src 'self' blob:;`)
+    }
+
+    // Style: relax to `'unsafe-inline'` only when an inline style is in
+    // the plan.
+    if (plan.hasInlineStyle) {
+      next = next.replace(/style-src [^;]*;/i, `style-src 'self' 'unsafe-inline';`)
+    }
+
+    // Connect: append per-plugin `networkAllowedHosts`, plus the standard
+    // `https:` for plugin frontend code that lazily-loads images. Only
+    // bother when the plan touched the page.
+    if (plan.networkAllowedHosts.length > 0) {
+      next = appendOrSetCspDirective(next, 'connect-src', ["'self'", ...toCspHostSources(plan.networkAllowedHosts)])
+      next = appendOrSetCspDirective(next, 'img-src', ["'self'", 'data:', 'https:'])
+    }
+
+    return full.replace(content, next)
+  })
+}
+
 /**
  * Append CSP origins declared by elected media storage adapters. Runs
- * regardless of whether any frontend plugin tags were injected — a site
- * can use an external storage backend without any frontend.scripts
- * plugin being active. The directive sources extend `'self'` so the
- * host-relative defaults (`/uploads/*`, `/_pb/*`) keep working.
+ * regardless of whether any frontend plugin tags were injected — a site can
+ * use an external storage backend without any frontend.assets plugin being
+ * active. The directive sources extend `'self'` so the host-relative
+ * defaults (`/uploads/*`, `/_pb/*`) keep working.
  */
 function appendMediaAdapterCspOrigins(
   html: string,
   origins: ReadonlyArray<{ directive: 'img-src' | 'media-src' | 'connect-src'; origin: string }>,
 ): string {
-  // Bucket by directive so a single appendOrSetCspDirective call carries
-  // every source for that directive — keeps the rewrite idempotent under
-  // repeated render passes.
   const byDirective = new Map<'img-src' | 'media-src' | 'connect-src', Set<string>>()
   for (const entry of origins) {
     const bucket = byDirective.get(entry.directive) ?? new Set<string>()
@@ -117,21 +415,6 @@ function appendMediaAdapterCspOrigins(
   })
 }
 
-const CSP_META_PATTERN = /<meta http-equiv="Content-Security-Policy"\s+content="([^"]*)"\s*\/?>/i
-
-function relaxCspForFrontendPlugins(html: string, allowedHosts: string[]): string {
-  return html.replace(CSP_META_PATTERN, (full, content: string) => {
-    let next = content
-    next = next.replace(/script-src [^;]*;/i, `script-src 'self' 'unsafe-inline';`)
-    next = next.replace(/worker-src [^;]*;/i, `worker-src 'self' blob:;`)
-    if (allowedHosts.length > 0) {
-      next = appendOrSetCspDirective(next, 'connect-src', ["'self'", ...toCspHostSources(allowedHosts)])
-      next = appendOrSetCspDirective(next, 'img-src', ["'self'", 'data:', 'https:'])
-    }
-    return full.replace(content, next)
-  })
-}
-
 /**
  * Translate manifest-style host patterns (`api.example.com`, `*.example.com`)
  * to CSP source expressions. CSP wildcards use `*.example.com` with the
@@ -144,9 +427,7 @@ function toCspHostSources(hosts: string[]): string[] {
 
 /**
  * Replace the named CSP directive's source list (if present) or append a
- * new directive at the end. Idempotent on identical inputs — keeps the
- * directive value sorted-and-deduped via a Set so repeated re-renders
- * produce the same string.
+ * new directive at the end. Idempotent on identical inputs.
  */
 function appendOrSetCspDirective(policy: string, directive: string, sources: string[]): string {
   const sourceSet = new Set(sources)
@@ -163,108 +444,12 @@ function appendOrSetCspDirective(policy: string, directive: string, sources: str
   return `${trimmed}; ${directive} ${sourcesValue};`
 }
 
-const TRACKER_RUNTIME = `<script>(function(){
-  if(window.__pb && window.__pb.tracker)return;
-  var ENDPOINT='/_pb/tracker';
-  function rid(){return (Math.random().toString(36).slice(2)+Date.now().toString(36)).slice(0,16);}
-  function visitorId(){
-    try{
-      var k='__pb_v',v=localStorage.getItem(k);
-      if(!v){v=rid();localStorage.setItem(k,v);}
-      return v;
-    }catch(e){return rid();}
-  }
-  function sessionId(){
-    try{
-      var k='__pb_s',v=sessionStorage.getItem(k);
-      if(!v){v=rid();sessionStorage.setItem(k,v);}
-      return v;
-    }catch(e){return rid();}
-  }
-  var listeners={};
-  function on(evt,fn){(listeners[evt]=listeners[evt]||[]).push(fn);return function(){listeners[evt]=(listeners[evt]||[]).filter(function(x){return x!==fn});};}
-  function emit(evt,detail){(listeners[evt]||[]).forEach(function(fn){try{fn(detail);}catch(e){console.error('[__pb] listener',e);}});}
-  function send(pluginId,eventName,payload){
-    return fetch(ENDPOINT,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},keepalive:true,body:JSON.stringify({pluginId:pluginId,eventName:eventName,payload:payload||{},visitorId:visitorId(),sessionId:sessionId(),pagePath:location.pathname,referrer:document.referrer||null,clientTime:new Date().toISOString()})}).catch(function(e){console.warn('[__pb] tracker send failed',e);});
-  }
-  window.__pb={
-    visitorId:visitorId(),
-    sessionId:sessionId(),
-    hooks:{on:on,emit:emit},
-    tracker:{
-      send:function(name,payload){return send.apply(null,['__implicit__',name,payload]);},
-      sendFor:function(pluginId,name,payload){return send(pluginId,name,payload||{});},
-    }
-  };
-  function fire(evt,detail){emit(evt,detail);}
-  // Page view
-  document.addEventListener('DOMContentLoaded',function(){fire('page-view',{path:location.pathname,title:document.title});});
-  // Outbound clicks
-  document.addEventListener('click',function(e){
-    var a=e.target&&e.target.closest&&e.target.closest('a[href]');
-    if(!a)return;
-    fire('link-click',{href:a.getAttribute('href'),text:(a.textContent||'').trim().slice(0,80)});
-  },{capture:true});
-  // Scroll depth (25/50/75/100)
-  var seen={};
-  window.addEventListener('scroll',function(){
-    var pct=Math.round((window.scrollY+window.innerHeight)/document.documentElement.scrollHeight*100);
-    [25,50,75,100].forEach(function(t){if(pct>=t&&!seen[t]){seen[t]=true;fire('scroll-depth',{depth:t});}});
-  },{passive:true});
-  // Visibility
-  document.addEventListener('visibilitychange',function(){fire('visibility-change',{visible:!document.hidden});});
-})();</script>`
-
-export async function collectFrontendInjections(db: DbClient): Promise<FrontendInjections> {
-  const plugins = await listInstalledPlugins(db)
-  const headTags: string[] = []
-  const bodyTags: string[] = []
-  const networkAllowedHostsSet = new Set<string>()
-
-  let anyTracker = false
-  for (const plugin of plugins) {
-    if (!plugin.enabled || plugin.lifecycleStatus === 'error') continue
-    const grants = new Set(plugin.grantedPermissions)
-    if (grants.has('frontend.tracker')) anyTracker = true
-
-    if (grants.has('frontend.scripts')
-      && plugin.manifest.entrypoints?.frontend
-      && plugin.manifest.assetBasePath
-    ) {
-      const url = `${plugin.manifest.assetBasePath.replace(/\/+$/g, '')}/${plugin.manifest.entrypoints.frontend.replace(/^\/+/g, '')}`
-      bodyTags.push(`<script type="module" defer src="${escapeHtmlAttribute(url)}" data-plugin-id="${escapeHtmlAttribute(plugin.id)}"></script>`)
-      // Frontend plugins declare external fetch targets through the same
-      // `networkAllowedHosts` field as the server-side QuickJS bridge.
-      // Each enabled frontend plugin contributes its hosts to the page's
-      // CSP `connect-src` so visitor-side `fetch()` / `XMLHttpRequest` /
-      // `import()` calls to those hosts aren't blocked.
-      for (const host of plugin.manifest.networkAllowedHosts ?? []) {
-        if (host) networkAllowedHostsSet.add(host)
-      }
-    }
-  }
-
-  if (anyTracker || bodyTags.length > 0) {
-    // Always inject the runtime when any frontend plugin is active so the
-    // plugin script can rely on `window.__pb`.
-    bodyTags.unshift(TRACKER_RUNTIME)
-  }
-
-  return {
-    headTags,
-    bodyTags,
-    networkAllowedHosts: [...networkAllowedHostsSet].sort(),
-    mediaCspOrigins: await collectMediaAdapterCspOrigins(db),
-  }
-}
-
 /**
- * Look up every per-role elected storage adapter and aggregate the CSP
- * origins they declared at registration time. Dedup by directive+origin
- * so multi-role elections of the same adapter don't repeat entries.
- *
- * Only ELECTED adapters contribute — an installed-but-inactive S3
- * plugin doesn't pollute the page CSP with `*.s3.amazonaws.com`.
+ * Only ELECTED adapters contribute — an installed-but-inactive adapter must
+ * not pollute the published-page CSP.  An "elected" adapter is one that the
+ * site admin has assigned to a specific media role (`original`, `variant`,
+ * `avatar`, or `font`).  Adapters that are installed but not elected to any
+ * role have no upload activity and therefore no CSP entitlement.
  */
 async function collectMediaAdapterCspOrigins(
   db: DbClient,
@@ -273,7 +458,7 @@ async function collectMediaAdapterCspOrigins(
   const seen = new Set<string>()
   const out: Array<{ directive: 'img-src' | 'media-src' | 'connect-src'; origin: string }> = []
   for (const election of elections) {
-    if (!election.adapterId) continue // local-disk has no remote origin
+    if (!election.adapterId) continue
     const adapter = mediaStorageRegistry.resolveForRead(election.adapterId)
     if (!adapter || !adapter.cspOrigins) continue
     for (const entry of adapter.cspOrigins) {
@@ -286,7 +471,11 @@ async function collectMediaAdapterCspOrigins(
   return out
 }
 
-function escapeHtmlAttribute(value: string): string {
+// ---------------------------------------------------------------------------
+// Attribute escaping
+// ---------------------------------------------------------------------------
+
+function escapeAttr(value: string): string {
   return String(value)
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')

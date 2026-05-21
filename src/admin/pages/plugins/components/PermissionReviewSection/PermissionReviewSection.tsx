@@ -24,7 +24,7 @@
  * Permissions describe broad CMS capabilities ("inject scripts"); the
  * host list describes the concrete remote origins those scripts will talk
  * to (e.g. `threejs.org`, `*.cdn.example.com`). Both dimensions are
- * security-relevant: a plugin with `frontend.scripts` plus an unexpected
+ * security-relevant: a plugin with `frontend.assets` plus an unexpected
  * allowlist entry can exfiltrate visitor data to that host. Showing both
  * before activation is the only way the operator can make an informed
  * decision.

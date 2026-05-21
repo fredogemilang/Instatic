@@ -152,14 +152,14 @@ function aggregateLiveEvents(events: PluginRecord[], from: string, to: string): 
   const pageviewsPerSession = new Map<string, number>()
 
   for (const r of events) {
-    const at = String(r.data['received-at'] ?? r.createdAt)
+    const at = String(r.data.receivedAt ?? r.createdAt)
     const dateStr = at.slice(0, 10)
     if (!inRange(dateStr, from, to)) continue
 
     const name = String(r.data.name ?? '')
     const path = String(r.data.path ?? '')
     const session = String(r.data.session ?? '')
-    const vh = String(r.data['visitor-hash'] ?? '')
+    const vh = String(r.data.visitorHash ?? '')
     const referrer = String(r.data.referrer ?? '').trim()
     const country = String(r.data.country ?? '').trim()
     const device = String(r.data.device ?? 'desktop')
@@ -209,10 +209,13 @@ export async function getDashboardStats(api: ServerPluginApi, range: DateRange):
   const dailyStats = api.cms.storage.collection('daily-stats')
   const events = api.cms.storage.collection('events')
 
-  const [allStats, allEvents] = await Promise.all([
-    dailyStats.list(),
+  const [{ records: allStats }, { records: allEvents }] = await Promise.all([
+    // Fetch only the two windows we need: current + previous comparison period
+    dailyStats.list({ filter: { date: { gte: prevFrom, lte: r.to } }, limit: 1000 }),
     // Only load raw events if the range includes today (live data needed)
-    r.to >= today ? events.list() : Promise.resolve([] as PluginRecord[]),
+    r.to >= today
+      ? events.list({ filter: { receivedAt: { gte: `${today}T00:00:00.000Z` } }, limit: 1000 })
+      : Promise.resolve({ records: [] as PluginRecord[], totalCount: 0 }),
   ])
 
   // Current window: daily-stats rows for complete past days + live events for today

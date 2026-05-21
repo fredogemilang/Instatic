@@ -60,8 +60,12 @@ Upload the resulting zip from the Plugins admin page.
   "entrypoints": {
     "server": "server/index.js",
     "editor": "editor/index.js",
-    "modules": "modules/index.js",
-    "frontend": "frontend/tracker.js"
+    "modules": "modules/index.js"
+  },
+  "frontend": {
+    "assets": [
+      { "kind": "script", "src": "frontend/tracker.js", "placement": "body-end", "strategy": "defer" }
+    ]
   },
   "resources": [],
   "adminPages": [],
@@ -73,6 +77,20 @@ Plugin IDs must be namespaced, such as `acme.workflow`. Versions must be semver-
 
 `apiVersion: 1` is the only currently supported value.
 
+### Manifest IDs
+
+IDs in `plugin.json` follow two different rules depending on their role:
+
+**Resource IDs and admin page IDs** become URL path segments. They must be lowercase kebab-case:
+- `subscribers`, `seo-entries`, `contact-forms` ✓
+- `Subscribers`, `seoEntries`, `My Posts` ✗ (uppercase, camelCase, spaces)
+
+**Resource field IDs** are JSON object keys only — not URL segments. They accept any common JavaScript identifier convention (camelCase, snake_case, kebab-case):
+- `email`, `subscribedAt`, `page_id`, `first-name` ✓
+- `My Field`, `123bad`, `has space` ✗ (spaces, leading digit, spaces)
+
+The manifest validator produces a clear error message if you violate either rule. When in doubt, run `bun pb-plugin lint` before uploading.
+
 ### Entrypoints
 
 | Field | Required permission | Loaded by | Use it for |
@@ -81,7 +99,7 @@ Plugin IDs must be namespaced, such as `acme.workflow`. Versions must be semver-
 | `editor` | `editor.commands` / `editor.toolbar` etc. | Editor mount | Toolbar buttons, commands, store transactions |
 | `admin` | `admin.navigation` | Admin app pages | Custom admin app rendered into a plugin admin page |
 | `modules` | `modules.register` | Editor mount + server boot | Adding new modules to the canvas library |
-| `frontend` | `frontend.scripts` (+ `frontend.tracker` if posting events) | Published pages | Analytics, custom widgets, A/B testing |
+| `frontend/*.ts` | `frontend.assets` | Published pages | Analytics trackers, custom widgets, A/B testing, polyfills |
 
 ### Pack
 
@@ -133,8 +151,8 @@ export function activate(api) {
     const url = new URL(ctx.req.url)
     const format = url.searchParams.get('format') ?? 'csv'
 
-    const rows = await api.cms.storage.collection('events').list()
-    const csv = rows.map(r => [r.id, r.data.name].join(',')).join('\r\n')
+    const { records } = await api.cms.storage.collection('events').list()
+    const csv = records.map(r => [r.id, r.data.name].join(',')).join('\r\n')
 
     return {
       __response: true,
@@ -183,13 +201,41 @@ See [sandbox.md](sandbox.md#network-access) for allowlist semantics and the `fet
 
 ## Plugin Storage
 
-Declare resources in the manifest, then use `cms.storage`:
+Declare resources in the manifest, then use `cms.storage`. `list()` always returns an envelope `{ records, totalCount }` — destructure before accessing the array:
 
-```js
+```ts
 const items = api.cms.storage.collection('items')
 await items.create({ title: 'Draft', status: 'pending' })
-const records = await items.list()
+
+// Bare list — simple case
+const { records } = await items.list()
+
+// With filter, pagination, and sorting
+const { records, totalCount } = await api.cms.storage.collection('subscribers').list({
+  filter: {
+    status: 'active',                        // shorthand: equals
+    createdAt: { gte: '2026-01-01' },        // ISO 8601 — strings compare lexicographically
+    email: { like: '%@example.com' },        // case-insensitive LIKE
+  },
+  orderBy: { createdAt: 'desc' },
+  limit: 25,
+  offset: 0,
+})
 ```
+
+**Filter operators:** `eq` / `ne` / `gt` / `gte` / `lt` / `lte` / `in` / `like`. A bare value (string, number, boolean, null) is shorthand for `eq`.
+
+**`like`** is case-insensitive and uses SQL `LIKE` semantics (`%` = any characters, `_` = single character).
+
+**Field names** must match `/^[a-zA-Z_][a-zA-Z0-9_]*$/` — use camelCase or snake_case identifiers. Kebab-case (`form-id`) is not valid in `filter` / `orderBy`; use `formId` instead.
+
+**`limit`** defaults to 100, maximum 1000. **`offset`** defaults to 0.
+
+**`totalCount`** is the full count of matching records before pagination — useful for building paginated UIs.
+
+**Filter is AND-only.** There is no OR combinator across fields. If you need OR across two fields, run two queries.
+
+> **Note:** the `storage-list-envelope` architecture gate enforces the destructure pattern and will fail the build if you chain array methods directly on the `.list()` return value.
 
 ## Admin Apps
 
@@ -240,6 +286,11 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
   Alert, Button, Card, Checkbox, Code, EmptyState, Heading,
   Input, SearchBar, Select, Separator, Stack, Switch, Text, Textarea,
+  // Tab compound component (ARIA-correct, keyboard-navigable)
+  Tabs, TabList, Tab, TabPanel,
+  // Data-visualisation + widget primitives
+  Sparkline, Bars, StackedBar, StatValue, Delta, RangeTabs,
+  Widget, WidgetList, WidgetListRow,
 } from '@pagebuilder/host-ui'
 
 // Editor / settings / route helpers — real React hooks
@@ -262,6 +313,36 @@ import {
   permissions,
 } from '@pagebuilder/plugin-sdk'
 ```
+
+### Tabs
+
+Use the `Tabs` compound component whenever your admin app needs tabbed navigation. It is ARIA-correct (`tablist` / `tab` / `tabpanel` roles), keyboard-navigable (ArrowLeft / ArrowRight / Home / End with automatic activation), and generic over the value type.
+
+```tsx
+import { useState } from 'react'
+import { Tabs, TabList, Tab, TabPanel } from '@pagebuilder/host-ui'
+
+function Dashboard() {
+  const [active, setActive] = useState<'subscribers' | 'lists'>('subscribers')
+  return (
+    <Tabs<'subscribers' | 'lists'> value={active} onChange={setActive}>
+      <TabList ariaLabel="Newsletter sections">
+        <Tab value="subscribers">Subscribers</Tab>
+        <Tab value="lists">Lists</Tab>
+      </TabList>
+      <TabPanel value="subscribers"><SubscribersTable /></TabPanel>
+      <TabPanel value="lists"><ListsTable /></TabPanel>
+    </Tabs>
+  )
+}
+```
+
+- **ARIA:** renders `role="tablist"` on `TabList`, `role="tab"` on each `Tab`, and `role="tabpanel"` on each `TabPanel` — correct labelling out of the box.
+- **Keyboard:** arrow keys move focus and change the active tab simultaneously (automatic activation). Home / End jump to first / last tab.
+- **Generic value type:** the `TValue extends string` type parameter propagates through `Tabs → Tab → TabPanel`, so TypeScript catches mismatched `value` props at compile time.
+- **Style:** underline-indicator. Use `RangeTabs` for compact inline widget-header toggles (pill / segmented-control style).
+
+Do **not** roll your own `role="tablist"` div — it will fail the `no-plugin-tab-shells` architecture gate.
 
 ### What the plugin's component receives
 
@@ -720,29 +801,75 @@ export default ({ pluginId }) => [
 
 Same `render(props, children)` runs on the publisher (server) and inside the editor canvas preview, so the markup you ship is exactly what visitors see.
 
-## Frontend Tracker (`frontend.scripts` + `frontend.tracker`)
+## Frontend Assets (`frontend.assets`)
 
-> **Important — frontend scripts are NOT a React surface.** Published pages don't load the editor, the host's React, or the import map. A `frontend.scripts` bundle that imports `react` or `@pagebuilder/host-ui` will crash the visitor's browser at runtime. Use vanilla JS, the DOM API, and `window.__pb` for analytics or widget code. If you genuinely need a frontend React widget, bundle React yourself — but most use cases (analytics, click tracking, A/B testing) don't need it. `pb-plugin build` enforces this by NOT externalizing host packages for frontend bundles, so a stray `import` becomes a build-time bundling cost (your React copy ships per visitor) rather than a runtime resolution failure.
+> **Important — frontend scripts are NOT a React surface.** Published pages don't load the editor, the host's React, or the import map. A frontend bundle that imports `react` or `@pagebuilder/host-ui` will crash the visitor's browser at runtime. Use vanilla JS and the DOM API. If you genuinely need a frontend React widget, bundle React yourself — but most use cases (analytics, click tracking, A/B testing) don't need it. `pb-plugin build` enforces this by NOT externalizing host packages for frontend bundles, so a stray `import` becomes a build-time bundling cost (your React copy ships per visitor) rather than a runtime resolution failure.
 
-The host injects a tiny tracker runtime into every published page when any installed plugin has `frontend.scripts` or `frontend.tracker` granted. The runtime exposes `window.__pb`:
+Plugins declare frontend assets in their `pb-plugin.config.ts`. The host splices them into every published page at four placement anchors (`head`, `head-end`, `body-start`, `body-end`), rewrites the CSP based on what the plan needs, and runs the `publish.html` filter — but ships **no tag content of its own**. The host is purely substrate. Plugins that want shared frontend state (`window.__pb_analytics`, `window.__pb_chat`, …) ship the IIFE that installs it as one of their own assets.
 
 ```ts
-window.__pb.visitorId    // stable per-browser id
-window.__pb.sessionId    // stable per-session id
-window.__pb.tracker.send(name, payload)              // implicit pluginId
-window.__pb.tracker.sendFor(pluginId, name, payload) // explicit
-window.__pb.hooks.on(name, listener)                 // page-view, link-click, scroll-depth, ...
-window.__pb.hooks.emit(name, detail)
-```
+// pb-plugin.config.ts
+export default definePlugin({
+  // …
+  permissions: [permissions.frontendAssets, permissions.cmsRoutes /* for ingestion */],
+  frontend: {
+    assets: [
+      // External JS file shipped under `frontend/tracker.{ts,tsx}` and
+      // bundled to `dist/frontend/tracker.js` by `pb-plugin build`.
+      { kind: 'script', src: 'frontend/tracker.js', placement: 'body-end', strategy: 'defer' },
 
-Server-side, plugins listen with `api.cms.hooks.on('tracker.event', ...)` and persist into their own resource via `api.cms.storage.collection(...)`.
+      // Inline <script> — short bootstrap snippets that can't wait for fetch.
+      { kind: 'script-inline', content: `console.log('booted')`, placement: 'body-end' },
 
-```js
-// frontend/tracker.js
-window.__pb.hooks.on('page-view', (detail) => {
-  window.__pb.tracker.sendFor('acme.showcase', 'page-view', detail)
+      // External CSS.
+      { kind: 'style', href: 'frontend/widget.css', placement: 'head-end' },
+
+      // Inline <style>.
+      { kind: 'style-inline', content: `.foo { color: red }`, placement: 'head-end' },
+
+      // <link> — preconnect, dns-prefetch, preload, alternate, etc.
+      { kind: 'link', attrs: { rel: 'preconnect', href: 'https://cdn.example.com' } },
+
+      // <meta>.
+      { kind: 'meta', attrs: { name: 'theme-color', content: '#000000' } },
+    ],
+  },
 })
 ```
+
+`script` and `style` `src`/`href` paths are resolved against the plugin's `assetBasePath`. The build CLI auto-discovers every `.ts`/`.tsx` file directly under `frontend/` and bundles it to `dist/frontend/<name>.js` — reference the built `.js` path from your manifest.
+
+### Ingesting events from the frontend
+
+The host has no built-in tracker channel. To receive events from your frontend bundle, register a public route on the server side and POST to it directly:
+
+```ts
+// server/index.ts
+api.cms.routes.postPublic('/ingest', async (ctx) => {
+  const body = ctx.body as Record<string, unknown>
+  await api.cms.storage.collection('events').create({
+    name: String(body.eventName ?? ''),
+    payload: JSON.stringify(body.payload ?? {}),
+    'received-at': new Date().toISOString(),
+  })
+  return { ok: true }
+})
+```
+
+```ts
+// frontend/tracker.ts
+const PLUGIN_ID = 'acme.analytics'
+const ROUTE = `/admin/api/cms/plugins/${PLUGIN_ID}/runtime/ingest`
+
+fetch(ROUTE, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  keepalive: true,
+  body: JSON.stringify({ eventName: 'page-view', payload: { path: location.pathname } }),
+}).catch(() => { /* fire-and-forget */ })
+```
+
+Plugins that want cross-plugin coordination can additionally emit on the hook bus (`api.cms.hooks.emit('acme.analytics.page-view', payload)`) and other plugins listen with `api.cms.hooks.on('acme.analytics.page-view', ...)`.
 
 ## Loop Sources (`loops.register`)
 
@@ -771,17 +898,66 @@ Built-in events:
 | --- | --- |
 | `publish.before` | `{ siteId, pageId? }` |
 | `publish.after` | `{ siteId, pageId? }` |
-| `tracker.event` | `{ pluginId, eventName, payload, visitorId, sessionId, pagePath, referrer, receivedAt }` |
 | `content.entry.created/updated/deleted` | `{ collectionId, entryId }` |
 
 Built-in filters:
 
-| Filter | Type |
-| --- | --- |
-| `publish.html` | `string` (full HTML before sending to browser) |
-| `publish.headers` | `Record<string, string>` |
+| Filter | Type | Context |
+| --- | --- | --- |
+| `publish.html` | `string` (full HTML before sending to browser) | `{ siteId, pageId, slug }` |
+| `publish.headers` | `Record<string, string>` | `{ siteId, pageId, slug }` |
+
+Filter handlers receive the current value as the first argument and a context object as the second. The context always includes `pluginId`; named filters like `publish.html` add extra fields:
+
+```js
+api.cms.hooks.filter('publish.html', (html, { siteId, pageId, slug }) => {
+  return html.replace('</body>', `<!-- page:${slug} siteId:${siteId} -->\n</body>`)
+})
+```
 
 Plugins can `emit` and `on` any event. If you publish a documented event under your namespace, prefix it with `plugin.<your-id>.`.
+
+## Page Enumeration and Republish (`cms.pages.*`)
+
+Plugins can list published pages and trigger a republish via `api.cms.pages`. This is useful when a plugin's filter or hook needs to be applied to pages that were already published before the plugin was activated.
+
+### Listing pages
+
+Requires `cms.pages.read`:
+
+```js
+export async function activate(api) {
+  const pages = await api.cms.pages.list()
+  // pages: [{ id, slug, title, lastPublishedAt }]
+  for (const page of pages) {
+    api.plugin.log(`Page: ${page.slug} (published: ${page.lastPublishedAt})`)
+  }
+}
+```
+
+### Republishing a single page
+
+Requires `cms.pages.publish`. Re-runs the full publish pipeline (publish.before → publish.html filter → publish.after) for the page:
+
+```js
+export async function activate(api) {
+  // Re-apply this plugin's publish.html filter to an existing page
+  await api.cms.pages.republish('some-page-id')
+}
+```
+
+Throws if the page is not currently published.
+
+### Republishing all pages
+
+Requires `cms.pages.publish`. Iterates all published pages and runs the pipeline for each. Returns the total count:
+
+```js
+export async function activate(api) {
+  const { count } = await api.cms.pages.republishAll()
+  api.plugin.log(`Republished ${count} pages`)
+}
+```
 
 ## Type Declarations
 

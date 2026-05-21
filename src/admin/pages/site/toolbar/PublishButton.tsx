@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { selectActivePage, useEditorStore } from '@site/store/store'
-import { pagePublicPath } from '@core/page-tree/slugs'
 import { getCmsPublishStatus, publishCmsDraft } from '@core/persistence'
 import { LoaderIcon } from 'pixel-art-icons/icons/loader'
 import { CalendarSolidIcon } from 'pixel-art-icons/icons/calendar-solid'
 import { CheckIcon } from 'pixel-art-icons/icons/check'
 import { CircleAlertSolidIcon } from 'pixel-art-icons/icons/circle-alert-solid'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
-import { ExternalLinkSolidIcon } from 'pixel-art-icons/icons/external-link-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { SaveSolidIcon } from 'pixel-art-icons/icons/save-solid'
 import { StepUpCancelledMessage, useStepUp } from '@admin/shared/StepUp'
@@ -210,17 +208,9 @@ export function PublishButton({ enabled = true, onSave, saveStatus }: PublishBut
       onSelect: () => openPreview(),
       testId: 'toolbar-preview-action',
     },
-    {
-      id: 'open-live',
-      label: 'Open live page',
-      icon: ExternalLinkSolidIcon,
-      disabled: !activePage,
-      onSelect: () => {
-        if (!activePage) return
-        window.open(pagePublicPath(activePage.slug), '_blank', 'noopener,noreferrer')
-      },
-      testId: 'toolbar-open-page-new-tab-action',
-    },
+    // "Open live page" used to live here. It now has a dedicated
+    // toolbar icon button (`OpenLivePageButton`) next to the avatar so
+    // it's reachable on every admin route — not just the Site editor.
   ]
 
   return (

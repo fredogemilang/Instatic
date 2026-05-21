@@ -94,7 +94,7 @@ function makeFakeDb(
 describe('public rendering', () => {
   it('renders complete HTML from a published snapshot', async () => {
     const snap = snapshot('Visible to public')
-    const html = await renderPublishedSnapshot(snap, { db: makeFakeDb(snap) })
+    const { html } = await renderPublishedSnapshot(snap, { db: makeFakeDb(snap) })
 
     expect(html).toContain('<!DOCTYPE html>')
     expect(html).toContain('Visible to public')
@@ -115,7 +115,7 @@ describe('public rendering', () => {
       ],
     }
 
-    const html = await renderPublishedSnapshot(published, { db: makeFakeDb(published) })
+    const { html } = await renderPublishedSnapshot(published, { db: makeFakeDb(published) })
 
     expect(html).toContain("script-src 'self'")
     expect(html).toContain('/_pb/assets/version_1/entries/entry.js')
@@ -158,7 +158,7 @@ describe('public rendering', () => {
 
   it('emits external CSS <link> tags pointing at the per-site bundle', async () => {
     const snap = snapshot('Hello')
-    const html = await renderPublishedSnapshot(snap, { db: makeFakeDb(snap) })
+    const { html } = await renderPublishedSnapshot(snap, { db: makeFakeDb(snap) })
     expect(html).toMatch(/<link rel="stylesheet" href="\/_pb\/css\/reset-[a-f0-9]{12}\.css">/)
     // No inline reset block — site-wide CSS lives in the external bundle.
     expect(html).not.toContain(':where(*, *::before, *::after)')

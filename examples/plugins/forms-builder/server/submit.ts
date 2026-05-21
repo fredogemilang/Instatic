@@ -118,14 +118,14 @@ export function registerSubmitRoute(api: ServerPluginApi): void {
     let record
     try {
       record = await submissions.create({
-        'form-id': formId,
-        'page-path': pagePath,
-        'submitted-at': new Date().toISOString(),
+        formId,
+        pagePath,
+        submittedAt: new Date().toISOString(),
         payload: JSON.stringify(payload),
-        'ip-hash': ipHash,
-        'user-agent': userAgent,
+        ipHash,
+        userAgent,
         status: 'pending',
-        'error-message': '',
+        errorMessage: '',
       })
     } catch (err) {
       console.error('[plugin:pagebuilder.forms] Failed to persist submission:', err)
@@ -146,12 +146,12 @@ export function registerSubmitRoute(api: ServerPluginApi): void {
           },
           emailSettings,
         )
-        await submissions.update(record.id, { status: 'sent', 'error-message': '' })
+        await submissions.update(record.id, { status: 'sent', errorMessage: '' })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         console.error('[plugin:pagebuilder.forms] Email delivery failed:', err)
         await submissions
-          .update(record.id, { status: 'failed', 'error-message': message })
+          .update(record.id, { status: 'failed', errorMessage: message })
           .catch((_e) => { /* storage update failure is non-fatal */ })
       }
     })()

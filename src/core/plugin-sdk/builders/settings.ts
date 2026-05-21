@@ -14,10 +14,12 @@
  *     },
  *   ]
  *
- * Plugins read settings at runtime via `api.cms.settings.get(key)` (server),
- * `api.cms.settings.get(key)` (admin app), and `window.__pb.pluginSettings(id)`
- * (frontend, non-secret values only). The host stores them per-plugin in
- * the `installed_plugins.settings_json` column.
+ * Plugins read settings at runtime via `api.cms.settings.get(key)` (server)
+ * and via the admin-app context hook. Frontend bundles read non-secret
+ * values by fetching them through the plugin's own public route — the
+ * host never exposes plugin settings to the published page directly.
+ * The host stores settings per-plugin in the `installed_plugins.settings_json`
+ * column.
  *
  * Why a separate concept from canvas-module schema: settings are
  * site-owner-managed, persist across plugin updates, and may carry secrets

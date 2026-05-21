@@ -183,6 +183,15 @@ Use the SDK (api.cms.storage.*, api.cms.hooks.*, api.cms.routes.*) for I/O inste
 
 This catches honest mistakes before anything ships. The same scan runs again at install time on the host so unsigned or hand-zipped packages can't slip through.
 
+## Page republish — host-side execution
+
+`api.cms.pages.republish(pageId)` and `api.cms.pages.republishAll()` execute **outside the VM** — the host runs the full publish pipeline (publish.before → publish.html filter → publish.after) directly in the main process. From the plugin's perspective, the call is just an async `__hostCall` that resolves when the republish chain completes.
+
+This means:
+- Hook listeners and filter handlers registered by **all** active plugins fire during the republish, not just those of the calling plugin.
+- The host, not the VM, drives the pipeline. The plugin's sandbox cannot observe or intercept the HTML pipeline internally — it only receives or transforms the value when its own registered filter runs.
+- Large republish batches (`republishAll` on a site with many pages) are synchronous from the plugin's await perspective. Budget the time accordingly. Using `api.cms.schedule` for batch republish tasks (instead of a one-shot `activate` call) is recommended for production plugins.
+
 ## Cross-context signaling
 
 When you need to send a value from inside the sandbox out to host code (for tests, dashboards, observers, other plugins), use **hooks**:

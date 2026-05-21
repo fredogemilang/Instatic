@@ -1,6 +1,7 @@
 import { createDbClient } from './db'
 import { runMigrations } from './db/runMigrations'
 import { syncSystemRoles } from './repositories/roles'
+import { backfillDefaultEntryTemplates } from './repositories/data'
 import { readServerConfig } from './config'
 import { DEV_ORIGIN_ALLOWLIST, stampSocketIp } from './auth/security'
 
@@ -17,6 +18,11 @@ await runMigrations(db, migrations)
 // installations don't strand owners on a stale grant list when new
 // capabilities are added in code. See `syncSystemRoles` for the policy.
 await syncSystemRoles(db)
+// Every postType data table needs a default entry template so the public
+// route `/<route-base>/<row-slug>` resolves. `createDataTable` seeds one
+// at creation time; this backfill covers the baseline-seeded `posts` table
+// and any postType row that pre-dates the seeding feature.
+await backfillDefaultEntryTemplates(db)
 // Wire the built-in local-disk media adapter BEFORE plugins activate —
 // plugin adapters register through the same registry but local-disk is
 // always the fallback for unset roles. See `mediaStorageRegistry.ts`.

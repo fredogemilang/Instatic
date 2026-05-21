@@ -17,7 +17,18 @@ import {
 } from '@core/plugin-sdk'
 
 const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/
-const PAGE_ID_PATTERN = /^[a-z][a-z0-9-]*$/
+/**
+ * Used for resource IDs and admin page IDs — these become URL path segments,
+ * so they are restricted to lowercase kebab-case.
+ * Examples: `subscribers`, `seo-entries`, `my-posts`
+ */
+const MANIFEST_SLUG_PATTERN = /^[a-z][a-z0-9-]*$/
+/**
+ * Used for resource field IDs — these are JSON object keys only, not URL
+ * segments. Allows camelCase, snake_case, and kebab-case.
+ * Examples: `email`, `subscribedAt`, `page_id`, `first-name`
+ */
+const RESOURCE_FIELD_ID_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_-]*$/
 const SEMVERISH_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9a-zA-Z.-]+)?$/
 const SAFE_ASSET_PATH_PATTERN = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[a-zA-Z0-9._/-]+$/
 // `assetBasePath` is server-controlled. The only legitimate shape is
@@ -63,7 +74,7 @@ const contentSchema = Type.Union([
   Type.Object({
     kind: Type.Literal('resource'),
     heading: Type.String({ minLength: 1, maxLength: 120 }),
-    resource: Type.String({ pattern: PAGE_ID_PATTERN.source }),
+    resource: Type.String({ pattern: MANIFEST_SLUG_PATTERN.source }),
   }),
   Type.Object({
     kind: Type.Literal('app'),
@@ -74,7 +85,7 @@ const contentSchema = Type.Union([
 ])
 
 const resourceFieldSchema = Type.Object({
-  id: Type.String({ pattern: PAGE_ID_PATTERN.source }),
+  id: Type.String({ pattern: RESOURCE_FIELD_ID_PATTERN.source }),
   label: Type.String({ minLength: 1, maxLength: 80 }),
   type: Type.Union([
     Type.Literal('text'),
@@ -87,7 +98,7 @@ const resourceFieldSchema = Type.Object({
 })
 
 const resourceSchema = Type.Object({
-  id: Type.String({ pattern: PAGE_ID_PATTERN.source }),
+  id: Type.String({ pattern: MANIFEST_SLUG_PATTERN.source }),
   title: Type.String({ minLength: 1, maxLength: 80 }),
   singularLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
   pluralLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
@@ -95,7 +106,7 @@ const resourceSchema = Type.Object({
 })
 
 const adminPageSchema = Type.Object({
-  id: Type.String({ pattern: PAGE_ID_PATTERN.source }),
+  id: Type.String({ pattern: MANIFEST_SLUG_PATTERN.source }),
   title: Type.String({ minLength: 1, maxLength: 80 }),
   navLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 30 })),
   icon: Type.Optional(Type.String({ minLength: 1, maxLength: 30 })),
@@ -152,6 +163,28 @@ const authorSchema = Type.Object({
   url: Type.Optional(Type.String({ pattern: URL_PATTERN.source, maxLength: 500 })),
 })
 
+// ---------------------------------------------------------------------------
+// Frontend assets — shared schemas referenced by the manifest below.
+// ---------------------------------------------------------------------------
+
+const FrontendAssetPlacementSchema = Type.Union([
+  Type.Literal('head'),
+  Type.Literal('head-end'),
+  Type.Literal('body-start'),
+  Type.Literal('body-end'),
+])
+
+// HTML attribute name: lowercase letters / digits / dashes / colon / underscore.
+// Restricts what plugins can spell so a malformed declaration can't smuggle
+// in arbitrary HTML by setting an attribute named `>`. Values are
+// HTML-escaped at render time.
+const FRONTEND_ATTR_NAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9_:-]*$/
+
+const FrontendAssetAttrsSchema = Type.Record(
+  Type.String({ pattern: FRONTEND_ATTR_NAME_PATTERN.source, maxLength: 64 }),
+  Type.String({ maxLength: 4096 }),
+)
+
 const manifestSchema = Type.Object({
   id: Type.String({ pattern: PLUGIN_ID_PATTERN.source }),
   name: Type.String({ minLength: 1, maxLength: 80 }),
@@ -183,7 +216,61 @@ const manifestSchema = Type.Object({
     editor: Type.Optional(Type.String({ pattern: SAFE_ASSET_PATH_PATTERN.source })),
     admin: Type.Optional(Type.String({ pattern: SAFE_ASSET_PATH_PATTERN.source })),
     modules: Type.Optional(Type.String({ pattern: SAFE_ASSET_PATH_PATTERN.source })),
-    frontend: Type.Optional(Type.String({ pattern: SAFE_ASSET_PATH_PATTERN.source })),
+  })),
+  /**
+   * Declarative frontend tag list — scripts, styles, meta, link, and shared
+   * host-runtime references the host injects into every published page on
+   * behalf of this plugin. Validated structurally here; the host's frontend
+   * injection pipeline reads the array at publish time and emits the actual
+   * tags. Requires the `frontend.assets` permission (coherence checked
+   * downstream in `assertFrontendAssetsCoherent`).
+   */
+  frontend: Type.Optional(Type.Object({
+    assets: Type.Array(
+      Type.Union([
+        Type.Object({
+          kind: Type.Literal('script'),
+          src: Type.String({ pattern: SAFE_ASSET_PATH_PATTERN.source }),
+          placement: Type.Optional(FrontendAssetPlacementSchema),
+          strategy: Type.Optional(Type.Union([
+            Type.Literal('defer'),
+            Type.Literal('async'),
+            Type.Literal('module'),
+            Type.Literal('sync'),
+          ])),
+          attrs: Type.Optional(FrontendAssetAttrsSchema),
+        }, { additionalProperties: false }),
+        Type.Object({
+          kind: Type.Literal('script-inline'),
+          content: Type.String({ minLength: 1, maxLength: 64 * 1024 }),
+          placement: Type.Optional(FrontendAssetPlacementSchema),
+          attrs: Type.Optional(FrontendAssetAttrsSchema),
+        }, { additionalProperties: false }),
+        Type.Object({
+          kind: Type.Literal('style'),
+          href: Type.String({ pattern: SAFE_ASSET_PATH_PATTERN.source }),
+          placement: Type.Optional(FrontendAssetPlacementSchema),
+          attrs: Type.Optional(FrontendAssetAttrsSchema),
+        }, { additionalProperties: false }),
+        Type.Object({
+          kind: Type.Literal('style-inline'),
+          content: Type.String({ minLength: 1, maxLength: 64 * 1024 }),
+          placement: Type.Optional(FrontendAssetPlacementSchema),
+          attrs: Type.Optional(FrontendAssetAttrsSchema),
+        }, { additionalProperties: false }),
+        Type.Object({
+          kind: Type.Literal('link'),
+          attrs: FrontendAssetAttrsSchema,
+          placement: Type.Optional(FrontendAssetPlacementSchema),
+        }, { additionalProperties: false }),
+        Type.Object({
+          kind: Type.Literal('meta'),
+          attrs: FrontendAssetAttrsSchema,
+          placement: Type.Optional(FrontendAssetPlacementSchema),
+        }, { additionalProperties: false }),
+      ]),
+      { maxItems: 50 },
+    ),
   })),
   assetBasePath: Type.Optional(Type.String({ pattern: ASSET_BASE_PATH_PATTERN.source })),
   resources: Type.Array(resourceSchema, { maxItems: 20, default: [] }),
@@ -200,13 +287,36 @@ export function pluginAdminPageRoute(pluginId: string, pageId: string): string {
   return `/admin/plugins/${pluginId}/${pageId}`
 }
 
+/**
+ * Convert a raw TypeBox pattern-validation error into a human-readable
+ * message. TypeBox's default is "Expected string to match '<pattern>'", which
+ * is correct but unhelpful. We detect the two manifest patterns and substitute
+ * a friendlier explanation.
+ */
+function friendlyManifestError(message: string, path: string): string {
+  if (message.includes(MANIFEST_SLUG_PATTERN.source)) {
+    const field = path.split('/').pop() ?? 'field'
+    return `"${field}" must be lowercase kebab-case (a-z, 0-9, hyphens; must start with a letter). ` +
+      `Examples: "subscribers", "seo-entries". Got: ${message}`
+  }
+  if (message.includes(RESOURCE_FIELD_ID_PATTERN.source)) {
+    const field = path.split('/').pop() ?? 'field'
+    return `"${field}" must be a valid identifier (letters, digits, underscores, hyphens; must start with a letter or underscore). ` +
+      `Examples: "email", "subscribedAt", "page_id". Got: ${message}`
+  }
+  return message
+}
+
 export function parsePluginManifest(input: unknown): PluginManifest {
   let data: ManifestRaw
   try {
     data = Value.Parse(manifestSchema, input) as ManifestRaw
   } catch {
     const errors = [...Value.Errors(manifestSchema, input)]
-    throw new Error(`Invalid plugin manifest: ${errors[0]?.message ?? 'manifest is malformed'}`)
+    const first = errors[0]
+    const rawMessage = first?.message ?? 'manifest is malformed'
+    const message = first ? friendlyManifestError(rawMessage, first.path ?? '') : rawMessage
+    throw new Error(`Invalid plugin manifest: ${message}`)
   }
 
   // SDK compatibility — reject manifests targeting a host API version this
@@ -278,6 +388,37 @@ export function parsePluginManifest(input: unknown): PluginManifest {
     }
   })
 
+  // Frontend asset coherence — `frontend.assets[]` requires the
+  // `frontend.assets` permission. Allowing the array without the permission
+  // would silently inject tags onto every published page with no consent
+  // screen ever showing the grant.
+  if (data.frontend && data.frontend.assets.length > 0) {
+    if (!data.permissions.includes('frontend.assets')) {
+      throw new Error(
+        `Invalid plugin manifest: \`frontend.assets\` is non-empty but the ` +
+        `\`frontend.assets\` permission is not requested.`,
+      )
+    }
+    for (const asset of data.frontend.assets) {
+      // `attrs` is allowed to be missing (TypeBox enforces the shape we
+      // accept), but `script-inline` / `style-inline` must declare *some*
+      // content — schema covers that too.
+      if (asset.kind === 'link' && !asset.attrs.rel && !asset.attrs.href) {
+        throw new Error(
+          `Invalid plugin manifest: \`frontend.assets\` <link> declaration ` +
+          `must include at least \`rel\` or \`href\`.`,
+        )
+      }
+      if (asset.kind === 'meta' && !asset.attrs.name && !asset.attrs.property
+          && !asset.attrs.charset && !asset.attrs['http-equiv']) {
+        throw new Error(
+          `Invalid plugin manifest: \`frontend.assets\` <meta> declaration ` +
+          `must include \`name\`, \`property\`, \`charset\`, or \`http-equiv\`.`,
+        )
+      }
+    }
+  }
+
   // Settings — duplicate id check.
   if (data.settings && data.settings.length > 0) {
     const seen = new Set<string>()
@@ -309,6 +450,9 @@ export function parsePluginManifest(input: unknown): PluginManifest {
     resources,
     adminPages,
     pack: data.pack,
+    frontend: data.frontend
+      ? { assets: data.frontend.assets.map((asset) => ({ ...asset })) } as PluginManifest['frontend']
+      : undefined,
     settings: data.settings as PluginManifest['settings'],
     author: data.author,
     license: data.license,

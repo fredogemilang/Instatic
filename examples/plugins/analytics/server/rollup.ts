@@ -4,7 +4,7 @@
  * `runRollup` aggregates yesterday's raw events into a `daily-stats` record.
  * `runPrune` deletes raw events older than the configured retention window.
  */
-import type { ServerPluginApi, PluginRecord } from '@pagebuilder/plugin-sdk'
+import type { ServerPluginApi } from '@pagebuilder/plugin-sdk'
 
 interface TopEntry {
   label: string
@@ -30,10 +30,11 @@ export async function runRollup(api: ServerPluginApi): Promise<void> {
   yesterday.setUTCDate(yesterday.getUTCDate() - 1)
   const dateStr = yesterday.toISOString().slice(0, 10)
 
-  const all = await events.list()
-  const dayEvents = all.filter(r => {
-    const at = String(r.data['received-at'] ?? r.createdAt)
-    return at.startsWith(dateStr)
+  const dayStart = `${dateStr}T00:00:00.000Z`
+  const dayEnd = `${dateStr}T23:59:59.999Z`
+  const { records: dayEvents } = await events.list({
+    filter: { receivedAt: { gte: dayStart, lte: dayEnd } },
+    limit: 1000,
   })
 
   if (dayEvents.length === 0) return
@@ -42,8 +43,8 @@ export async function runRollup(api: ServerPluginApi): Promise<void> {
   const pageviewEvents = dayEvents.filter(r => r.data.name === 'page-view')
   const pageviews = pageviewEvents.length
 
-  // Unique visitors (by visitor-hash)
-  const visitors = new Set(pageviewEvents.map(r => String(r.data['visitor-hash'] ?? ''))).size
+  // Unique visitors (by visitorHash)
+  const visitors = new Set(pageviewEvents.map(r => String(r.data.visitorHash ?? ''))).size
 
   // Sessions
   const sessionSet = new Set(dayEvents.map(r => String(r.data.session ?? '')).filter(Boolean))
@@ -63,7 +64,7 @@ export async function runRollup(api: ServerPluginApi): Promise<void> {
   for (const r of dayEvents) {
     const s = String(r.data.session ?? '')
     if (!s) continue
-    const t = new Date(String(r.data['received-at'] ?? r.createdAt)).getTime()
+    const t = new Date(String(r.data.receivedAt ?? r.createdAt)).getTime()
     if (Number.isNaN(t)) continue
     const bounds = sessionBounds.get(s)
     if (!bounds) sessionBounds.set(s, { min: t, max: t })
@@ -113,9 +114,9 @@ export async function runRollup(api: ServerPluginApi): Promise<void> {
   }
 
   // Upsert: find existing row for this date and update, or create new
-  const existing = (await dailyStats.list()).find(r => r.data.date === dateStr)
-  if (existing) {
-    await dailyStats.update(existing.id, payload)
+  const { records: existingRows } = await dailyStats.list({ filter: { date: dateStr } })
+  if (existingRows[0]) {
+    await dailyStats.update(existingRows[0].id, payload)
   } else {
     await dailyStats.create(payload)
   }
@@ -128,12 +129,11 @@ export async function runPrune(api: ServerPluginApi): Promise<void> {
   const retentionDays = Number(api.cms.settings.get<number>('retentionDays') ?? 90)
   const cutoffMs = Date.now() - retentionDays * 86_400_000
 
+  const cutoffIso = new Date(cutoffMs).toISOString()
   const events = api.cms.storage.collection('events')
-  const all = await events.list()
-
-  const stale = all.filter((r: PluginRecord) => {
-    const at = String(r.data['received-at'] ?? r.createdAt)
-    return new Date(at).getTime() < cutoffMs
+  const { records: stale } = await events.list({
+    filter: { receivedAt: { lt: cutoffIso } },
+    limit: 1000,
   })
 
   for (const r of stale) {

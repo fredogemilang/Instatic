@@ -39,6 +39,7 @@ import {
   normalizeSiteRuntimeConfig,
 } from '@core/site-runtime'
 import { resolveCmsRuntimeDependencies } from '@core/persistence/cmsRuntime'
+import { buildSiteHelpers } from './site/helpers'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -150,12 +151,42 @@ declare module '@site/store/types' {
   interface EditorStore extends SitePanelSlice {}
 }
 
-export const createSitePanelSlice: EditorStoreSliceCreator<SitePanelSlice> = (set, get) => ({
-  packageJson: clonePackageJson(DEFAULT_SITE_PACKAGE_JSON),
-  siteRuntime: cloneSiteRuntimeConfig(DEFAULT_SITE_RUNTIME),
-  dependencyResolveStatus: 'idle',
-  dependencyResolveLockedCount: 0,
-  dependencyResolveError: null,
+export const createSitePanelSlice: EditorStoreSliceCreator<SitePanelSlice> = (set, get) => {
+  const { mutateSiteState } = buildSiteHelpers(set, get)
+
+  function commitPackageJson(nextPackageJson: PackageJson): void {
+    if (!get().site) {
+      set({ packageJson: nextPackageJson })
+      return
+    }
+    mutateSiteState((state, site) => {
+      state.packageJson = nextPackageJson
+      site.packageJson = nextPackageJson
+      return true
+    })
+  }
+
+  function commitSiteRuntime(nextRuntime: SiteRuntimeConfig, markUnsavedWithoutSite = false): void {
+    if (!get().site) {
+      set({
+        siteRuntime: nextRuntime,
+        ...(markUnsavedWithoutSite ? { hasUnsavedChanges: true } : {}),
+      })
+      return
+    }
+    mutateSiteState((state, site) => {
+      state.siteRuntime = nextRuntime
+      site.runtime = nextRuntime
+      return true
+    })
+  }
+
+  return {
+    packageJson: clonePackageJson(DEFAULT_SITE_PACKAGE_JSON),
+    siteRuntime: cloneSiteRuntimeConfig(DEFAULT_SITE_RUNTIME),
+    dependencyResolveStatus: 'idle',
+    dependencyResolveLockedCount: 0,
+    dependencyResolveError: null,
 
   setDependency: (name, version, dev = false) => {
     if (!isSafePackageName(name)) return
@@ -165,23 +196,13 @@ export const createSitePanelSlice: EditorStoreSliceCreator<SitePanelSlice> = (se
     const otherBucket = dev ? 'dependencies' : 'devDependencies'
     // No-op guard (Guideline #242): skip if value unchanged and no bucket move is needed.
     if (Object.is(current[bucket][name], safeVersion) && !(name in current[otherBucket])) return
-    if (get().site) get().pushHistory()
-    set((s) => {
-      const nextBucket = { ...s.packageJson[bucket], [name]: safeVersion }
-      const nextOtherBucket = { ...s.packageJson[otherBucket] }
-      delete nextOtherBucket[name]
-      const nextPackageJson = {
-        ...s.packageJson,
-        [bucket]: nextBucket,
-        [otherBucket]: nextOtherBucket,
-      }
-      return {
-        packageJson: nextPackageJson,
-        site: s.site
-          ? { ...s.site, packageJson: nextPackageJson, updatedAt: Date.now() }
-          : s.site,
-        hasUnsavedChanges: Boolean(s.site) || s.hasUnsavedChanges,
-      }
+    const nextBucket = { ...current[bucket], [name]: safeVersion }
+    const nextOtherBucket = { ...current[otherBucket] }
+    delete nextOtherBucket[name]
+    commitPackageJson({
+      ...current,
+      [bucket]: nextBucket,
+      [otherBucket]: nextOtherBucket,
     })
   },
 
@@ -189,21 +210,11 @@ export const createSitePanelSlice: EditorStoreSliceCreator<SitePanelSlice> = (se
     const { dependencies, devDependencies } = get().packageJson
     // No-op guard: package not present in either bucket
     if (!(name in dependencies) && !(name in devDependencies)) return
-    if (get().site) get().pushHistory()
-    set((s) => {
-      const deps = { ...s.packageJson.dependencies }
-      const devDeps = { ...s.packageJson.devDependencies }
-      delete deps[name]
-      delete devDeps[name]
-      const nextPackageJson = { ...s.packageJson, dependencies: deps, devDependencies: devDeps }
-      return {
-        packageJson: nextPackageJson,
-        site: s.site
-          ? { ...s.site, packageJson: nextPackageJson, updatedAt: Date.now() }
-          : s.site,
-        hasUnsavedChanges: Boolean(s.site) || s.hasUnsavedChanges,
-      }
-    })
+    const deps = { ...get().packageJson.dependencies }
+    const devDeps = { ...get().packageJson.devDependencies }
+    delete deps[name]
+    delete devDeps[name]
+    commitPackageJson({ ...get().packageJson, dependencies: deps, devDependencies: devDeps })
   },
 
   setScriptRuntimeConfig: (fileId, config) => {
@@ -215,23 +226,14 @@ export const createSitePanelSlice: EditorStoreSliceCreator<SitePanelSlice> = (se
     const currentConfig = currentRuntime.scripts[fileId]
     if (JSON.stringify(currentConfig) === JSON.stringify(nextConfig)) return
 
-    get().pushHistory()
-    set((s) => {
-      const nextRuntime = {
-        ...s.siteRuntime,
-        scripts: {
-          ...s.siteRuntime.scripts,
-          [fileId]: nextConfig,
-        },
-      }
-      return {
-        siteRuntime: nextRuntime,
-        site: s.site
-          ? { ...s.site, runtime: nextRuntime, updatedAt: Date.now() }
-          : s.site,
-        hasUnsavedChanges: true,
-      }
-    })
+    const nextRuntime = {
+      ...currentRuntime,
+      scripts: {
+        ...currentRuntime.scripts,
+        [fileId]: nextConfig,
+      },
+    }
+    commitSiteRuntime(nextRuntime, true)
   },
 
   patchScriptRuntimeConfig: (fileId, patch) => {
@@ -246,19 +248,9 @@ export const createSitePanelSlice: EditorStoreSliceCreator<SitePanelSlice> = (se
     const currentRuntime = get().siteRuntime
     if (!(fileId in currentRuntime.scripts)) return
 
-    get().pushHistory()
-    set((s) => {
-      const scripts = { ...s.siteRuntime.scripts }
-      delete scripts[fileId]
-      const nextRuntime = { ...s.siteRuntime, scripts }
-      return {
-        siteRuntime: nextRuntime,
-        site: s.site
-          ? { ...s.site, runtime: nextRuntime, updatedAt: Date.now() }
-          : s.site,
-        hasUnsavedChanges: true,
-      }
-    })
+    const scripts = { ...currentRuntime.scripts }
+    delete scripts[fileId]
+    commitSiteRuntime({ ...currentRuntime, scripts }, true)
   },
 
   setSiteDependencyLock: (lock, packageImportmap) => {
@@ -278,26 +270,17 @@ export const createSitePanelSlice: EditorStoreSliceCreator<SitePanelSlice> = (se
       : JSON.stringify(currentRuntime.packageImportmap ?? null) === JSON.stringify(nextImportmap ?? null)
     if (lockUnchanged && importmapUnchanged) return
 
-    if (get().site) get().pushHistory()
-    set((s) => {
-      const baseRuntime = { ...s.siteRuntime, dependencyLock: nextLock }
-      const nextRuntime: SiteRuntimeConfig = packageImportmap === undefined
-        ? baseRuntime
-        : nextImportmap
-          ? { ...baseRuntime, packageImportmap: nextImportmap }
-          : (() => {
-            const stripped = { ...baseRuntime }
-            delete stripped.packageImportmap
-            return stripped
-          })()
-      return {
-        siteRuntime: nextRuntime,
-        site: s.site
-          ? { ...s.site, runtime: nextRuntime, updatedAt: Date.now() }
-          : s.site,
-        hasUnsavedChanges: Boolean(s.site) || s.hasUnsavedChanges,
-      }
-    })
+    const baseRuntime = { ...currentRuntime, dependencyLock: nextLock }
+    const nextRuntime: SiteRuntimeConfig = packageImportmap === undefined
+      ? baseRuntime
+      : nextImportmap
+        ? { ...baseRuntime, packageImportmap: nextImportmap }
+        : (() => {
+          const stripped = { ...baseRuntime }
+          delete stripped.packageImportmap
+          return stripped
+        })()
+    commitSiteRuntime(nextRuntime)
   },
 
   resolveDependencyLock: async () => {
@@ -323,4 +306,5 @@ export const createSitePanelSlice: EditorStoreSliceCreator<SitePanelSlice> = (se
     }
   },
 
-})
+  }
+}

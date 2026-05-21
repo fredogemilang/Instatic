@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import {
   ApiCallValidationError,
   parseApiCall,
-} from '../../../server/plugins/workerProtocol'
+} from '../../../server/plugins/protocol/parser'
 
 describe('plugin worker IPC protocol', () => {
   it('rejects malformed storage create payloads before host dispatch', () => {
@@ -70,7 +70,7 @@ describe('plugin worker IPC protocol', () => {
 
   it('keeps host dispatch behind the protocol parser', async () => {
     const source = await readFile(
-      new URL('../../../server/plugins/pluginWorkerHost.ts', import.meta.url),
+      new URL('../../../server/plugins/host/workerPool.ts', import.meta.url),
       'utf8',
     )
 
@@ -80,7 +80,7 @@ describe('plugin worker IPC protocol', () => {
 
   it('reuses the canonical module-engine property schema for loop filters', async () => {
     const source = await readFile(
-      new URL('../../../server/plugins/workerProtocol.ts', import.meta.url),
+      new URL('../../../server/plugins/protocol/schemas/loops.ts', import.meta.url),
       'utf8',
     )
 

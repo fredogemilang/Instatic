@@ -30,13 +30,17 @@ export function createFontActions({
         } else {
           lib.items.push(entry)
         }
+        return true
       })
     },
 
     removeFont: (fontId) => {
       mutateSite((site) => {
-        if (!site.settings.fonts) return
-        site.settings.fonts.items = site.settings.fonts.items.filter((f) => f.id !== fontId)
+        if (!site.settings.fonts) return false
+        const nextItems = site.settings.fonts.items.filter((f) => f.id !== fontId)
+        if (nextItems.length === site.settings.fonts.items.length) return false
+        site.settings.fonts.items = nextItems
+        return true
       })
     },
   }

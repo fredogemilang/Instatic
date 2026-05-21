@@ -1,4 +1,5 @@
 export * from './types'
+export * from './storageSchemas'
 export * from './capabilities'
 export * from './guards'
 export * from './modules'

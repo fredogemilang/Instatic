@@ -53,7 +53,7 @@ export const SearchResponseSchema = Type.Object({
 export type SearchResponse = Static<typeof SearchResponseSchema>
 
 // ---------------------------------------------------------------------------
-// /reindex + /clear (shared simple ok/message shape)
+// /clear
 // ---------------------------------------------------------------------------
 
 export const OkResponseSchema = Type.Object({
@@ -61,6 +61,17 @@ export const OkResponseSchema = Type.Object({
   message: Type.Optional(Type.String()),
 })
 export type OkResponse = Static<typeof OkResponseSchema>
+
+// ---------------------------------------------------------------------------
+// /reindex
+// ---------------------------------------------------------------------------
+
+export const ReindexResponseSchema = Type.Object({
+  ok: Type.Boolean(),
+  count: Type.Number(),
+  message: Type.Optional(Type.String()),
+})
+export type ReindexResponse = Static<typeof ReindexResponseSchema>
 
 // ---------------------------------------------------------------------------
 // /analytics

@@ -403,9 +403,9 @@ declare module '@site/store/types' {
 }
 
 export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponentsSlice> = (set, get) => {
-  // Build the closure-shared mutation helpers. `mutateSite` automatically calls
-  // `pushHistory()` before running the producer, making every action undoable.
-  const { mutateSite } = buildSiteHelpers(set, get)
+  // Build the closure-shared mutation helpers. `mutateSite` commits undo
+  // history only when the producer reports a semantic document mutation.
+  const { mutateSite, mutateSiteState } = buildSiteHelpers(set, get)
 
   return {
 
@@ -444,12 +444,11 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
       createdAt: now,
     }
 
-    set((state) => {
-        if (!state.site) return
-        if (!state.site.visualComponents) state.site.visualComponents = []
-        state.site.visualComponents.push(newVC)
-        state.site.updatedAt = now
-      })
+    mutateSite((site) => {
+      if (!site.visualComponents) site.visualComponents = []
+      site.visualComponents.push(newVC)
+      return true
+    })
 
     return id
   },
@@ -465,19 +464,19 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
 
     const trimmedName = newName.trim()
 
-    set((state) => {
-        if (!state.site) return
-        const vc = (state.site.visualComponents ?? []).find((v) => v.id === id)
-        if (!vc) return
-        vc.name = trimmedName
-        state.site.updatedAt = Date.now()
-      })
+    mutateSite((site) => {
+      const vc = (site.visualComponents ?? []).find((v) => v.id === id)
+      if (!vc) return false
+      if (vc.name === trimmedName) return false
+      vc.name = trimmedName
+      return true
+    })
   },
 
   deleteVisualComponent(id) {
     mutateSite((site) => {
       const idx = (site.visualComponents ?? []).findIndex((v) => v.id === id)
-      if (idx === -1) return
+      if (idx === -1) return false
 
       // Remove the VC from the registry first so the cascade loops below
       // don't see it as a valid target (the remaining VCs are all "other" VCs).
@@ -493,6 +492,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
       for (const vc of site.visualComponents) {
         cascadeRemoveVCRefs(vc.tree.nodes as Record<string, BaseNode>, id)
       }
+      return true
     })
   },
 
@@ -512,83 +512,78 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
     const paramId = nanoid()
     const trimmedName = name.trim()
 
-    set((state) => {
-        if (!state.site) return
-        const vc = (state.site.visualComponents ?? []).find((v) => v.id === vcId)
-        if (!vc) return
+    mutateSite((site) => {
+      const vc = (site.visualComponents ?? []).find((v) => v.id === vcId)
+      if (!vc) return false
 
-        const newParam: VCParam = {
-          id: paramId,
-          name: trimmedName,
-          type,
-          defaultValue,
-          required: false,
-        }
-        vc.params.push(newParam)
+      const newParam: VCParam = {
+        id: paramId,
+        name: trimmedName,
+        type,
+        defaultValue,
+        required: false,
+      }
+      vc.params.push(newParam)
 
-        // If a slot param was added, sync every VC ref on every page so the new
-        // slot gets a materialized slot-instance child immediately.
-        if (type === 'slot') {
-          syncAllVCRefSlotInstances(state.site.pages, vcId, vc)
-        }
-
-        state.site.updatedAt = Date.now()
-      })
+      // If a slot param was added, sync every VC ref on every page so the new
+      // slot gets a materialized slot-instance child immediately.
+      if (type === 'slot') {
+        syncAllVCRefSlotInstances(site.pages, vcId, vc)
+      }
+      return true
+    })
 
     return paramId
   },
 
   removeParamWithCleanup(vcId, paramId) {
-    set((state) => {
-        if (!state.site) return
+    mutateSite((site) => {
+      const vc = (site.visualComponents ?? []).find((v) => v.id === vcId)
+      if (!vc) return false
 
-        const vc = (state.site.visualComponents ?? []).find((v) => v.id === vcId)
-        if (!vc) return
+      const paramIdx = vc.params.findIndex((p) => p.id === paramId)
+      if (paramIdx === -1) return false
 
-        const paramIdx = vc.params.findIndex((p) => p.id === paramId)
-        if (paramIdx === -1) return
+      const param = vc.params[paramIdx]
+      const isSlot = param.type === 'slot'
 
-        const param = vc.params[paramIdx]
-        const isSlot = param.type === 'slot'
-
-        // 1. Remove propBindings referencing this param from the VC's flat tree
-        for (const node of Object.values(vc.tree.nodes)) {
-          if (node.propBindings) {
-            for (const propKey of Object.keys(node.propBindings)) {
-              if (node.propBindings[propKey].paramId === paramId) {
-                delete node.propBindings[propKey]
-              }
+      // 1. Remove propBindings referencing this param from the VC's flat tree
+      for (const node of Object.values(vc.tree.nodes)) {
+        if (node.propBindings) {
+          for (const propKey of Object.keys(node.propBindings)) {
+            if (node.propBindings[propKey].paramId === paramId) {
+              delete node.propBindings[propKey]
             }
           }
         }
+      }
 
-        // 2. Remove the param itself (before syncing, so syncSlotInstances sees the final params)
-        vc.params.splice(paramIdx, 1)
+      // 2. Remove the param itself (before syncing, so syncSlotInstances sees the final params)
+      vc.params.splice(paramIdx, 1)
 
-        // 3. Clean up every page node that is a base.visual-component-ref for this VC:
-        //    drop propOverrides[paramId] from each ref…
-        for (const page of state.site.pages) {
-          for (const node of Object.values(page.nodes)) {
-            if (
-              node.moduleId === 'base.visual-component-ref' &&
-              node.props.componentId === vcId
-            ) {
-              const overrides = node.props.propOverrides
-              if (overrides && typeof overrides === 'object' && !Array.isArray(overrides)) {
-                delete (overrides as Record<string, unknown>)[paramId]
-              }
+      // 3. Clean up every page node that is a base.visual-component-ref for this VC:
+      //    drop propOverrides[paramId] from each ref…
+      for (const page of site.pages) {
+        for (const node of Object.values(page.nodes)) {
+          if (
+            node.moduleId === 'base.visual-component-ref' &&
+            node.props.componentId === vcId
+          ) {
+            const overrides = node.props.propOverrides
+            if (overrides && typeof overrides === 'object' && !Array.isArray(overrides)) {
+              delete (overrides as Record<string, unknown>)[paramId]
             }
           }
         }
+      }
 
-        // …then, if a slot param was removed, re-sync slot-instance children
-        // for every ref so the deleted slot's instance disappears.
-        if (isSlot) {
-          syncAllVCRefSlotInstances(state.site.pages, vcId, vc)
-        }
-
-        state.site.updatedAt = Date.now()
-      })
+      // …then, if a slot param was removed, re-sync slot-instance children
+      // for every ref so the deleted slot's instance disappears.
+      if (isSlot) {
+        syncAllVCRefSlotInstances(site.pages, vcId, vc)
+      }
+      return true
+    })
   },
 
   addNodeToVc(vcId, parentNodeId, newNode, index) {
@@ -609,118 +604,114 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
       }
     }
 
-    set((state) => {
-        if (!state.site) return
-        const vc = (state.site.visualComponents ?? []).find((v) => v.id === vcId)
-        if (!vc) return
+    mutateSite((site) => {
+      const vc = (site.visualComponents ?? []).find((v) => v.id === vcId)
+      if (!vc) return false
 
-        const parent = vc.tree.nodes[parentNodeId]
-        if (!parent) return
+      const parent = vc.tree.nodes[parentNodeId]
+      if (!parent) return false
 
-        // Duplicate-node-id guard — silently no-op if node ID already exists in the tree
-        if (vc.tree.nodes[newNode.id]) return
+      // Duplicate-node-id guard — silently no-op if node ID already exists in the tree
+      if (vc.tree.nodes[newNode.id]) return false
 
-        // Register the new node in the flat map
-        vc.tree.nodes[newNode.id] = newNode
+      // Register the new node in the flat map
+      vc.tree.nodes[newNode.id] = newNode
 
-        // Add to parent's children list
-        if (index === undefined || index >= parent.children.length) {
-          parent.children.push(newNode.id)
-        } else {
-          const insertAt = Math.max(0, index)
-          parent.children.splice(insertAt, 0, newNode.id)
-        }
-
-        state.site.updatedAt = Date.now()
-      })
+      // Add to parent's children list
+      if (index === undefined || index >= parent.children.length) {
+        parent.children.push(newNode.id)
+      } else {
+        const insertAt = Math.max(0, index)
+        parent.children.splice(insertAt, 0, newNode.id)
+      }
+      return true
+    })
   },
 
   setNodePropBinding(nodeId, propKey, paramId) {
     const { activeDocument, activePageId } = get()
+    const pageId = activeDocument?.kind === 'page' ? activeDocument.pageId : activePageId
+    if (activeDocument?.kind !== 'visualComponent' && pageId == null) {
+      throw new Error('setNodePropBinding: no page is active in the editor')
+    }
 
-    set((state) => {
-        if (!state.site) return
+    mutateSite((site) => {
+      if (activeDocument?.kind === 'visualComponent') {
+        const vc = (site.visualComponents ?? []).find((v) => v.id === activeDocument.vcId)
+        if (!vc) return false
+        const node = vc.tree.nodes[nodeId]
+        if (!node) return false
+        if (node.propBindings?.[propKey]?.paramId === paramId) return false
+        if (!node.propBindings) node.propBindings = {}
+        node.propBindings[propKey] = { paramId }
+        return true
+      }
 
-        if (activeDocument?.kind === 'visualComponent') {
-          const vc = (state.site.visualComponents ?? []).find((v) => v.id === activeDocument.vcId)
-          if (!vc) return
-          const node = vc.tree.nodes[nodeId]
-          if (!node) return
-          if (!node.propBindings) node.propBindings = {}
-          node.propBindings[propKey] = { paramId }
-        } else {
-          const pageId = activeDocument?.kind === 'page' ? activeDocument.pageId : activePageId
-          if (pageId == null) {
-            throw new Error('setNodePropBinding: no page is active in the editor')
-          }
-          const page = (state.site.pages ?? []).find((p) => p.id === pageId)
-          if (!page) return
-          const node = page.nodes[nodeId]
-          if (!node) return
-          if (!node.propBindings) node.propBindings = {}
-          node.propBindings[propKey] = { paramId }
-        }
-
-        state.site.updatedAt = Date.now()
-      })
+      const page = (site.pages ?? []).find((p) => p.id === pageId)
+      if (!page) return false
+      const node = page.nodes[nodeId]
+      if (!node) return false
+      if (node.propBindings?.[propKey]?.paramId === paramId) return false
+      if (!node.propBindings) node.propBindings = {}
+      node.propBindings[propKey] = { paramId }
+      return true
+    })
   },
 
   clearNodePropBinding(nodeId, propKey) {
     const { activeDocument, activePageId } = get()
+    const pageId = activeDocument?.kind === 'page' ? activeDocument.pageId : activePageId
+    if (activeDocument?.kind !== 'visualComponent' && pageId == null) {
+      throw new Error('clearNodePropBinding: no page is active in the editor')
+    }
 
-    set((state) => {
-        if (!state.site) return
+    mutateSite((site) => {
+      if (activeDocument?.kind === 'visualComponent') {
+        const vc = (site.visualComponents ?? []).find((v) => v.id === activeDocument.vcId)
+        if (!vc) return false
+        const node = vc.tree.nodes[nodeId]
+        if (!node?.propBindings?.[propKey]) return false
 
-        if (activeDocument?.kind === 'visualComponent') {
-          const vc = (state.site.visualComponents ?? []).find((v) => v.id === activeDocument.vcId)
-          if (!vc) return
-          const node = vc.tree.nodes[nodeId]
-          if (!node?.propBindings) return
+        const removedParamId = node.propBindings[propKey]?.paramId
+        delete node.propBindings[propKey]
 
-          const removedParamId = node.propBindings[propKey]?.paramId
-          delete node.propBindings[propKey]
-
-          // GC: remove orphan param if no other node references it
-          if (removedParamId) {
-            const stillBound = new Set<string>()
-            for (const n of Object.values(vc.tree.nodes)) {
-              if (n.propBindings) {
-                for (const binding of Object.values(n.propBindings)) {
-                  stillBound.add(binding.paramId)
-                }
+        // GC: remove orphan param if no other node references it
+        if (removedParamId) {
+          const stillBound = new Set<string>()
+          for (const n of Object.values(vc.tree.nodes)) {
+            if (n.propBindings) {
+              for (const binding of Object.values(n.propBindings)) {
+                stillBound.add(binding.paramId)
               }
             }
-            if (!stillBound.has(removedParamId)) {
-              const idx = vc.params.findIndex((p) => p.id === removedParamId)
-              if (idx !== -1) vc.params.splice(idx, 1)
-            }
           }
-        } else {
-          const pageId = activeDocument?.kind === 'page' ? activeDocument.pageId : activePageId
-          if (pageId == null) {
-            throw new Error('clearNodePropBinding: no page is active in the editor')
+          if (!stillBound.has(removedParamId)) {
+            const idx = vc.params.findIndex((p) => p.id === removedParamId)
+            if (idx !== -1) vc.params.splice(idx, 1)
           }
-          const page = (state.site.pages ?? []).find((p) => p.id === pageId)
-          if (!page) return
-          const node = page.nodes[nodeId]
-          if (!node?.propBindings) return
-          delete node.propBindings[propKey]
         }
+        return true
+      }
 
-        state.site.updatedAt = Date.now()
-      })
+      const page = (site.pages ?? []).find((p) => p.id === pageId)
+      if (!page) return false
+      const node = page.nodes[nodeId]
+      if (!node?.propBindings?.[propKey]) return false
+      delete node.propBindings[propKey]
+      return true
+    })
   },
 
   updateParamDefaultValue(vcId, paramId, value) {
-    set((state) => {
-        if (!state.site) return
-        const vc = (state.site.visualComponents ?? []).find((v) => v.id === vcId)
-        if (!vc) return
-        const param = vc.params.find((p) => p.id === paramId)
-        if (!param) return
-        param.defaultValue = value
-        state.site.updatedAt = Date.now()
-      })
+    mutateSite((site) => {
+      const vc = (site.visualComponents ?? []).find((v) => v.id === vcId)
+      if (!vc) return false
+      const param = vc.params.find((p) => p.id === paramId)
+      if (!param) return false
+      if (Object.is(param.defaultValue, value)) return false
+      param.defaultValue = value
+      return true
+    })
   },
 
   renameParam(vcId, paramId, newName) {
@@ -738,46 +729,62 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
 
     const trimmedName = newName.trim()
 
-    set((state) => {
-        if (!state.site) return
-        const vc = (state.site.visualComponents ?? []).find((v) => v.id === vcId)
-        if (!vc) return
-        const param = vc.params.find((p) => p.id === paramId)
-        if (!param) return
-        const isSlot = param.type === 'slot'
-        param.name = trimmedName
+    mutateSite((site) => {
+      const vc = (site.visualComponents ?? []).find((v) => v.id === vcId)
+      if (!vc) return false
+      const param = vc.params.find((p) => p.id === paramId)
+      if (!param) return false
+      if (param.name === trimmedName) return false
+      const isSlot = param.type === 'slot'
+      param.name = trimmedName
 
-        // If this is a slot param, sync all VC refs on all pages so the
-        // slot-instance's slotName prop tracks the renamed param.
-        if (isSlot) {
-          syncAllVCRefSlotInstances(state.site.pages, vcId, vc)
-        }
-
-        state.site.updatedAt = Date.now()
-      })
+      // If this is a slot param, sync all VC refs on all pages so the
+      // slot-instance's slotName prop tracks the renamed param.
+      if (isSlot) {
+        syncAllVCRefSlotInstances(site.pages, vcId, vc)
+      }
+      return true
+    })
   },
 
   updateParamMeta(vcId, paramId, patch) {
-    set((state) => {
-        if (!state.site) return
-        const vc = (state.site.visualComponents ?? []).find((v) => v.id === vcId)
-        if (!vc) return
-        const param = vc.params.find((p) => p.id === paramId)
-        if (!param) return
+    mutateSite((site) => {
+      const vc = (site.visualComponents ?? []).find((v) => v.id === vcId)
+      if (!vc) return false
+      const param = vc.params.find((p) => p.id === paramId)
+      if (!param) return false
 
-        if ('required' in patch) param.required = patch.required ?? false
-        if ('description' in patch) {
-          param.description = patch.description || undefined
+      let changed = false
+      if ('required' in patch) {
+        const nextRequired = patch.required ?? false
+        if (param.required !== nextRequired) {
+          param.required = nextRequired
+          changed = true
         }
-        if ('enumOptions' in patch) {
-          if (param.type === 'enum') {
-            param.enumOptions = patch.enumOptions
+      }
+      if ('description' in patch) {
+        const nextDescription = patch.description || undefined
+        if (param.description !== nextDescription) {
+          param.description = nextDescription
+          changed = true
+        }
+      }
+      if ('enumOptions' in patch) {
+        if (param.type === 'enum') {
+          const nextOptions = patch.enumOptions
+          const currentOptions = param.enumOptions
+          const optionsChanged =
+            currentOptions?.length !== nextOptions?.length ||
+            (currentOptions ?? []).some((value, index) => value !== nextOptions?.[index])
+          if (optionsChanged) {
+            param.enumOptions = nextOptions
+            changed = true
           }
-          // Defensive: strip enumOptions if param.type !== 'enum' (no-op via the if check)
         }
-
-        state.site.updatedAt = Date.now()
-      })
+        // Defensive: strip enumOptions if param.type !== 'enum' (no-op via the if check)
+      }
+      return changed
+    })
   },
 
   convertNodeToComponent(nodeId, name) {
@@ -833,11 +840,9 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
     // newVcId is captured here so the producer can return it via closure
     let newVcId = ''
 
-    set((state) => {
-        if (!state.site) return
-
-        const draftPage = (state.site.pages ?? []).find((p) => p.id === pageId)
-        if (!draftPage) return
+    mutateSiteState((state, site) => {
+        const draftPage = (site.pages ?? []).find((p) => p.id === pageId)
+        if (!draftPage) return false
 
         // 5a. Generate the new VC id
         newVcId = nanoid()
@@ -850,7 +855,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
         const clonedTree = clonePageSubtreeToFlatNodes(
           draftPage.nodes,
           nodeId,
-          state.site.classes,
+          site.classes,
           idMap,
           hoistedClassIds,
         )
@@ -896,7 +901,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
           classIds: [...hoistedClassIds],
           createdAt: Date.now(),
         }
-        state.site.visualComponents.push(newVc)
+        site.visualComponents.push(newVc)
 
         // 5e. Find the parent of the source node in the page
         let parentNode: PageNode | undefined
@@ -936,9 +941,7 @@ export const createVisualComponentsSlice: EditorStoreSliceCreator<VisualComponen
         // 5f. Switch activeDocument to the new VC; clear selection
         state.activeDocument = { kind: 'visualComponent', vcId: newVcId }
         state.selectedNodeId = null
-
-        // 5g. Stamp updatedAt
-        state.site.updatedAt = Date.now()
+        return true
       })
 
     return newVcId

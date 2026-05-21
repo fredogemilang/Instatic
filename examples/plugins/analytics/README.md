@@ -117,7 +117,7 @@ localStorage.removeItem('__pb_analytics_optout')
 
 ```
 frontend/tracker.ts  — IIFE, vanilla JS, bundled onto every published page
-server/ingest.ts     — tracker.event handler, hashing, device classification
+server/ingest.ts     — POST /ingest handler, hashing, device classification
 server/rollup.ts     — daily aggregate job + retention prune
 server/stats.ts      — dashboard query: merges daily-stats + live raw events
 server/csv.ts        — RFC 4180 CSV export

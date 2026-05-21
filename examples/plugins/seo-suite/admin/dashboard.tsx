@@ -457,8 +457,8 @@ function SeoSuiteDashboard() {
 
       {!loading && rows.length === 0 && (
         <EmptyState
-          title="No pages discovered yet"
-          body="Pages appear here once they've been published at least once. The SEO Suite captures metadata from each publish and populates the index automatically."
+          title="No pages found"
+          body="Add pages in the site editor and publish them to see their SEO health here."
         />
       )}
 

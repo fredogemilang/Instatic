@@ -48,7 +48,7 @@ import {
   type PluginSchedule,
   type ScheduleStatus,
 } from '../repositories/pluginSchedules'
-import { runScheduleInWorker } from './pluginWorkerHost'
+import { runScheduleInWorker } from './host/rpc'
 import { computeNextRun, registerPluginSchedule } from './pluginScheduleRegistration'
 
 // Re-export so existing call sites (admin handlers, tests) keep their
@@ -112,7 +112,7 @@ let lastHistoryTrimAt = 0
 export function startScheduler(db: DbClient): void {
   if (tickTimer !== null) return
   tickTimer = setInterval(() => {
-    void tickOnce(db).catch((err) => {
+    void tickPluginScheduler(db).catch((err) => {
       console.error('[plugin-scheduler] tick failed:', err)
     })
   }, TICK_INTERVAL_MS)
@@ -134,7 +134,7 @@ export function startScheduler(db: DbClient): void {
  *   │     release advisory lock
  *   └── (next instance ticks next interval)
  */
-export async function tickOnce(db: DbClient): Promise<void> {
+export async function tickPluginScheduler(db: DbClient): Promise<void> {
   const leaderToken = await tryAcquireLeader(db)
   if (!leaderToken) return
   try {

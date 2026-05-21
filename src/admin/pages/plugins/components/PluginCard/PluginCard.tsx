@@ -16,6 +16,7 @@ import { PowerIcon } from 'pixel-art-icons/icons/power'
 import { PowerOffIcon } from 'pixel-art-icons/icons/power-off'
 import { ReloadIcon } from 'pixel-art-icons/icons/reload'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
+import { UploadIcon } from 'pixel-art-icons/icons/upload'
 import type { InstalledPlugin } from '@core/plugin-sdk'
 import { safeUrl } from '@core/plugin-sdk'
 import styles from './PluginCard.module.css'
@@ -56,6 +57,7 @@ interface PluginCardProps {
   onOpenSchedules: (plugin: InstalledPlugin) => void
   onInstallPack: (plugin: InstalledPlugin) => void
   onRestart: (plugin: InstalledPlugin) => void
+  onReinstall: () => void
   onToggle: (plugin: InstalledPlugin) => void
   onRemove: (plugin: InstalledPlugin) => void
 }
@@ -68,6 +70,7 @@ export function PluginCard({
   onOpenSchedules,
   onInstallPack,
   onRestart,
+  onReinstall,
   onToggle,
   onRemove,
 }: PluginCardProps) {
@@ -110,7 +113,7 @@ export function PluginCard({
         </div>
 
         <div className={styles.pluginActions}>
-          {plugin.manifest.settings && plugin.manifest.settings.length > 0 && (
+          {status.status !== 'error' && plugin.manifest.settings && plugin.manifest.settings.length > 0 && (
             <Button
               variant="secondary"
               size="sm"
@@ -121,7 +124,7 @@ export function PluginCard({
               <span>Settings</span>
             </Button>
           )}
-          {plugin.grantedPermissions.includes('cms.schedule') && (
+          {status.status !== 'error' && plugin.grantedPermissions.includes('cms.schedule') && (
             <Button
               variant="secondary"
               size="sm"
@@ -132,7 +135,8 @@ export function PluginCard({
               <span>Schedules</span>
             </Button>
           )}
-          {plugin.manifest.pack &&
+          {status.status !== 'error' &&
+            plugin.manifest.pack &&
             plugin.grantedPermissions.includes('visualComponents.register') &&
             // Re-syncing a disabled plugin's pack would inject
             // its VCs / pages / classes into the user's site —
@@ -151,7 +155,19 @@ export function PluginCard({
                 <span>Re-sync pack</span>
               </Button>
             )}
-          {plugin.enabled && plugin.lifecycleStatus === 'error' && (
+          {status.status === 'error' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy}
+              onClick={onReinstall}
+              aria-label={`Reinstall ${plugin.name} — upload a new version to replace the broken install`}
+            >
+              <UploadIcon size={14} aria-hidden="true" />
+              <span>Reinstall</span>
+            </Button>
+          )}
+          {plugin.enabled && status.status === 'error' && (
             <Button
               variant="primary"
               size="sm"
@@ -163,20 +179,22 @@ export function PluginCard({
               <span>Restart</span>
             </Button>
           )}
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={busy}
-            onClick={() => onToggle(plugin)}
-            aria-label={`${plugin.enabled ? 'Disable' : 'Enable'} ${plugin.name}`}
-          >
-            {plugin.enabled ? (
-              <PowerOffIcon size={14} aria-hidden="true" />
-            ) : (
-              <PowerIcon size={14} aria-hidden="true" />
-            )}
-            <span>{plugin.enabled ? 'Disable' : 'Enable'}</span>
-          </Button>
+          {status.status !== 'error' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy}
+              onClick={() => onToggle(plugin)}
+              aria-label={`${plugin.enabled ? 'Disable' : 'Enable'} ${plugin.name}`}
+            >
+              {plugin.enabled ? (
+                <PowerOffIcon size={14} aria-hidden="true" />
+              ) : (
+                <PowerIcon size={14} aria-hidden="true" />
+              )}
+              <span>{plugin.enabled ? 'Disable' : 'Enable'}</span>
+            </Button>
+          )}
           <Button
             variant="destructive"
             size="sm"

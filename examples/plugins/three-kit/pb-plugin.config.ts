@@ -37,15 +37,30 @@ export default definePlugin({
   repository: 'https://github.com/acme/page-builder-three-kit',
   keywords: ['threejs', '3d', 'webgl', 'hero', 'particles', 'gltf'],
   icon: 'icon.svg',
-  // `frontend.scripts` ships the single page-runtime bundle that boots all
+  // `frontend.assets` ships the single page-runtime bundle that boots all
   // module instances on a published page — exactly one `<script>` tag per
   // page, regardless of how many three-kit modules the user drops in.
-  permissions: [permissions.modulesRegister, permissions.frontendScripts],
+  permissions: [permissions.modulesRegister, permissions.frontendAssets],
   // External hosts the model viewer module fetches glTF assets from. The
   // host aggregates `networkAllowedHosts` across enabled frontend plugins
   // and adds them to the published page's CSP `connect-src` directive —
   // without this entry, the visitor's browser would block the fetch.
   // Operators can fork this list to permit their own model CDNs.
   networkAllowedHosts: ['threejs.org'],
+  // Single page-runtime bundle. Three.js imports stay as bare specifiers
+  // because the build externalises packages declared as `dependencies`
+  // by any module (see `dependencies: { three: '...' }` in each module
+  // file). The published page's importmap resolves them at runtime.
+  frontend: {
+    assets: [
+      {
+        kind: 'script',
+        src: 'frontend/index.js',
+        placement: 'body-end',
+        // ESM so the bare imports survive into the browser.
+        strategy: 'module',
+      },
+    ],
+  },
   modules: [scene, particles, text, modelViewer, heroBackground],
 })

@@ -60,6 +60,7 @@ function statusStyle(status: string): React.CSSProperties {
 export function Subscribers() {
   const routes = usePluginRoutes()
   const [subscribers, setSubscribers] = useState<SubscriberRow[]>([])
+  const [totalCount, setTotalCount] = useState(0)
   const [lists, setLists] = useState<ListRow[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -85,36 +86,39 @@ export function Subscribers() {
       const params = new URLSearchParams()
       if (statusFilter) params.set('status', statusFilter)
       if (listFilter) params.set('listId', listFilter)
-      const url = params.toString() ? `subscribers?${params}` : 'subscribers'
+      // search and pagination are pushed to the server so filtering and
+      // totalCount are computed there rather than on a full client-side array.
+      if (search) params.set('search', search)
+      params.set('limit', String(PAGE_SIZE))
+      params.set('offset', String(page * PAGE_SIZE))
       const [subRes, listRes] = await Promise.all([
-        routes.fetch(url),
+        routes.fetch(`subscribers?${params}`),
         routes.fetch('lists'),
       ])
-      const subBody = (await subRes.json()) as { ok: boolean; subscribers: SubscriberRow[]; error?: string }
+      const subBody = (await subRes.json()) as {
+        ok: boolean
+        subscribers: SubscriberRow[]
+        totalCount: number
+        error?: string
+      }
       const listBody = (await listRes.json()) as { ok: boolean; lists: ListRow[]; error?: string }
       if (subBody.error) throw new Error(subBody.error)
       setSubscribers(subBody.subscribers ?? [])
+      setTotalCount(subBody.totalCount ?? 0)
       setLists(listBody.lists ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load subscribers')
     } finally {
       setLoading(false)
     }
-  }, [routes, statusFilter, listFilter])
+  }, [routes, statusFilter, listFilter, search, page])
 
   useEffect(() => {
     void refresh()
-    setPage(0)
   }, [refresh])
 
-  const filtered = subscribers.filter(
-    (s) =>
-      !search ||
-      s.email.toLowerCase().includes(search.toLowerCase()) ||
-      s.name.toLowerCase().includes(search.toLowerCase()),
-  )
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
-  const pageRows = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
+  // Filtering and pagination are server-driven; totalCount comes from the server.
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
   async function handleDelete(id: string) {
     try {
@@ -199,7 +203,7 @@ export function Subscribers() {
 
       <Stack direction="row" gap={8} wrap>
         <SearchBar
-          placeholder="Search by email or name…"
+          placeholder="Search by email…"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(0) }}
           style={{ flex: '1 1 200px' }}
@@ -220,7 +224,7 @@ export function Subscribers() {
 
       {loading ? (
         <Text variant="muted">Loading…</Text>
-      ) : filtered.length === 0 ? (
+      ) : subscribers.length === 0 ? (
         <Alert tone="info" title="No subscribers found">
           {search || statusFilter || listFilter ? 'Try adjusting your filters.' : 'No subscribers yet.'}
         </Alert>
@@ -245,7 +249,7 @@ export function Subscribers() {
               </tr>
             </thead>
             <tbody>
-              {pageRows.map((sub) => (
+              {subscribers.map((sub) => (
                 <tr
                   key={sub.id}
                   style={{ borderBottom: '1px solid var(--panel-border)' }}
@@ -292,7 +296,7 @@ export function Subscribers() {
                 ← Prev
               </Button>
               <Text variant="muted">
-                Page {page + 1} of {totalPages} ({filtered.length} total)
+                Page {page + 1} of {totalPages} ({totalCount} total)
               </Text>
               <Button
                 variant="secondary"

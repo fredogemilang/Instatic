@@ -178,8 +178,12 @@ export async function handlePluginPackInstall(
     return jsonResponse({ error: 'Uploads directory is not configured' }, { status: 500 })
   }
 
-  const plugin = await getInstalledPlugin(db, pluginId)
-  if (!plugin) return pluginNotFound()
+  const result = await getInstalledPlugin(db, pluginId)
+  if (!result) return pluginNotFound()
+  if (result.kind === 'broken') {
+    return badRequest(`Plugin "${pluginId}" has a corrupt manifest — remove and reinstall it`)
+  }
+  const plugin = result.plugin
   // A disabled plugin pushing pack content (Visual Components, pages,
   // classes) into the user's draft site contradicts the user's intent in
   // disabling the plugin. Reject the action explicitly so the API matches

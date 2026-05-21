@@ -1,4 +1,10 @@
 import type { EditorStore } from '@site/store/types'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
+import type {
+  PluginRecord,
+  StorageListOptions,
+  StorageListResult,
+} from './storageSchemas'
 
 /**
  * Current host plugin-API version. A plugin manifest declares the API version
@@ -51,6 +57,23 @@ export function isCompatiblePluginApiVersion(version: number): boolean {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Page summary — returned by api.cms.pages.list()
+// ---------------------------------------------------------------------------
+
+export const PluginPageSummarySchema = Type.Object({
+  id: Type.String({ description: 'Page row id (data_rows.id, a nanoid)' }),
+  slug: Type.String({ description: 'URL slug' }),
+  title: Type.String({ description: 'Page title' }),
+  lastPublishedAt: Type.String({ description: 'ISO 8601 timestamp of when this snapshot was created' }),
+})
+
+export type PluginPageSummary = Static<typeof PluginPageSummarySchema>
+
+// ---------------------------------------------------------------------------
+// Permission constants
+// ---------------------------------------------------------------------------
+
 export const PLUGIN_PERMISSION_VALUES = [
   // Admin / nav
   'admin.navigation',
@@ -59,6 +82,9 @@ export const PLUGIN_PERMISSION_VALUES = [
   // Server runtime
   'cms.routes',
   'cms.hooks',
+  // CMS pages — read and republish
+  'cms.pages.read',
+  'cms.pages.publish',
   // Editor surfaces
   'editor.toolbar',
   'editor.commands',
@@ -91,8 +117,18 @@ export const PLUGIN_PERMISSION_VALUES = [
   'media.url.transform',
   'media.variant.delegate',
   // Frontend / published pages
-  'frontend.scripts',
-  'frontend.tracker',
+  //
+  // Single permission gating EVERY declarative frontend tag a plugin can inject
+  // into a published page: scripts (external or inline), styles (external or
+  // inline), <link>, and <meta>. The actual tags are declared in the manifest's
+  // top-level `frontend.assets[]` array — see `FrontendAsset` below. The host
+  // is purely the substrate: it splices tags at four placement anchors
+  // (head / head-end / body-start / body-end), rewrites the CSP based on
+  // what's actually in the plan, and runs the `publish.html` filter once at
+  // the dispatcher. No host-shipped scripts, no built-in trackers, no
+  // implicit `window.__pb.*` — a plugin that wants `window.__pb_analytics`
+  // ships the IIFE that installs it as one of its own assets.
+  'frontend.assets',
   // Network — outbound HTTP from the sandbox.
   // Requires the plugin manifest to also declare `networkAllowedHosts`;
   // calls to hosts outside the allowlist are rejected at the host bridge
@@ -159,8 +195,123 @@ export interface PluginEntrypoints {
   admin?: string
   /** Module pack — default-exports an array of PluginModuleDefinition. */
   modules?: string
-  /** Bundle injected on every published page (frontend.scripts permission). */
-  frontend?: string
+}
+
+// ---------------------------------------------------------------------------
+// Frontend asset injection — declarative per-plugin tag list
+// ---------------------------------------------------------------------------
+//
+// Every tag a plugin wants injected into a published page is declared up front
+// in the manifest's `frontend.assets[]` array. The host reads this array at
+// publish time, expands `hostRuntime` references against its small built-in
+// registry, dedupes shared runtimes across plugins, and splices the resulting
+// tags into the document at four well-known anchors. No worker round-trip, no
+// imperative `register(...)` call at activate time — the manifest is the
+// single source of truth, statically inspectable from the install consent
+// screen.
+//
+// `frontend.assets` requires the `frontend.assets` permission. CSP is relaxed
+// automatically based on what the plan actually contains (e.g. inline scripts
+// trigger `script-src 'unsafe-inline'`; pure-external scripts don't).
+//
+// Naming the placement anchors:
+//   - 'head'        → just inside <head>, before any existing tag (rare; for
+//                     things that must come first, e.g. a charset reset).
+//   - 'head-end'    → just before </head>. Default for <meta>, <link>,
+//                     stylesheets, JSON-LD, preconnects.
+//   - 'body-start'  → just after <body …>, before page content. Default for
+//                     shared host runtimes that need to install
+//                     `window.__pb.*` BEFORE plugin scripts that depend on it.
+//   - 'body-end'    → just before </body>. Default for deferred plugin
+//                     bundles (analytics trackers, widget bootstraps).
+// ---------------------------------------------------------------------------
+
+export type FrontendAssetPlacement = 'head' | 'head-end' | 'body-start' | 'body-end'
+
+/**
+ * One declarative tag the host injects into the published page. See
+ * `PluginManifest.frontend` for context. Discriminated by `kind`; each
+ * variant carries only the fields it needs so authors can't, for example,
+ * declare both `src` and `inline` on the same script.
+ */
+export type FrontendAsset =
+  /**
+   * External JS file shipped in the plugin zip (resolved against
+   * `assetBasePath`). Emits one `<script>` tag at the given placement.
+   * `strategy` maps to the matching HTML attribute (or `module` for ESM).
+   */
+  | {
+    kind: 'script'
+    src: string
+    placement?: FrontendAssetPlacement
+    strategy?: 'defer' | 'async' | 'module' | 'sync'
+    /** Extra attributes (e.g. `type`, `crossorigin`, `integrity`, `data-*`). */
+    attrs?: Record<string, string>
+  }
+  /**
+   * Inline `<script>` block. The host wraps `content` in a `<script>` tag at
+   * the given placement. Triggers `script-src 'unsafe-inline'` in the page
+   * CSP for the inline content to actually execute.
+   */
+  | {
+    kind: 'script-inline'
+    content: string
+    placement?: FrontendAssetPlacement
+    attrs?: Record<string, string>
+  }
+  /**
+   * External CSS file shipped in the plugin zip. Emits one
+   * `<link rel="stylesheet" href="…">` tag.
+   */
+  | {
+    kind: 'style'
+    href: string
+    placement?: FrontendAssetPlacement
+    attrs?: Record<string, string>
+  }
+  /**
+   * Inline `<style>` block. Triggers `style-src 'unsafe-inline'` in the
+   * page CSP.
+   */
+  | {
+    kind: 'style-inline'
+    content: string
+    placement?: FrontendAssetPlacement
+    attrs?: Record<string, string>
+  }
+  /**
+   * Bare `<link>` tag — for preconnect, dns-prefetch, preload, alternate,
+   * etc. The `attrs` object becomes the tag attributes; no body, no inline
+   * content. Use `kind: 'style'` for stylesheet links — the host derives
+   * the right tag shape for you.
+   */
+  | {
+    kind: 'link'
+    attrs: Record<string, string>
+    placement?: FrontendAssetPlacement
+  }
+  /**
+   * Bare `<meta>` tag. The `attrs` object becomes the tag attributes.
+   */
+  | {
+    kind: 'meta'
+    attrs: Record<string, string>
+    placement?: FrontendAssetPlacement
+  }
+
+/**
+ * Manifest-level `frontend` block. Currently carries only the `assets`
+ * array; kept as a nested object so future host-managed runtime declarations
+ * (e.g. `runtimePackages`, `importmapExtensions`) can grow alongside it
+ * without another manifest-shape migration.
+ */
+export interface PluginFrontendDeclarations {
+  /**
+   * Every tag the host should inject into the published page on behalf of
+   * this plugin. Order within the array is preserved per placement; tags
+   * with the same placement are emitted in declaration order.
+   */
+  assets: FrontendAsset[]
 }
 
 export type PluginResourceFieldType = 'text' | 'longtext' | 'number' | 'date' | 'boolean'
@@ -180,14 +331,10 @@ export interface PluginResource {
   fields: PluginResourceField[]
 }
 
-export interface PluginRecord {
-  id: string
-  pluginId: string
-  resourceId: string
-  data: Record<string, unknown>
-  createdAt: string
-  updatedAt: string
-}
+// PluginRecord, StorageListOptions, and StorageListResult are defined via
+// TypeBox in ./storageSchemas and exported from index.ts via
+// `export * from './storageSchemas'`. They are imported above (type-only) for
+// use in the API surface defined in this file.
 
 export type PluginLifecycleStatus = 'installed' | 'active' | 'disabled' | 'error'
 
@@ -267,6 +414,14 @@ export interface PluginManifest {
   adminPages: PluginAdminPage[]
   /** Optional Visual Component / template / class pack. */
   pack?: PluginPackManifest
+  /**
+   * Declarative frontend tag list — scripts, styles, meta, link, and shared
+   * host-runtime references that the host injects into every published page
+   * on behalf of this plugin. Requires the `frontend.assets` permission. See
+   * `FrontendAsset` for the per-tag shape and `PluginFrontendDeclarations`
+   * for placement semantics.
+   */
+  frontend?: PluginFrontendDeclarations
   /** Author / publisher metadata — surfaced on the Plugins admin card. */
   author?: PluginAuthorMetadata
   /** SPDX license identifier (e.g. `MIT`, `Apache-2.0`). */
@@ -689,7 +844,7 @@ export interface EditorPluginApi {
   cms: {
     storage: {
       collection: (resourceId: string) => {
-        list: () => Promise<PluginRecord[]>
+        list: (options?: StorageListOptions) => Promise<StorageListResult>
         create: (data: Record<string, unknown>) => Promise<PluginRecord>
         update: (recordId: string, data: Record<string, unknown>) => Promise<PluginRecord>
         delete: (recordId: string) => Promise<void>
@@ -776,17 +931,11 @@ export interface CmsServerEvents {
   'content.entry.created': { tableSlug: string; entryId: string }
   'content.entry.updated': { tableSlug: string; entryId: string }
   'content.entry.deleted': { tableSlug: string; entryId: string }
-  'tracker.event': {
-    pluginId: string
-    eventName: string
-    payload: Record<string, unknown>
-    visitorId?: string
-    sessionId?: string
-    pagePath?: string
-    referrer?: string
-    receivedAt: string
-  }
-  // Plugin-defined events fall through.
+  // Plugin-defined events fall through. The host does not pre-define any
+  // frontend-specific event channels — plugins that ingest events from
+  // their own published-page bundles register their own `routes.postPublic`
+  // endpoints and (optionally) re-emit on the hook bus under a namespaced
+  // name (`pagebuilder.analytics.page-view`) for cross-plugin coordination.
   [key: string]: Record<string, unknown>
 }
 
@@ -795,6 +944,23 @@ export interface CmsServerFilters {
   'publish.headers': Record<string, string>
   // Plugin-defined filters fall through.
   [key: string]: unknown
+}
+
+/**
+ * Extra context fields passed to filter handlers alongside `{ pluginId }`.
+ * Keyed by filter name; only named filters carry structured context — the
+ * generic fallthrough gets `Record<string, unknown>`.
+ *
+ * Filter handlers destructure what they need:
+ * ```ts
+ * api.cms.hooks.filter('publish.html', (html, { siteId, pageId, slug }) => {
+ *   return html.replace('</body>', `<!-- page:${slug} -->\n</body>`)
+ * })
+ * ```
+ */
+export interface CmsServerFilterContexts {
+  'publish.html': { siteId: string; pageId: string; slug: string }
+  'publish.headers': { siteId: string; pageId: string; slug: string }
 }
 
 export interface ServerPluginHooksApi {
@@ -808,7 +974,9 @@ export interface ServerPluginHooksApi {
     name: K,
     handler: (
       value: K extends keyof CmsServerFilters ? CmsServerFilters[K] : unknown,
-      context: { pluginId: string },
+      context: { pluginId: string } & (
+        K extends keyof CmsServerFilterContexts ? CmsServerFilterContexts[K] : Record<string, unknown>
+      ),
     ) =>
       | (K extends keyof CmsServerFilters ? CmsServerFilters[K] : unknown)
       | Promise<K extends keyof CmsServerFilters ? CmsServerFilters[K] : unknown>,
@@ -1243,7 +1411,7 @@ export interface ServerPluginApi {
     settings: ServerPluginSettingsApi
     storage: {
       collection: (resourceId: string) => {
-        list: () => Promise<PluginRecord[]>
+        list: (options?: StorageListOptions) => Promise<StorageListResult>
         create: (data: Record<string, unknown>) => Promise<PluginRecord>
         update: (recordId: string, data: Record<string, unknown>) => Promise<PluginRecord | null>
         delete: (recordId: string) => Promise<boolean>
@@ -1259,6 +1427,26 @@ export interface ServerPluginApi {
      * dispatch and persists last-run state across restarts.
      */
     schedule: ServerPluginScheduleApi
+    /**
+     * Enumerate and republish CMS pages.
+     *
+     *   • `pages.list()`         — enumerate all currently-published pages.
+     *   • `pages.republish(id)`  — re-run the full publish pipeline for a single
+     *                              page (publish.before → publish.html filter →
+     *                              publish.after). Useful after a plugin activates
+     *                              to ensure its filters are applied to existing
+     *                              published pages.
+     *   • `pages.republishAll()` — republish every published page; returns the
+     *                              total count.
+     *
+     * `pages.list` requires `cms.pages.read`; `pages.republish` and
+     * `pages.republishAll` require `cms.pages.publish`.
+     */
+    pages: {
+      list: () => Promise<ReadonlyArray<PluginPageSummary>>
+      republish: (pageId: string) => Promise<void>
+      republishAll: () => Promise<{ count: number }>
+    }
     /**
      * Media subsystem extension points. Three independent tiers:
      *

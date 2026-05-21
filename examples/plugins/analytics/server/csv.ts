@@ -19,18 +19,18 @@ function row(fields: unknown[]): string {
 }
 
 export function eventsToCsv(records: PluginRecord[]): string {
-  const header = row(['id', 'name', 'path', 'visitor-hash', 'session', 'referrer', 'device', 'country', 'payload', 'received-at', 'createdAt'])
+  const header = row(['id', 'name', 'path', 'visitorHash', 'session', 'referrer', 'device', 'country', 'payload', 'receivedAt', 'createdAt'])
   const lines = records.map(r => row([
     r.id,
     r.data.name,
     r.data.path,
-    r.data['visitor-hash'],
+    r.data.visitorHash,
     r.data.session,
     r.data.referrer,
     r.data.device,
     r.data.country,
     r.data.payload,
-    r.data['received-at'],
+    r.data.receivedAt,
     r.createdAt,
   ]))
   return [header, ...lines].join('\r\n')

@@ -102,7 +102,8 @@ function makeFakeDb() {
       row.updated_at = new Date('2026-05-01T10:06:00.000Z').toISOString()
       return { rows: [row as Row], rowCount: 1 }
     }
-    // listPluginRecords — values[0]=pluginId, values[1]=resourceId
+    // listPluginRecords now uses db.unsafe(); this branch handles any
+    // remaining tagged-template callers that still produce this pattern.
     if (normalized.includes('select id, plugin_id, resource_id, data_json')) {
       const rows = records.filter((record) =>
         record.plugin_id === values[0] && record.resource_id === values[1]
@@ -167,7 +168,43 @@ function makeFakeDb() {
   handle.transaction = async <T>(cb: (tx: DbClient) => Promise<T>): Promise<T> =>
     cb(handle as unknown as DbClient)
 
-  return Object.assign(handle as DbClient, { admins, sessions, plugins, records })
+  // listPluginRecords uses db.unsafe() for its dynamic SQL queries.
+  // Handle the two shapes: the data SELECT and the COUNT(*) query.
+  const handleUnsafe = async <Row extends Record<string, unknown> = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<DbResult<Row>> => {
+    const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase()
+    if (normalized.includes('from plugin_records') && normalized.includes('count(*)')) {
+      // COUNT query — params[0]=pluginId, params[1]=resourceId (matching the WHERE clause)
+      const pluginId = params?.[0]
+      const resourceId = params?.[1]
+      const count = records.filter((record) =>
+        record.plugin_id === pluginId && record.resource_id === resourceId
+      ).length
+      return { rows: [{ total: count } as Row], rowCount: 1 }
+    }
+    if (normalized.includes('select id, plugin_id, resource_id, data_json')
+        && normalized.includes('from plugin_records')) {
+      // Data query — params[0]=pluginId, params[1]=resourceId (LIMIT/OFFSET are last two params)
+      const pluginId = params?.[0]
+      const resourceId = params?.[1]
+      const matched = records.filter((record) =>
+        record.plugin_id === pluginId && record.resource_id === resourceId
+      )
+      return { rows: matched as Row[], rowCount: matched.length }
+    }
+    throw new Error(`Unhandled unsafe SQL: ${sql}`)
+  }
+
+  return Object.assign(handle as DbClient, {
+    admins,
+    sessions,
+    plugins,
+    records,
+    unsafe: handleUnsafe,
+    dialect: 'sqlite' as const,
+  })
 }
 
 async function createCookie(db: ReturnType<typeof makeFakeDb>): Promise<string> {

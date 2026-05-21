@@ -29,6 +29,7 @@ export default definePlugin({
     permissions.cmsHooks,
     permissions.cmsSchedule,
     permissions.networkOutbound,
+    permissions.cmsPagesRead,
   ],
 
   // Seeded with a placeholder that documents the pattern. Replace `og.example.com`

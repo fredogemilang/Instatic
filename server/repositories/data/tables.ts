@@ -183,7 +183,23 @@ export async function createDataTable(
               primary_field_id, fields_json,
               created_by_user_id, updated_by_user_id, created_at, updated_at
   `
-  return mapTable(rows[0])
+  const table = mapTable(rows[0])
+
+  // Every postType table needs a public-facing entry template — otherwise
+  // `/<route-base>/<row-slug>` 404s on first publish. We seed a minimal
+  // default here so the public route works immediately; site owners then
+  // customise the template in the editor. The seed is idempotent — re-runs
+  // (e.g. via the boot backfill) are no-ops.
+  //
+  // Lazy import avoids a circular dependency: `templateSeeding` calls
+  // `createDataRow` + `publishDataRow` which live in sibling files that
+  // depend on this table module.
+  if (table.kind === 'postType') {
+    const { ensureDefaultEntryTemplate } = await import('./templateSeeding')
+    await ensureDefaultEntryTemplate(db, table, input.createdByUserId ?? null)
+  }
+
+  return table
 }
 
 export async function updateDataTable(

@@ -1,7 +1,7 @@
 /**
  * Three Kit — frontend runtime.
  *
- * Loaded once per published page (via `frontend.scripts`). Scans the DOM
+ * Loaded once per published page (via `frontend.assets`). Scans the DOM
  * for `[data-threekit-type]` elements and boots a Three.js scene inside each
  * one's `<canvas>`. All scenes on a page share a single Three.js instance
  * because we use bare imports (`import * as THREE from 'three'`) — the

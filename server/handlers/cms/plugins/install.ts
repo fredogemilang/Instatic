@@ -92,7 +92,8 @@ export async function handlePluginsCollection(
       const grantError = assertPluginPermissionGrants(manifest, grantedPermissions)
       if (grantError) return grantError
       const installed = await installPlugin(db, manifest, grantedPermissions)
-      const plugin = (await setPluginLifecycleStatus(db, installed.id, 'active')) ?? installed
+      const updatedResult = await setPluginLifecycleStatus(db, installed.id, 'active')
+      const plugin = (updatedResult?.kind === 'ok' ? updatedResult.plugin : null) ?? installed
       await recordPluginAuditEvent(db, user, req, 'plugin.install', plugin.id)
       broadcastPluginEvent({
         kind: 'installed',
@@ -152,7 +153,11 @@ export async function handlePackageInstall(
     // Detect upgrade vs. fresh install BEFORE writing assets. The repository
     // does an upsert, but the lifecycle and rollback semantics differ
     // significantly between the two paths so we branch explicitly.
-    const existing = await getInstalledPlugin(db, pluginPackage.manifest.id)
+    // A broken existing install (corrupt manifest_json) is treated as if
+    // there is no current install — the fresh-install path replaces it via
+    // the upsert without attempting lifecycle hooks on the broken row.
+    const existingResult = await getInstalledPlugin(db, pluginPackage.manifest.id)
+    const existing = existingResult?.kind === 'ok' ? existingResult.plugin : null
     if (existing && semverLt(pluginPackage.manifest.version, existing.version)) {
       return badRequest(
         `Plugin "${existing.id}" is installed at ${existing.version}; refusing to downgrade to ${pluginPackage.manifest.version}.`,
@@ -350,7 +355,8 @@ async function installUpgradeFromPackage(ctx: UpgradeContext): Promise<Response>
 
   // Re-fetch so the response carries the post-activation row (settings,
   // lifecycle = 'active', etc.).
-  const finalRow = (await getInstalledPlugin(db, pluginId)) ?? upgraded
+  const finalResult = await getInstalledPlugin(db, pluginId)
+  const finalRow = (finalResult?.kind === 'ok' ? finalResult.plugin : null) ?? upgraded
 
   // Auto-install pack on upgrade too — same trigger conditions as fresh
   // install. A new pack version often ships new VCs/templates that the

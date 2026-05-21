@@ -38,9 +38,22 @@ export default definePlugin({
     permissions.editorCanvas,
     permissions.modulesRegister,
     permissions.visualComponentsRegister,
-    permissions.frontendScripts,
-    permissions.frontendTracker,
+    permissions.frontendAssets,
   ],
+  // Every frontend tag the host injects on behalf of this plugin. The
+  // showcase ships its own self-contained IIFE — there's no host runtime
+  // and no shared `window.__pb`. Other plugins that want to coordinate
+  // with this one can listen on a regular DOM event bus the plugin owns.
+  frontend: {
+    assets: [
+      {
+        kind: 'script',
+        src: 'frontend/tracker.js',
+        placement: 'body-end',
+        strategy: 'defer',
+      },
+    ],
+  },
   resources: [
     {
       id: 'events',

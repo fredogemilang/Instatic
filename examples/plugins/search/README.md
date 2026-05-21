@@ -11,7 +11,8 @@ Full-text search for your Page Builder site. Indexes published pages via **Meili
 - **Canvas modules** — two drag-and-drop blocks you can place on any page:
   - **Search Box** — a labelled `<input type="search">` with an instant-results dropdown.
   - **Search Results** — a full-page results list with pagination (place this on your `/search` page).
-- **Admin dashboard** — four tabs: Stats, Documents, Analytics (query log), Settings sync (reindex / clear).
+- **Admin dashboard** — four tabs: Stats, Documents, Analytics (query log), Index management (reindex / clear).
+- **One-click reindex** — the Index management tab has a **Reindex all pages** button that calls `api.cms.pages.republishAll()` server-side, re-running the full publish pipeline for every published page and rebuilding the index from scratch.
 - **Query analytics** — optionally stores anonymised queries in plugin storage and shows top-10 queries and top-10 no-result queries in the Analytics tab.
 
 ---
@@ -148,7 +149,14 @@ To disable, open plugin Settings and turn off **Log search queries**. Existing l
 
 ---
 
+## Architecture notes
+
+- **Per-publish indexing** — the `publish.html` filter receives `{ pageId, slug }` directly from the host. The plugin extracts title/headings/content from the rendered HTML and upserts a document into the search engine.
+- **Bulk reindex** — `POST /reindex` calls `api.cms.pages.republishAll()`, which re-runs the full publish pipeline (including the `publish.html` filter) for every published page. The admin dashboard's **Reindex all pages** button triggers this route.
+- **Document ID** — each page's search document id is derived from its URL slug (slashes → underscores, leading slash stripped). This is stable across republishes.
+
+---
+
 ## Caveats
 
-- The `publish.after` hook delivers only the page ID, not the rendered HTML. The plugin currently emits a `pagebuilder.search.page-indexed` hook event that a future integration can react to for direct HTML extraction. For bulk reindexing, use the **Reindex all** button in the admin dashboard.
 - The `networkAllowedHosts` list covers Meilisearch Cloud and Typesense Cloud hostnames. Self-hosted instances require a custom plugin version with the correct domain in the allowlist.

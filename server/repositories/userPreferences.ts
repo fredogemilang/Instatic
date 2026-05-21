@@ -25,8 +25,13 @@ interface UserPreferenceRow {
  * (user hasn't ever set this preference). Callers fall back to a
  * sensible default — first read of a key for a fresh user is the
  * common case and not an error.
+ *
+ * NB: the client-side helper in `@core/persistence/userPreferences`
+ * uses the unprefixed name (`getUserPreference`) for the HTTP round-trip.
+ * This is the server-side SQL counterpart — the `…Row` suffix mirrors
+ * other repository conventions (e.g. `readMediaAssetRow`).
  */
-export async function getUserPreference(
+export async function readUserPreferenceRow(
   db: DbClient,
   userId: string,
   key: string,
@@ -52,7 +57,7 @@ export async function getUserPreference(
  * no-op overwrite — so admins can see "last touched" if we ever surface
  * a preferences-debug page.
  */
-export async function setUserPreference(
+export async function upsertUserPreferenceRow(
   db: DbClient,
   userId: string,
   key: string,
@@ -73,7 +78,7 @@ export async function setUserPreference(
  * stored (callers can treat both as "now using default" without
  * distinguishing — the wire-level handler returns 204 either way).
  */
-export async function deleteUserPreference(
+export async function deleteUserPreferenceRow(
   db: DbClient,
   userId: string,
   key: string,

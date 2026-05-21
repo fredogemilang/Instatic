@@ -94,16 +94,28 @@ class HookBus {
 
   /**
    * Run a value through every registered handler for a filter pipeline.
-   * Each handler receives the previous handler's output. Errors are logged
-   * and the value is left unchanged.
+   * Each handler receives the previous handler's output and the context
+   * merged from `{ pluginId }` + the optional `contextExtras`. Errors are
+   * logged and the value is left unchanged.
+   *
+   * @param contextExtras  Additional context fields forwarded to every
+   *   handler alongside `{ pluginId }`. Used by `publish.html` and
+   *   `publish.headers` to pass `{ siteId, pageId, slug }`.
    */
-  async applyFilter<T>(name: string, value: T): Promise<T> {
+  async applyFilter<T>(
+    name: string,
+    value: T,
+    contextExtras?: Record<string, unknown>,
+  ): Promise<T> {
     const entries = this.filters.get(name)
     if (!entries) return value
     let current = value as unknown
     for (const entry of entries) {
       try {
-        const next = await entry.handler(current, { pluginId: entry.pluginId })
+        const context = contextExtras
+          ? { pluginId: entry.pluginId, ...contextExtras }
+          : { pluginId: entry.pluginId }
+        const next = await entry.handler(current, context)
         current = next
       } catch (err) {
         console.error(`[plugin:${entry.pluginId}] filter "${name}" threw:`, err)

@@ -87,7 +87,11 @@ export function createLifecycleActions({
     },
 
     updateSiteName: (name) => {
-      mutateSite((p) => { p.name = name })
+      mutateSite((p) => {
+        if (p.name === name) return false
+        p.name = name
+        return true
+      })
     },
   }
 }

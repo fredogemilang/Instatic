@@ -105,11 +105,20 @@ function readScaleGroups<F extends 'typography' | 'spacing'>(
   site: SiteDocument,
   family: F,
 ): Array<ScaleFamilyTypes[F]['Group']> {
+  const branch = readScaleSettings(site, family)
+  return (branch?.groups ?? []) as Array<ScaleFamilyTypes[F]['Group']>
+}
+
+/** Read the family branch off a frozen (read-only) site without mutating. */
+function readScaleSettings<F extends 'typography' | 'spacing'>(
+  site: SiteDocument,
+  family: F,
+): ScaleFamilyTypes[F]['Settings'] | null {
   const branch =
     family === 'typography'
       ? site.settings.framework?.typography
       : site.settings.framework?.spacing
-  return (branch?.groups ?? []) as Array<ScaleFamilyTypes[F]['Group']>
+  return (branch ?? null) as ScaleFamilyTypes[F]['Settings'] | null
 }
 
 /**
@@ -138,21 +147,39 @@ type CommonScaleGroupPatch = Partial<{
 function applyScaleGroupPatch(
   group: FrameworkTypographyGroup | FrameworkSpacingGroup,
   patch: CommonScaleGroupPatch,
-): void {
-  if (patch.name !== undefined) group.name = patch.name
-  if (patch.namingConvention !== undefined) group.namingConvention = patch.namingConvention
-  if (patch.steps !== undefined) group.steps = patch.steps
-  if (patch.baseScaleIndex !== undefined) group.baseScaleIndex = patch.baseScaleIndex
-  if (patch.mode !== undefined) group.mode = patch.mode
-  if (patch.isDisabled !== undefined) group.isDisabled = patch.isDisabled
+): boolean {
+  let changed = false
+  function assign<K extends keyof typeof group>(key: K, value: (typeof group)[K]): void {
+    if (Object.is(group[key], value)) return
+    group[key] = value
+    changed = true
+  }
+
+  if (patch.name !== undefined) assign('name', patch.name)
+  if (patch.namingConvention !== undefined) assign('namingConvention', patch.namingConvention)
+  if (patch.steps !== undefined) assign('steps', patch.steps)
+  if (patch.baseScaleIndex !== undefined) assign('baseScaleIndex', patch.baseScaleIndex)
+  if (patch.mode !== undefined) assign('mode', patch.mode)
+  if (patch.isDisabled !== undefined) assign('isDisabled', patch.isDisabled)
   if (patch.min) {
-    Object.assign(group.min as Record<string, unknown>, patch.min)
+    const min = group.min as Record<string, unknown>
+    if (Object.entries(patch.min).some(([key, value]) => !Object.is(min[key], value))) {
+      Object.assign(min, patch.min)
+      changed = true
+    }
   }
   if (patch.max) {
-    Object.assign(group.max as Record<string, unknown>, patch.max)
+    const max = group.max as Record<string, unknown>
+    if (Object.entries(patch.max).some(([key, value]) => !Object.is(max[key], value))) {
+      Object.assign(max, patch.max)
+      changed = true
+    }
   }
-  if (patch.manualSizes !== undefined) group.manualSizes = patch.manualSizes
-  group.updatedAt = Date.now()
+  if (patch.manualSizes !== undefined) {
+    assign('manualSizes', patch.manualSizes)
+  }
+  if (changed) group.updatedAt = Date.now()
+  return changed
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +222,7 @@ export function createScaleGroupActions<F extends 'typography' | 'spacing'>(
         const settings = ensureScaleSettings(site, family)
         settings.isDisabled = !settings.isDisabled
         reconcileFrameworkClasses(site)
+        return true
       })
     },
 
@@ -213,19 +241,22 @@ export function createScaleGroupActions<F extends 'typography' | 'spacing'>(
         const draftSettings = ensureScaleSettings(draftSite, family)
         ;(draftSettings.groups as Array<ScaleFamilyTypes[F]['Group']>).push(group)
         reconcileFrameworkClasses(draftSite)
+        return true
       })
       return group
     },
 
     updateGroup: (groupId, patch) => {
       mutateSite((site) => {
-        const settings = ensureScaleSettings(site, family)
+        const settings = readScaleSettings(site, family)
+        if (!settings) return false
         const group = (settings.groups as Array<ScaleFamilyTypes[F]['Group']>).find(
           (g) => g.id === groupId,
         )
-        if (!group) return
-        applyScaleGroupPatch(group, patch as CommonScaleGroupPatch)
+        if (!group) return false
+        if (!applyScaleGroupPatch(group, patch as CommonScaleGroupPatch)) return false
         reconcileFrameworkClasses(site)
+        return true
       })
     },
 
@@ -260,25 +291,30 @@ export function createScaleGroupActions<F extends 'typography' | 'spacing'>(
         const draftSettings = ensureScaleSettings(draftSite, family)
         ;(draftSettings.groups as Array<ScaleFamilyTypes[F]['Group']>).push(copy)
         reconcileFrameworkClasses(draftSite)
+        return true
       })
       return copy
     },
 
     resetGroup: (groupId) => {
       mutateSite((site) => {
-        const settings = ensureScaleSettings(site, family)
+        const settings = readScaleSettings(site, family)
+        if (!settings) return false
         const groups = settings.groups as Array<ScaleFamilyTypes[F]['Group']>
         const idx = groups.findIndex((g) => g.id === groupId)
-        if (idx < 0) return
+        if (idx < 0) return false
         const order = groups[idx].order
         groups[idx] = { ...buildDefault(order), id: groupId }
         reconcileFrameworkClasses(site)
+        return true
       })
     },
 
     deleteGroup: (groupId) => {
       mutateSite((site) => {
-        const settings = ensureScaleSettings(site, family)
+        const settings = readScaleSettings(site, family)
+        if (!settings) return false
+        if (!settings.groups.some((g: { id: string }) => g.id === groupId)) return false
         settings.groups = settings.groups.filter(
           (g: { id: string }) => g.id !== groupId,
         ) as ScaleFamilyTypes[F]['Settings']['groups']
@@ -286,26 +322,29 @@ export function createScaleGroupActions<F extends 'typography' | 'spacing'>(
           settings.classes?.filter((c: { tabId: string }) => c.tabId !== groupId) ?? []
         ) as ScaleFamilyTypes[F]['Settings']['classes']
         reconcileFrameworkClasses(site)
+        return true
       })
     },
 
     upsertManualSize: (groupId, sizeId, patch) => {
       mutateSite((site) => {
-        const settings = ensureScaleSettings(site, family)
+        const settings = readScaleSettings(site, family)
+        if (!settings) return false
         const group = (settings.groups as Array<ScaleFamilyTypes[F]['Group']>).find(
           (g) => g.id === groupId,
         )
-        if (!group) return
-        group.manualSizes ??= []
-        const idx = group.manualSizes.findIndex((m) => m.id === sizeId)
+        if (!group) return false
+        const manualSizes = group.manualSizes ?? []
+        const idx = manualSizes.findIndex((m) => m.id === sizeId)
         if (idx < 0) {
           if (
             typeof patch.name !== 'string' ||
             typeof patch.min !== 'number' ||
             typeof patch.max !== 'number'
           ) {
-            return
+            return false
           }
+          group.manualSizes ??= []
           group.manualSizes.push({
             id: sizeId,
             name: patch.name,
@@ -313,10 +352,16 @@ export function createScaleGroupActions<F extends 'typography' | 'spacing'>(
             max: patch.max,
           })
         } else {
-          group.manualSizes[idx] = { ...group.manualSizes[idx], ...patch }
+          const current = manualSizes[idx]
+          const changed = Object.entries(patch).some(
+            ([key, value]) => !Object.is(current[key as keyof typeof current], value),
+          )
+          if (!changed) return false
+          group.manualSizes![idx] = { ...current, ...patch }
         }
         group.updatedAt = Date.now()
         reconcileFrameworkClasses(site)
+        return true
       })
     },
 
@@ -326,6 +371,7 @@ export function createScaleGroupActions<F extends 'typography' | 'spacing'>(
         settings.classes =
           classes as ScaleFamilyTypes[F]['Settings']['classes']
         reconcileFrameworkClasses(site)
+        return true
       })
     },
   }

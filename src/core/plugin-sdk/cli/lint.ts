@@ -96,7 +96,7 @@ export async function lintPlugin(sourceDir: string): Promise<LintResult> {
   //   1. Server entrypoint (`network.outbound` permission): gates QuickJS
   //      `fetch()` calls — every URL the sandbox fetches must match an
   //      allowlist entry.
-  //   2. Frontend bundle (`frontend.scripts` permission): the publisher
+  //   2. Frontend assets (`frontend.assets` permission): the publisher
   //      adds the listed hosts to the page CSP `connect-src` so
   //      visitor-side fetches reach them.
   //
@@ -116,15 +116,70 @@ export async function lintPlugin(sourceDir: string): Promise<LintResult> {
       })
     }
   } else if ((manifest.networkAllowedHosts ?? []).length > 0) {
-    const usesFrontend = manifest.permissions.includes('frontend.scripts')
+    const usesFrontend = manifest.permissions.includes('frontend.assets')
     if (!usesFrontend) {
       findings.push({
         severity: 'warning',
         scope: 'manifest',
         message:
           '`networkAllowedHosts` is set but neither `network.outbound` (server) ' +
-          'nor `frontend.scripts` (browser CSP) is requested. ' +
+          'nor `frontend.assets` (browser CSP) is requested. ' +
           'The allowlist will be ignored at install time.',
+      })
+    }
+  }
+
+  // ---- frontend.assets coherence ----------------------------------------
+  //
+  // Permission ↔ declarations:
+  //  - `frontend.assets` permission requires the manifest to actually
+  //    declare some assets — otherwise the permission has no consumer
+  //    and the consent screen is misleading.
+  //  - `frontend.assets[]` declarations require the matching permission
+  //    (also enforced at install time; checked here so authors get the
+  //    error in their terminal pre-upload).
+  const declaredAssets = manifest.frontend?.assets ?? []
+  const hasFrontendPermission = manifest.permissions.includes('frontend.assets')
+  if (hasFrontendPermission && declaredAssets.length === 0) {
+    findings.push({
+      severity: 'warning',
+      scope: 'manifest',
+      message:
+        '`frontend.assets` permission is requested but `frontend.assets[]` is empty. ' +
+        'Drop the permission or declare at least one asset.',
+    })
+  }
+  if (!hasFrontendPermission && declaredAssets.length > 0) {
+    findings.push({
+      severity: 'error',
+      scope: 'manifest',
+      message:
+        '`frontend.assets[]` is non-empty but the `frontend.assets` permission is not requested. ' +
+        'Add `permissions.frontendAssets` to the plugin permissions list.',
+    })
+  }
+  // Every declared `script` / `style` references a file under `frontend/`;
+  // make sure the source exists. The build CLI bundles every `.ts`/`.tsx`
+  // file in `frontend/` to `dist/frontend/<name>.js`, so the source we
+  // expect is the same path with `.js` swapped for `.ts`/`.tsx`.
+  for (const asset of declaredAssets) {
+    const ref = asset.kind === 'script'
+      ? asset.src
+      : asset.kind === 'style'
+        ? asset.href
+        : null
+    if (!ref) continue
+    const sourceTs = join(absoluteSource, ref.replace(/\.js$/, '.ts'))
+    const sourceTsx = join(absoluteSource, ref.replace(/\.js$/, '.tsx'))
+    const builtFile = join(absoluteSource, 'dist', ref)
+    if (!existsSync(sourceTs) && !existsSync(sourceTsx) && !existsSync(builtFile)) {
+      findings.push({
+        severity: 'error',
+        scope: 'manifest',
+        message:
+          `frontend.assets references "${ref}" but no source file was found at ` +
+          `"${ref.replace(/\.js$/, '.ts(x)')}" and no built artifact exists yet.`,
+        file: ref,
       })
     }
   }

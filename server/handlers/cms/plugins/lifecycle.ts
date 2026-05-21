@@ -83,7 +83,8 @@ export async function runPluginLifecycleHook(
       await unloadPlugin(plugin.id)
     }
 
-    const updated = await setPluginLifecycleStatus(db, plugin.id, successStatus)
+    const updatedResult = await setPluginLifecycleStatus(db, plugin.id, successStatus)
+    const updated = updatedResult?.kind === 'ok' ? updatedResult.plugin : null
     return { plugin: updated ?? plugin, ok: true }
   } catch (err) {
     // Activate failure leaves us in a half-loaded state — drop the worker
@@ -92,7 +93,8 @@ export async function runPluginLifecycleHook(
       try { await unloadPlugin(plugin.id) } catch { /* noop */ }
       deactivatePluginModulePack(plugin.id)
     }
-    const updated = await setPluginLifecycleStatus(db, plugin.id, 'error', lifecycleErrorMessage(err))
+    const updatedResult = await setPluginLifecycleStatus(db, plugin.id, 'error', lifecycleErrorMessage(err))
+    const updated = updatedResult?.kind === 'ok' ? updatedResult.plugin : null
     return { plugin: updated ?? plugin, ok: false }
   }
 }

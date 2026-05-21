@@ -32,9 +32,9 @@ import {
 } from '@core/persistence/userPreferences'
 import { Type, parseValue, safeParseValue } from '@core/utils/typeboxHelpers'
 import {
-  deleteUserPreference,
-  getUserPreference,
-  setUserPreference,
+  deleteUserPreferenceRow,
+  readUserPreferenceRow,
+  upsertUserPreferenceRow,
 } from '../../repositories/userPreferences'
 
 const PREFIX = `${CMS_API_PREFIX}/me/preferences/`
@@ -71,7 +71,7 @@ export async function handleUserPreferencesRoutes(
   if (user instanceof Response) return user
 
   if (req.method === 'GET') {
-    const stored = await getUserPreference(db, user.id, key)
+    const stored = await readUserPreferenceRow(db, user.id, key)
     if (stored === null) {
       return jsonResponse({ error: 'Preference not set' }, { status: 404 })
     }
@@ -104,12 +104,12 @@ export async function handleUserPreferencesRoutes(
     const value = parseValueOrBadRequest(USER_PREFERENCE_SCHEMAS[key], envelope.value.value)
     if (value instanceof Response) return value
 
-    await setUserPreference(db, user.id, key, value)
+    await upsertUserPreferenceRow(db, user.id, key, value)
     return jsonResponse({ value })
   }
 
   if (req.method === 'DELETE') {
-    await deleteUserPreference(db, user.id, key)
+    await deleteUserPreferenceRow(db, user.id, key)
     return new Response(null, { status: 204 })
   }
 

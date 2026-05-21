@@ -77,6 +77,10 @@ const ALLOWLISTED = new Set([
   // type translation table (e.g. "jsonb → text", "distinct on (…) → window
   // function subquery"). Those comment-only mentions are not live SQL.
   join(PROJECT_ROOT, 'server/db/migrations-sqlite.ts'),
+  // Dialect-aware helper: deliberately knows about both PG (->>) and SQLite (json_extract) JSON syntax.
+  // The only legitimate caller of either operator in the repo. Egress is independently gated by
+  // json-extract-egress.test.ts.
+  join(PROJECT_ROOT, 'server/db/jsonExtract.ts'),
 ])
 
 /**

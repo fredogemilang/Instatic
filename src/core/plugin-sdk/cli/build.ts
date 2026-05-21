@@ -96,9 +96,9 @@ interface BundleOptions {
    */
   sandbox?: 'server' | 'modules'
   /**
-   * When true, omit the host-runtime externals — use for `frontend.scripts`
-   * bundles. Published pages don't have the host import map, so frontend
-   * code can't rely on bare `react` / `@pagebuilder/*` imports being
+   * When true, omit the host-runtime externals — use for `frontend.assets`
+   * script bundles. Published pages don't have the host import map, so
+   * frontend code can't rely on bare `react` / `@pagebuilder/*` imports being
    * resolved. Bundle locally (or stick to `window.__pb`).
    */
   frontendBundle?: boolean
@@ -261,6 +261,32 @@ async function bundleEntrypoint(
   }
 }
 
+/**
+ * Walk `<sourceDir>/frontend/` and return every `.ts`/`.tsx` file as a
+ * bundle target. Each source `frontend/<name>.{ts,tsx}` produces
+ * `dist/frontend/<name>.js`. Files in nested directories are NOT bundled
+ * automatically — only top-level files become assets, so a plugin can
+ * keep helpers / types under `frontend/utils/` without producing dead
+ * `dist/` output. Authors who need multiple bundles ship multiple
+ * top-level files.
+ */
+async function listFrontendSources(sourceDir: string): Promise<Array<{ absolutePath: string; outputPath: string }>> {
+  const frontendDir = join(sourceDir, 'frontend')
+  if (!existsSync(frontendDir)) return []
+  const out: Array<{ absolutePath: string; outputPath: string }> = []
+  for (const entry of readdirSync(frontendDir, { withFileTypes: true })) {
+    if (entry.isDirectory()) continue
+    const match = /^(?<name>[^.][^/]*)\.(?:tsx?|m?js)$/.exec(entry.name)
+    if (!match || !match.groups?.name) continue
+    out.push({
+      absolutePath: join(frontendDir, entry.name),
+      outputPath: `frontend/${match.groups.name}.js`,
+    })
+  }
+  out.sort((a, b) => (a.outputPath < b.outputPath ? -1 : a.outputPath > b.outputPath ? 1 : 0))
+  return out
+}
+
 async function findEntrypoint(sourceDir: string, basename: string): Promise<string | null> {
   // Prefer .tsx so plugin entrypoints can use JSX directly.
   for (const ext of ['tsx', 'ts', 'js', 'mjs']) {
@@ -342,24 +368,12 @@ export async function buildPlugin(
   const serverSource = await findEntrypoint(absoluteSource, 'server')
   if (serverSource) entrypoints.server = 'server/index.js'
 
-  // Frontend entry. Authors can ship either a top-level `frontend.{ts,js}`
-  // (or `frontend/index.{ts,js}`) — both bundle to `frontend/index.js` —
-  // or the conventional `frontend/tracker.{ts,js}` which bundles to
-  // `frontend/tracker.js`. Pick the source AND its destination together
-  // so the manifest entrypoint and the bundled file always match.
-  let frontendSource: string | null = await findEntrypoint(absoluteSource, 'frontend')
-  let frontendOutputPath: string | null = null
-  if (frontendSource) {
-    entrypoints.frontend = 'frontend/index.js'
-    frontendOutputPath = 'frontend/index.js'
-  } else {
-    const trackerSource = await findEntrypoint(absoluteSource, 'frontend/tracker')
-    if (trackerSource) {
-      frontendSource = trackerSource
-      entrypoints.frontend = 'frontend/tracker.js'
-      frontendOutputPath = 'frontend/tracker.js'
-    }
-  }
+  // Frontend assets are declared explicitly in the manifest's
+  // `frontend.assets[]` array. The build doesn't need to invent a single
+  // entrypoint anymore — instead it bundles every `.ts`/`.tsx` source under
+  // `<sourceDir>/frontend/` to `<distDir>/frontend/<name>.js`. Authors
+  // reference the built path from their `frontend.assets[]` declaration.
+  const frontendSources = await listFrontendSources(absoluteSource)
 
   const finalManifest = {
     ...definition.manifest,
@@ -406,21 +420,23 @@ export async function buildPlugin(
   if (serverSource) {
     await bundleEntrypoint(serverSource, join(distDir, 'server', 'index.js'), { sandbox: 'server' })
   }
-  if (frontendSource && frontendOutputPath) {
+  if (frontendSources.length > 0) {
     // Collect every package any module declared as a runtime dependency.
     // Frontend bundles that import those packages should leave the bare
     // specifier in place — the published page's `<script type="importmap">`
     // (emitted by the publisher from the site's lock) resolves them to
     // host-served URLs at runtime, so multiple plugins share one copy.
     const runtimeExternals = collectRuntimeExternals(definition.modules)
-    await bundleEntrypoint(
-      frontendSource,
-      join(distDir, frontendOutputPath),
-      {
-        frontendBundle: true,
-        ...(runtimeExternals.length > 0 ? { externalSpecifiers: runtimeExternals } : {}),
-      },
-    )
+    for (const entry of frontendSources) {
+      await bundleEntrypoint(
+        entry.absolutePath,
+        join(distDir, entry.outputPath),
+        {
+          frontendBundle: true,
+          ...(runtimeExternals.length > 0 ? { externalSpecifiers: runtimeExternals } : {}),
+        },
+      )
+    }
   }
 
   // 4. Admin apps — one bundle per declared app entry.

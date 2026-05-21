@@ -1,13 +1,29 @@
 /**
  * Analytics plugin — tracker event ingestion.
  *
- * Handles every `tracker.event` hook call: applies privacy filters,
- * computes the daily-rotating visitor hash, classifies the device, and
- * persists a raw event record.
+ * Handles every event POSTed to the plugin's own `/runtime/ingest` route:
+ * applies privacy filters, computes the daily-rotating visitor hash,
+ * classifies the device, and persists a raw event record. The event
+ * shape is owned entirely by this plugin — there is no host-defined
+ * envelope.
  */
-import type { ServerPluginApi, CmsServerEvents } from '@pagebuilder/plugin-sdk'
+import type { ServerPluginApi } from '@pagebuilder/plugin-sdk'
 
-type TrackerEvent = CmsServerEvents['tracker.event']
+export interface TrackerEvent {
+  eventName: string
+  payload: Record<string, unknown>
+  visitorId?: string
+  sessionId?: string
+  pagePath?: string
+  referrer?: string
+  country?: string
+  isAdmin?: boolean
+  userAgent?: string
+  /** ISO timestamp the browser stamped on the request. */
+  clientTime?: string
+  /** ISO timestamp the server received the request. */
+  receivedAt: string
+}
 
 // ---------------------------------------------------------------------------
 // Visitor hash — SHA-256(salt : visitorId : YYYY-MM-DD)
@@ -80,28 +96,30 @@ export async function handleTrackerEvent(api: ServerPluginApi, evt: TrackerEvent
 
   // Drop events from admin sessions when the operator has enabled that filter.
   // The frontend tracker calls /is-admin once per session and includes the
-  // result in the payload as `isAdmin: true | false`.
-  if (excludeAdmins && evt.payload.isAdmin === true) return
+  // result in the envelope as `isAdmin: true | false`.
+  if (excludeAdmins && evt.isAdmin === true) return
 
   const date = evt.receivedAt.slice(0, 10) // YYYY-MM-DD
   const visitorHash = await computeVisitorHash(salt, evt.visitorId ?? 'anon', date)
-  const ua = typeof evt.payload.userAgent === 'string' ? evt.payload.userAgent : ''
+  const ua = evt.userAgent ?? ''
   const device = ua ? classifyDevice(ua) : 'desktop'
-  const country = typeof evt.payload.country === 'string' ? evt.payload.country : ''
+  const country = evt.country ?? ''
 
-  // Strip well-known envelope fields from the stored payload to avoid duplication
-  const { userAgent: _ua, country: _country, ...rest } = evt.payload
+  // `payload` is whatever the plugin's frontend bundle put on the event;
+  // store it as-is. Envelope fields (userAgent, country, isAdmin, …) are
+  // already lifted out and stored in their own columns above.
+  const rest = evt.payload
 
   const events = api.cms.storage.collection('events')
   await events.create({
-    name:           evt.eventName,
+    name:          evt.eventName,
     path,
-    'visitor-hash': visitorHash,
-    session:        evt.sessionId ?? '',
-    referrer:       evt.referrer ?? '',
+    visitorHash,
+    session:       evt.sessionId ?? '',
+    referrer:      evt.referrer ?? '',
     device,
     country,
-    payload:        JSON.stringify(rest),
-    'received-at':  evt.receivedAt,
+    payload:       JSON.stringify(rest),
+    receivedAt:    evt.receivedAt,
   })
 }

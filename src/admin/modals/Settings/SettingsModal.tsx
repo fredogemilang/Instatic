@@ -50,7 +50,7 @@ export function SettingsModal() {
   // Whichever surface opened the modal (editor SettingsButton via adminUi,
   // spotlight `editor.openSettings` via editor store) ends up writing
   // here — see `settingsSlice.ts`'s bridge for the editor → adminUi
-  // mirror and `store.ts`'s `bindEditorStoreApi` for the reverse.
+  // mirror and `store.ts`'s `bindSettingsBridgeStoreApi` for the reverse.
   const open = useAdminUi((state) => state.settingsOpen)
   const adminUiSection = useAdminUi((state) => state.settingsSection)
   const closeAdminUi = useAdminUi((state) => state.closeSettings)

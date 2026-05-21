@@ -135,34 +135,68 @@ function applyFrameworkColorTokenPatch(
   token: FrameworkColorToken,
   patch: UpdateFrameworkColorTokenPatch,
   colors: NonNullable<SiteSettings['framework']>['colors'],
-): void {
-  if (patch.category !== undefined) {
-    token.category = canonicalizeCategoryLabel(patch.category, colors.tokens, token.id)
+): boolean {
+  let changed = false
+  function assign<K extends keyof FrameworkColorToken>(key: K, value: FrameworkColorToken[K]): void {
+    if (Object.is(token[key], value)) return
+    token[key] = value
+    changed = true
   }
-  if (patch.slug !== undefined) token.slug = uniqueColorSlug(colors.tokens, patch.slug, token.id)
-  if (patch.lightValue !== undefined) token.lightValue = patch.lightValue.trim()
-  if (patch.darkValue !== undefined) token.darkValue = patch.darkValue.trim()
+
+  if (patch.category !== undefined) {
+    assign('category', canonicalizeCategoryLabel(patch.category, colors.tokens, token.id))
+  }
+  if (patch.slug !== undefined) {
+    assign('slug', uniqueColorSlug(colors.tokens, patch.slug, token.id))
+  }
+  if (patch.lightValue !== undefined) assign('lightValue', patch.lightValue.trim())
+  if (patch.darkValue !== undefined) assign('darkValue', patch.darkValue.trim())
   if (patch.darkModeEnabled !== undefined) {
-    token.darkModeEnabled = patch.darkModeEnabled
+    assign('darkModeEnabled', patch.darkModeEnabled)
     if (patch.darkModeEnabled && !patch.darkValue && !token.darkValue) {
-      token.darkValue = generateDefaultDarkColor(token.lightValue)
+      assign('darkValue', generateDefaultDarkColor(token.lightValue))
     }
   }
   if (patch.generateUtilities) {
-    token.generateUtilities = {
+    const next = {
       ...token.generateUtilities,
       ...patch.generateUtilities,
     }
+    if (
+      Object.entries(next).some(
+        ([key, value]) => token.generateUtilities[key as keyof typeof next] !== value,
+      )
+    ) {
+      token.generateUtilities = next
+      changed = true
+    }
   }
-  if (patch.generateTransparent !== undefined) token.generateTransparent = patch.generateTransparent
+  if (patch.generateTransparent !== undefined) {
+    assign('generateTransparent', patch.generateTransparent)
+  }
   if (patch.generateShades) {
-    token.generateShades = { ...token.generateShades, ...patch.generateShades }
+    const next = { ...token.generateShades, ...patch.generateShades }
+    if (
+      next.enabled !== token.generateShades.enabled ||
+      next.count !== token.generateShades.count
+    ) {
+      token.generateShades = next
+      changed = true
+    }
   }
   if (patch.generateTints) {
-    token.generateTints = { ...token.generateTints, ...patch.generateTints }
+    const next = { ...token.generateTints, ...patch.generateTints }
+    if (
+      next.enabled !== token.generateTints.enabled ||
+      next.count !== token.generateTints.count
+    ) {
+      token.generateTints = next
+      changed = true
+    }
   }
-  if (patch.order !== undefined) token.order = patch.order
-  token.updatedAt = Date.now()
+  if (patch.order !== undefined) assign('order', patch.order)
+  if (changed) token.updatedAt = Date.now()
+  return changed
 }
 
 function cloneFrameworkColorToken(
@@ -184,16 +218,16 @@ function reorderFrameworkColorTokenInGroup(
   colors: NonNullable<SiteSettings['framework']>['colors'],
   tokenId: string,
   direction: 'up' | 'down',
-): void {
+): boolean {
   const token = colors.tokens.find((candidate) => candidate.id === tokenId)
-  if (!token) return
+  if (!token) return false
 
   const group = colors.tokens
     .filter((candidate) => candidate.category === token.category)
     .sort((a, b) => a.order - b.order || a.slug.localeCompare(b.slug))
   const currentIndex = group.findIndex((candidate) => candidate.id === tokenId)
   const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
-  if (currentIndex < 0 || targetIndex < 0 || targetIndex >= group.length) return
+  if (currentIndex < 0 || targetIndex < 0 || targetIndex >= group.length) return false
 
   const orderValues = group.map((candidate) => candidate.order).sort((a, b) => a - b)
   const reordered = [...group]
@@ -204,6 +238,7 @@ function reorderFrameworkColorTokenInGroup(
     reordered[index].order = orderValues[index] ?? index
     reordered[index].updatedAt = Date.now()
   }
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +272,7 @@ export function createFrameworkColorActions({
         const draftColors = ensureFrameworkColors(draftSite)
         draftColors.tokens.push(token)
         reconcileFrameworkClasses(draftSite)
+        return true
       })
 
       return token
@@ -244,11 +280,12 @@ export function createFrameworkColorActions({
 
     updateFrameworkColorToken: (tokenId, patch) => {
       mutateSite((site) => {
-        const colors = ensureFrameworkColors(site)
-        const token = colors.tokens.find((candidate) => candidate.id === tokenId)
-        if (!token) return
-        applyFrameworkColorTokenPatch(token, patch, colors)
+        const colors = site.settings.framework?.colors
+        const token = colors?.tokens.find((candidate) => candidate.id === tokenId)
+        if (!colors || !token) return false
+        if (!applyFrameworkColorTokenPatch(token, patch, colors)) return false
         reconcileFrameworkClasses(site)
+        return true
       })
     },
 
@@ -267,6 +304,7 @@ export function createFrameworkColorActions({
         const draftColors = ensureFrameworkColors(draftSite)
         draftColors.tokens.push(copy)
         reconcileFrameworkClasses(draftSite)
+        return true
       })
 
       return copy
@@ -274,17 +312,23 @@ export function createFrameworkColorActions({
 
     reorderFrameworkColorToken: (tokenId, direction) => {
       mutateSite((site) => {
-        const colors = ensureFrameworkColors(site)
-        reorderFrameworkColorTokenInGroup(colors, tokenId, direction)
+        const colors = site.settings.framework?.colors
+        if (!colors) return false
+        if (!reorderFrameworkColorTokenInGroup(colors, tokenId, direction)) return false
         reconcileFrameworkClasses(site)
+        return true
       })
     },
 
     deleteFrameworkColorToken: (tokenId) => {
       mutateSite((site) => {
-        const colors = ensureFrameworkColors(site)
-        colors.tokens = colors.tokens.filter((token) => token.id !== tokenId)
+        const colors = site.settings.framework?.colors
+        if (!colors) return false
+        const nextTokens = colors.tokens.filter((token) => token.id !== tokenId)
+        if (nextTokens.length === colors.tokens.length) return false
+        colors.tokens = nextTokens
         reconcileFrameworkClasses(site)
+        return true
       })
     },
   }

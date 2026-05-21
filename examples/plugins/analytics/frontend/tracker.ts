@@ -1,135 +1,150 @@
 /**
  * Analytics plugin — frontend tracker bundle.
  *
- * Loaded on every published page via the `frontend.scripts` permission.
- * Runs as an IIFE; uses ONLY `window.__pb` and vanilla DOM APIs — no React,
- * no host-ui, no imports (types only, which compile away).
+ * Self-contained IIFE. Installs `window.__pb_analytics.send(event, payload)`
+ * for any in-page code that wants to fire custom events, and wires DOM
+ * listeners (page-view, link-click, scroll-depth, web vitals, bounce) that
+ * POST to this plugin's OWN ingest route. The host provides no shared
+ * runtime — every dependency lives inside this file.
  *
- * Responsibilities:
- *   1. Do-Not-Track + opt-out flag check  (exits early when active)
- *   2. Country enrichment via /geo (once per session, cached in sessionStorage)
- *   3. Admin-session detection via /is-admin (once per session, cached in sessionStorage)
- *   4. page-view, link-click, scroll-depth event forwarding
- *   5. Web Vitals (LCP, CLS, FID) flushed on page hide
- *   6. Bounce detection (session with 0 interactions in < 10 s) flushed on page hide
+ * Privacy:
+ *   - Honours `navigator.doNotTrack === '1'`.
+ *   - Honours a per-user localStorage opt-out flag.
+ *   - Country lookup + admin-session detection happen ONCE per session
+ *     against this plugin's own routes; results cached in `sessionStorage`.
+ *
+ * Route base — every fetch lives under this plugin's `/runtime` namespace
+ * so the host's permission gate covers it without any special-cased path.
  */
-import type { } from '@pagebuilder/plugin-sdk' // type-only import; compiles away
+import type { } from '@pagebuilder/plugin-sdk' // type-only; compiles away
 
 declare global {
   interface Window {
-    __pb?: {
+    __pb_analytics?: {
       visitorId: string
       sessionId: string
-      hooks: {
-        on(event: string, handler: (detail: Record<string, unknown>) => void): () => void
-        emit(event: string, detail: Record<string, unknown>): void
-      }
-      tracker: {
-        send(name: string, payload?: Record<string, unknown>): Promise<unknown>
-        sendFor(pluginId: string, name: string, payload?: Record<string, unknown>): Promise<unknown>
-      }
+      send(event: string, payload?: Record<string, unknown>): void
     }
   }
 }
 
-const PLUGIN_ID      = 'pagebuilder.analytics'
-const GEO_CACHE_KEY  = '__pb_analytics_geo'
+const PLUGIN_ID       = 'pagebuilder.analytics'
+const ROUTE_BASE      = `/admin/api/cms/plugins/${PLUGIN_ID}/runtime`
+const VISITOR_KEY     = '__pb_analytics_v'
+const SESSION_KEY     = '__pb_analytics_s'
+const GEO_CACHE_KEY   = '__pb_analytics_geo'
 const ADMIN_CACHE_KEY = '__pb_analytics_admin'
-const OPT_OUT_KEY    = '__pb_analytics_optout'
-
-const ROUTE_BASE = '/admin/api/cms/plugins/pagebuilder.analytics/runtime'
+const OPT_OUT_KEY     = '__pb_analytics_optout'
 
 ;(function init() {
-  // ── 1. Privacy checks ──────────────────────────────────────────────────
+  // ── Privacy gates ─────────────────────────────────────────────────────
   const dnt =
     (typeof navigator !== 'undefined' && navigator.doNotTrack === '1') ||
     (typeof window !== 'undefined' && (window as Record<string, unknown>).doNotTrack === '1')
   if (dnt) return
+  try { if (localStorage.getItem(OPT_OUT_KEY) === '1') return } catch { /* ignore */ }
 
-  try {
-    if (localStorage.getItem(OPT_OUT_KEY) === '1') return
-  } catch {
-    // localStorage unavailable — continue tracking
+  // ── Identity ──────────────────────────────────────────────────────────
+  function rid(): string {
+    return (Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 16)
+  }
+  function visitorId(): string {
+    try {
+      const existing = localStorage.getItem(VISITOR_KEY)
+      if (existing) return existing
+      const fresh = rid()
+      localStorage.setItem(VISITOR_KEY, fresh)
+      return fresh
+    } catch { return rid() }
+  }
+  function sessionId(): string {
+    try {
+      const existing = sessionStorage.getItem(SESSION_KEY)
+      if (existing) return existing
+      const fresh = rid()
+      sessionStorage.setItem(SESSION_KEY, fresh)
+      return fresh
+    } catch { return rid() }
   }
 
-  const pb = window.__pb
-  if (!pb?.tracker) {
-    console.warn('[analytics] page runtime not available')
-    return
-  }
+  const _visitorId = visitorId()
+  const _sessionId = sessionId()
 
-  // ── 2. Country enrichment ──────────────────────────────────────────────
+  // ── Session-scoped enrichment ─────────────────────────────────────────
   let cachedCountry = ''
-  try {
-    cachedCountry = sessionStorage.getItem(GEO_CACHE_KEY) ?? ''
-  } catch {
-    // sessionStorage unavailable
-  }
+  let cachedIsAdmin = false
+  let adminResolved = false
 
-  function fetchCountry(): void {
-    if (cachedCountry) return
-    fetch(`${ROUTE_BASE}/geo`, { method: 'GET', credentials: 'omit' })
-      .then(r => r.json() as Promise<{ country?: string }>)
-      .then(data => {
-        const country = typeof data.country === 'string' ? data.country : ''
-        cachedCountry = country
-        try { sessionStorage.setItem(GEO_CACHE_KEY, country) } catch { /* noop */ }
-      })
-      .catch(() => { /* geo is optional; ignore failures */ })
-  }
-
-  // ── 3. Admin-session detection ────────────────────────────────────────
-  // Checked once per session. The ingest handler on the server respects the
-  // `excludeAdmins` setting and drops events where `isAdmin === true`.
-  // Defaults to `false` (not admin) so that events before the check resolves
-  // are recorded (they're better than nothing; admin self-traffic is rare).
-  let cachedIsAdmin: boolean = false
-  let adminCheckResolved     = false
-
+  try { cachedCountry = sessionStorage.getItem(GEO_CACHE_KEY) ?? '' } catch { /* ignore */ }
   try {
     const cached = sessionStorage.getItem(ADMIN_CACHE_KEY)
     if (cached !== null) {
       cachedIsAdmin = cached === '1'
-      adminCheckResolved = true
+      adminResolved = true
     }
-  } catch {
-    // sessionStorage unavailable
+  } catch { /* ignore */ }
+
+  function fetchCountry(): void {
+    if (cachedCountry) return
+    fetch(`${ROUTE_BASE}/geo`, { method: 'GET', credentials: 'omit' })
+      .then((r) => r.json() as Promise<{ country?: string }>)
+      .then((data) => {
+        const country = typeof data.country === 'string' ? data.country : ''
+        cachedCountry = country
+        try { sessionStorage.setItem(GEO_CACHE_KEY, country) } catch { /* ignore */ }
+      })
+      .catch(() => { /* geo is optional */ })
   }
 
   function fetchIsAdmin(): void {
-    if (adminCheckResolved) return
-    // Include cookies so the server can inspect the admin session cookie.
-    // Same origin: published pages and admin run on the same Bun server.
+    if (adminResolved) return
     fetch(`${ROUTE_BASE}/is-admin`, { method: 'GET', credentials: 'include' })
-      .then(r => r.json() as Promise<{ admin?: boolean }>)
-      .then(data => {
+      .then((r) => r.json() as Promise<{ admin?: boolean }>)
+      .then((data) => {
         cachedIsAdmin = data.admin === true
-        adminCheckResolved = true
-        try { sessionStorage.setItem(ADMIN_CACHE_KEY, cachedIsAdmin ? '1' : '0') } catch { /* noop */ }
+        adminResolved = true
+        try { sessionStorage.setItem(ADMIN_CACHE_KEY, cachedIsAdmin ? '1' : '0') } catch { /* ignore */ }
       })
-      .catch(() => {
-        // Assume not admin on network error; don't suppress visitor data
-        cachedIsAdmin = false
-        adminCheckResolved = true
-      })
+      .catch(() => { cachedIsAdmin = false; adminResolved = true })
   }
 
-  // Kick off both session-scoped lookups immediately
   fetchCountry()
   fetchIsAdmin()
 
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
 
-  function payload(extra: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
+  // ── Ingestion ─────────────────────────────────────────────────────────
+  function send(eventName: string, payload: Record<string, unknown> = {}): void {
+    const body = JSON.stringify({
+      eventName,
+      payload,
+      visitorId: _visitorId,
+      sessionId: _sessionId,
+      pagePath: location.pathname,
+      referrer: document.referrer || null,
       country: cachedCountry,
-      userAgent: ua,
       isAdmin: cachedIsAdmin,
-      ...extra,
-    }
+      userAgent: ua,
+      clientTime: new Date().toISOString(),
+    })
+    fetch(`${ROUTE_BASE}/ingest`, {
+      method: 'POST',
+      credentials: 'omit',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      body,
+    }).catch(() => { /* fire-and-forget */ })
   }
 
-  // ── 4. Event forwarding ────────────────────────────────────────────────
+  // Expose a small surface for in-page code that wants to fire custom
+  // events (e.g. a CTA-click handler in a custom module).
+  window.__pb_analytics = {
+    visitorId: _visitorId,
+    sessionId: _sessionId,
+    send,
+  }
+
+  // ── DOM listeners ─────────────────────────────────────────────────────
   let pageStartTime    = Date.now()
   let interactionCount = 0
 
@@ -138,51 +153,59 @@ const ROUTE_BASE = '/admin/api/cms/plugins/pagebuilder.analytics/runtime'
   document.addEventListener('keypress', bumpInteraction, { passive: true, capture: true })
   document.addEventListener('scroll',   bumpInteraction, { passive: true, capture: true, once: true })
 
-  pb.hooks.on('page-view', (detail) => {
+  // Page view — fire on initial load.
+  function firePageView(): void {
     pageStartTime    = Date.now()
     interactionCount = 0
-    void pb.tracker.sendFor(PLUGIN_ID, 'page-view', payload({
-      path:     detail.path,
-      title:    detail.title,
-      referrer: document.referrer,
-    }))
-  })
-
-  pb.hooks.on('link-click', (detail) => {
-    const href = typeof detail.href === 'string' ? detail.href : ''
-    let outbound = false
-    try { outbound = href.startsWith('http') && new URL(href).hostname !== location.hostname } catch { /* noop */ }
-    void pb.tracker.sendFor(PLUGIN_ID, 'link-click', payload({ href, text: detail.text, outbound }))
-  })
-
-  pb.hooks.on('scroll-depth', (detail) => {
-    void pb.tracker.sendFor(PLUGIN_ID, 'scroll-depth', payload({ depth: detail.depth, path: location.pathname }))
-  })
-
-  // ── 5. Web Vitals ──────────────────────────────────────────────────────
-  interface VitalsBuffer {
-    lcp: number | null
-    cls: number
-    fid: number | null
+    send('page-view', { path: location.pathname, title: document.title })
   }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', firePageView, { once: true })
+  } else {
+    firePageView()
+  }
+
+  // Outbound link clicks.
+  document.addEventListener('click', (e) => {
+    const target = e.target as Element | null
+    const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null
+    if (!anchor) return
+    const href = anchor.getAttribute('href') ?? ''
+    let outbound = false
+    try { outbound = href.startsWith('http') && new URL(href).hostname !== location.hostname } catch { /* ignore */ }
+    send('link-click', {
+      href,
+      text: (anchor.textContent ?? '').trim().slice(0, 80),
+      outbound,
+    })
+  }, { capture: true })
+
+  // Scroll depth (25 / 50 / 75 / 100).
+  const seenDepth: Record<number, true> = {}
+  window.addEventListener('scroll', () => {
+    const pct = Math.round((window.scrollY + window.innerHeight) / document.documentElement.scrollHeight * 100)
+    for (const t of [25, 50, 75, 100]) {
+      if (pct >= t && !seenDepth[t]) {
+        seenDepth[t] = true
+        send('scroll-depth', { depth: t, path: location.pathname })
+      }
+    }
+  }, { passive: true })
+
+  // ── Web vitals (LCP, CLS, FID) flushed on page hide ───────────────────
+  interface VitalsBuffer { lcp: number | null; cls: number; fid: number | null }
   const vitals: VitalsBuffer = { lcp: null, cls: 0, fid: null }
-
-  function observeVitals(): void {
-    if (typeof PerformanceObserver === 'undefined') return
-
-    // LCP
+  if (typeof PerformanceObserver !== 'undefined') {
     try {
-      const lcpObs = new PerformanceObserver(list => {
+      const lcpObs = new PerformanceObserver((list) => {
         const entries = list.getEntries()
         const last = entries[entries.length - 1] as PerformanceEntry & { startTime: number }
         if (last) vitals.lcp = Math.round(last.startTime)
       })
       lcpObs.observe({ type: 'largest-contentful-paint', buffered: true })
     } catch { /* not supported */ }
-
-    // CLS
     try {
-      const clsObs = new PerformanceObserver(list => {
+      const clsObs = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           const e = entry as PerformanceEntry & { hadRecentInput?: boolean; value?: number }
           if (!e.hadRecentInput && typeof e.value === 'number') vitals.cls += e.value
@@ -190,10 +213,8 @@ const ROUTE_BASE = '/admin/api/cms/plugins/pagebuilder.analytics/runtime'
       })
       clsObs.observe({ type: 'layout-shift', buffered: true })
     } catch { /* not supported */ }
-
-    // FID
     try {
-      const fidObs = new PerformanceObserver(list => {
+      const fidObs = new PerformanceObserver((list) => {
         const first = list.getEntries()[0] as PerformanceEntry & { processingStart?: number; startTime: number }
         if (first && vitals.fid === null && first.processingStart !== undefined) {
           vitals.fid = Math.round(first.processingStart - first.startTime)
@@ -203,33 +224,29 @@ const ROUTE_BASE = '/admin/api/cms/plugins/pagebuilder.analytics/runtime'
     } catch { /* not supported */ }
   }
 
-  observeVitals()
-
   function flushVitals(): void {
     if (vitals.lcp === null && vitals.cls === 0 && vitals.fid === null) return
-    void pb.tracker.sendFor(PLUGIN_ID, 'web-vitals', payload({
-      lcp:  vitals.lcp,
-      cls:  Math.round(vitals.cls * 1000) / 1000,
-      fid:  vitals.fid,
+    send('web-vitals', {
+      lcp: vitals.lcp,
+      cls: Math.round(vitals.cls * 1000) / 1000,
+      fid: vitals.fid,
       path: location.pathname,
-    }))
+    })
   }
 
-  // ── 6. Bounce detection ────────────────────────────────────────────────
+  // ── Bounce detection ──────────────────────────────────────────────────
   function flushBounce(): void {
     if (interactionCount === 0 && Date.now() - pageStartTime < 10_000) {
-      void pb.tracker.sendFor(PLUGIN_ID, 'bounce', payload({ path: location.pathname }))
+      send('bounce', { path: location.pathname })
     }
   }
 
-  // ── Page hide — flush vitals and bounce ────────────────────────────────
   function onPageHide(): void {
     flushVitals()
     flushBounce()
   }
-
-  window.addEventListener('pagehide',      onPageHide, { capture: true, once: true })
-  window.addEventListener('beforeunload',  onPageHide, { capture: true, once: true })
+  window.addEventListener('pagehide',     onPageHide, { capture: true, once: true })
+  window.addEventListener('beforeunload', onPageHide, { capture: true, once: true })
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flushVitals()
   })

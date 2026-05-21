@@ -44,18 +44,17 @@ import {
 import { jsonResponse } from '../http'
 import { hookBus } from '@core/plugins/hookBus'
 import { requireCapability } from '../auth/authz'
+import { clearPluginCrashCounter, setCrashRecoveryHandler } from './host/crashRecovery'
+import { setPluginWorkerDbClient } from './host/registry'
 import {
-  clearPluginCrashCounter,
   findPluginRouteCapability,
   loadPluginInWorker,
-  resetPluginWorker,
   runLifecycleInWorker,
   runMigrateInWorker,
   runRouteInWorker,
-  setCrashRecoveryHandler,
-  setPluginWorkerDbClient,
   unloadPluginInWorker,
-} from './pluginWorkerHost'
+} from './host/rpc'
+import { resetPluginWorker } from './host/workerPool'
 import { broadcastPluginEvent } from './eventBroadcaster'
 
 // Re-export for callers that orchestrate manual restart (resets the
@@ -103,9 +102,9 @@ export async function refreshPluginSettingsCache(
   db: DbClient,
   pluginId: string,
 ): Promise<void> {
-  const plugin = await getInstalledPlugin(db, pluginId)
-  if (!plugin) return
-  pluginSettingsCache.set(pluginId, plugin.settings)
+  const result = await getInstalledPlugin(db, pluginId)
+  if (!result || result.kind !== 'ok') return
+  pluginSettingsCache.set(pluginId, result.plugin.settings)
 }
 
 // ---------------------------------------------------------------------------
@@ -264,8 +263,12 @@ export async function reloadAndActivatePlugin(
   uploadsDir?: string,
 ): Promise<void> {
   if (!uploadsDir) return
-  const plugin = await getInstalledPlugin(db, pluginId)
-  if (!plugin || !plugin.enabled) return
+  const result = await getInstalledPlugin(db, pluginId)
+  // Broken manifest or not found: nothing safe to reload. Callers that need
+  // to distinguish these cases (e.g. the restart handler) check the result
+  // before calling this helper.
+  if (!result || result.kind !== 'ok' || !result.plugin.enabled) return
+  const { plugin } = result
   const manifest: PluginManifest = {
     ...plugin.manifest,
     grantedPermissions: plugin.grantedPermissions,
@@ -391,8 +394,23 @@ export async function activateInstalledServerPlugins(
   const { startPublishScheduler } = await import('../publish/publishScheduler')
   startPublishScheduler(db)
 
-  const plugins = await listInstalledPlugins(db)
-  for (const plugin of plugins) {
+  const results = await listInstalledPlugins(db)
+  for (const result of results) {
+    // Phase: manifest-validation — the stored manifest_json failed to parse.
+    // Mark the plugin as broken in the DB so the admin UI surfaces the error,
+    // then skip to the next plugin.  All other enabled plugins continue to
+    // activate normally.
+    if (result.kind === 'broken') {
+      console.error(`[plugin:${result.id}] boot manifest-validation failed: ${result.reason}`)
+      try {
+        await setPluginLifecycleStatus(db, result.id, 'error', result.reason)
+      } catch (dbErr) {
+        console.error(`[plugin:${result.id}] failed to persist boot manifest error:`, dbErr)
+      }
+      continue
+    }
+
+    const { plugin } = result
     if (!plugin.enabled) continue
     const manifest: PluginManifest = {
       ...plugin.manifest,
@@ -406,9 +424,10 @@ export async function activateInstalledServerPlugins(
     // synchronously during `activate()`.
     pluginSettingsCache.set(manifest.id, plugin.settings)
 
-    // Module pack first — registers canvas modules in the host registry so
-    // server-rendered (publisher) and editor-rendered (canvas) pages can
-    // use them immediately.
+    // Phase: module-pack-load — registers canvas modules in the host registry
+    // so server-rendered (publisher) and editor-rendered (canvas) pages can
+    // use them immediately.  Failure is isolated: the server entrypoint can
+    // still activate even if the pack fails.
     if (
       manifest.entrypoints?.modules &&
       plugin.grantedPermissions.includes('modules.register')
@@ -417,17 +436,29 @@ export async function activateInstalledServerPlugins(
         const pack = await loadPluginModulePack(manifest, uploadsDir)
         if (pack) activateSandboxedPluginModulePack(manifest, pack)
       } catch (err) {
-        console.error(`[plugin:${manifest.id}] module pack load failed`, err)
+        const message = err instanceof Error ? err.message : 'Module pack load failed'
+        console.error(`[plugin:${manifest.id}] boot module-pack-load failed: ${message}`)
+        try {
+          await setPluginLifecycleStatus(db, manifest.id, 'error', message)
+        } catch (dbErr) {
+          console.error(`[plugin:${manifest.id}] failed to persist boot module-pack error:`, dbErr)
+        }
       }
     }
 
-    // Server entrypoint — load into worker, then run activate.
+    // Phase: server-entrypoint — load into worker, then run activate.
     if (manifest.entrypoints?.server) {
       try {
         const loaded = await loadPluginServerEntrypoint(manifest, uploadsDir)
         if (loaded) await runPluginLifecycle(manifest.id, 'activate')
       } catch (err) {
-        console.error(`[plugin:${manifest.id}] server entrypoint activation failed`, err)
+        const message = err instanceof Error ? err.message : 'Server entrypoint activation failed'
+        console.error(`[plugin:${manifest.id}] boot server-entrypoint failed: ${message}`)
+        try {
+          await setPluginLifecycleStatus(db, manifest.id, 'error', message)
+        } catch (dbErr) {
+          console.error(`[plugin:${manifest.id}] failed to persist boot entrypoint error:`, dbErr)
+        }
       }
     }
   }

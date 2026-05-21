@@ -45,7 +45,7 @@ function stripCommentsAndStrings(source: string): string {
 describe('plugin sandbox invariants', () => {
   it('pluginWorker.ts imports the QuickJS bridge (no fallback to dynamic import)', async () => {
     const source = await read('server/plugins/pluginWorker.ts')
-    expect(source).toContain("from './quickjsHost'")
+    expect(source).toContain("from './quickjs/vm'")
     expect(source).toContain('createPluginVm')
     // No dynamic import of arbitrary plugin code in the worker — that was
     // the pre-sandbox RCE pathway. `await import(`...) inside the worker
@@ -53,10 +53,10 @@ describe('plugin sandbox invariants', () => {
     expect(source).not.toMatch(/await\s+import\s*\(/)
   })
 
-  it('quickjsHost.ts uses sync QuickJS + ctx.newPromise (no asyncified host functions)', async () => {
-    const source = await read('server/plugins/quickjsHost.ts')
+  it('quickjs/vm.ts uses sync QuickJS + ctx.newPromise (no asyncified host functions)', async () => {
+    const source = await read('server/plugins/quickjs/vm.ts')
     // Sync variant — asyncified is known to corrupt VM state on the second
-    // async eval (see comment block at the top of quickjsHost.ts).
+    // async eval (see comment block at the top of vm.ts).
     expect(source).toContain('getQuickJS')
     expect(source).not.toContain('newQuickJSAsyncWASMModule')
     expect(source).not.toContain('newAsyncifiedFunction')
@@ -105,13 +105,18 @@ describe('plugin sandbox invariants', () => {
   })
 
   it('the network.outbound permission is fail-closed without an allowlist', async () => {
-    const source = await read('server/plugins/pluginWorkerHost.ts')
-    expect(source).toContain('hostMatchesAllowlist')
-    // The dispatch case must check both the permission AND the manifest's
-    // networkAllowedHosts. Missing either gate would be a security bug.
-    expect(source).toMatch(/case\s+'network\.fetch'/)
-    expect(source).toContain("assertHostPluginPermission(entry, 'network.outbound')")
-    expect(source).toContain('networkAllowedHosts')
+    // host/network.ts owns the allowlist check; host/handlers/network.ts owns
+    // the permission gate; host/apiDispatch.ts owns the dispatch case label.
+    const networkSource = await read('server/plugins/host/network.ts')
+    const dispatchSource = await read('server/plugins/host/apiDispatch.ts')
+    const networkHandlerSource = await read('server/plugins/host/handlers/network.ts')
+    expect(networkSource).toContain('hostMatchesAllowlist')
+    expect(networkSource).toContain('networkAllowedHosts')
+    // The dispatch case label must be present in apiDispatch.ts.
+    expect(dispatchSource).toMatch(/case\s+'network\.fetch'/)
+    // The permission gate must be present in the handler.
+    // Missing either gate would be a security bug.
+    expect(networkHandlerSource).toContain("assertHostPluginPermission(entry, 'network.outbound')")
   })
 
   it('BOOTSTRAP_SOURCE provides URL, URLSearchParams, TextEncoder, TextDecoder globals', async () => {
@@ -120,7 +125,7 @@ describe('plugin sandbox invariants', () => {
     // etc. without bundling its own implementations.
     // We check for the globalThis assignments rather than the implementation
     // details so the test stays stable across polyfill rewrites.
-    const source = await read('server/plugins/quickjsHost.ts')
+    const source = await read('server/plugins/quickjs/bootstrap/polyfills.ts')
     expect(source).toContain('globalThis.URL = ')
     expect(source).toContain('globalThis.URLSearchParams = ')
     expect(source).toContain('globalThis.TextEncoder = ')
@@ -140,7 +145,7 @@ describe('plugin sandbox invariants', () => {
     // module-private `const ALLOWED_API_TARGETS` — the constant is internal
     // to the protocol module today (consumers reach it via parseApiCall),
     // but the test cares about the *contents* not the visibility.
-    const source = await read('server/plugins/workerProtocol.ts')
+    const source = await read('server/plugins/protocol/targets.ts')
     const allowedListMatch = source.match(
       /(?:export\s+)?const ALLOWED_API_TARGETS = \[([\s\S]*?)\] as const/,
     )
@@ -155,6 +160,9 @@ describe('plugin sandbox invariants', () => {
       'cms.media.registerStorageAdapter',
       'cms.media.registerUrlTransformer',
       'cms.media.registerVariantDelegate',
+      'cms.pages.list',
+      'cms.pages.republish',
+      'cms.pages.republishAll',
       'cms.routes.register',
       'cms.schedule.cancel',
       'cms.schedule.register',

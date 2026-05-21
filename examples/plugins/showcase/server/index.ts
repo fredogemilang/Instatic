@@ -2,11 +2,17 @@
  * Showcase plugin — server entrypoint.
  *
  * Demonstrates four major server surfaces:
- *   1. Storage  — CRUD over plugin-owned `events` records
- *   2. Routes   — `/status` aggregates event counts
- *   3. Hooks    — listens to `tracker.event` and persists each event
- *   4. Filters  — appends a marker to every published page so the filter
- *                 pipeline is observable from the published HTML
+ *   1. Storage   — CRUD over plugin-owned `events` records
+ *   2. Routes    — `/status` aggregates event counts, `/ingest` receives
+ *                  events POSTed by this plugin's own frontend bundle
+ *   3. Filters   — `publish.html` appends a marker to every published page
+ *                  so the filter pipeline is observable from the HTML
+ *
+ * Notice how the plugin owns its frontend ingestion end-to-end: its IIFE
+ * (`frontend/tracker.ts`) POSTs to `routes.postPublic('/ingest', ...)`
+ * declared here. The host does not provide any shared frontend event
+ * channel — every plugin that wants to receive frontend events
+ * registers its own public route.
  */
 import type { ServerPluginApi, ServerPluginModule } from '@core/plugin-sdk'
 
@@ -23,47 +29,58 @@ const mod: ServerPluginModule = {
     const events = api.cms.storage.collection('events')
 
     api.cms.routes.get('/status', 'plugins.manage', async () => {
-      const all = await events.list()
+      const { records } = await events.list()
       const byEvent: Record<string, number> = {}
-      for (const record of all) {
+      for (const record of records) {
         const name = String(record.data.name || 'unknown')
         byEvent[name] = (byEvent[name] || 0) + 1
       }
       return {
         ok: true,
         plugin: api.plugin.id,
-        total: all.length,
+        total: records.length,
         byEvent,
       }
     })
 
     api.cms.routes.post('/clear', 'plugins.manage', async () => {
-      const all = await events.list()
-      await Promise.all(all.map((r) => events.delete(r.id)))
-      return { ok: true, deleted: all.length }
+      const { records } = await events.list()
+      await Promise.all(records.map((r) => events.delete(r.id)))
+      return { ok: true, deleted: records.length }
     })
 
-    api.cms.hooks.on('tracker.event', async (evt) => {
-      if (evt.pluginId !== api.plugin.id && evt.pluginId !== '__implicit__') return
+    // Frontend bundle POSTs events here. Plugin owns the envelope.
+    api.cms.routes.postPublic('/ingest', async (ctx) => {
+      const body = (ctx.body ?? {}) as Record<string, unknown>
+      const eventName = typeof body.eventName === 'string' ? body.eventName : ''
+      if (!eventName) {
+        return { __response: true, status: 400, headers: {}, body: '{"error":"missing eventName"}' }
+      }
 
       // Settings drive runtime behaviour — read live, not at activate-time,
       // so user edits in the Settings dialog take effect immediately.
       const prefix = api.cms.settings.get<string>('eventLabelPrefix') ?? ''
       const storeOutbound = api.cms.settings.get<boolean>('storeOutboundClicks') ?? true
-      if (evt.eventName === 'link-click' && !storeOutbound) return
+      if (eventName === 'link-click' && !storeOutbound) return { ok: true, skipped: true }
+
+      const payload = body.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)
+        ? body.payload as Record<string, unknown>
+        : {}
 
       try {
         await events.create({
-          name: prefix ? `${prefix}:${evt.eventName}` : evt.eventName,
-          page: evt.pagePath || '',
-          visitor: evt.visitorId || '',
-          session: evt.sessionId || '',
-          payload: JSON.stringify(evt.payload || {}),
-          'received-at': evt.receivedAt,
+          name: prefix ? `${prefix}:${eventName}` : eventName,
+          page:    typeof body.pagePath  === 'string' ? body.pagePath  : '',
+          visitor: typeof body.visitorId === 'string' ? body.visitorId : '',
+          session: typeof body.sessionId === 'string' ? body.sessionId : '',
+          payload: JSON.stringify(payload),
+          'received-at': new Date().toISOString(),
         })
+        return { ok: true }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         api.plugin.log('storage failed', message)
+        return { __response: true, status: 500, headers: {}, body: '{"error":"storage failed"}' }
       }
     })
 
@@ -79,9 +96,9 @@ const mod: ServerPluginModule = {
 
   async uninstall(api: ServerPluginApi) {
     const events = api.cms.storage.collection('events')
-    const all = await events.list()
-    await Promise.all(all.map((r) => events.delete(r.id)))
-    api.plugin.log(`Showcase plugin removed ${all.length} events`)
+    const { records } = await events.list()
+    await Promise.all(records.map((r) => events.delete(r.id)))
+    api.plugin.log(`Showcase plugin removed ${records.length} events`)
   },
 }
 

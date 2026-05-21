@@ -7,7 +7,7 @@ Production-grade SEO tooling for the Page Builder CMS. Automatically injects per
 ## What it does
 
 - **Per-page meta injection** — title override, meta description, OG/Twitter tags, canonical URL, noindex/nofollow, and custom JSON-LD are injected into every published page's `<head>` immediately before `</head>`.
-- **Automatic page discovery** — every page that is published at least once is added to an internal page index. No enumeration API is needed.
+- **Automatic page discovery** — the sitemap enumerates pages directly via `api.cms.pages.list()`, so it is complete immediately after install without requiring any pages to be re-published. Per-page metadata (title, canonical URL, no-index flag) is captured from the `publish.html` filter on each publish and stored in the page index for the admin dashboard.
 - **Sitemap.xml** — generated from the page index, skipping `no-index` pages. Updated every publish.
 - **Robots.txt** — operator-editable content with the `Sitemap:` directive appended automatically.
 - **OG image generation** — a daily 02:30 UTC job calls your provider endpoint for any page that has been rendered but has no OG image set.
@@ -152,7 +152,7 @@ All operator-controlled values (settings + seo-entry fields) are escaped through
 
 ### Page discovery
 
-Pages are added to the sitemap as they are published at least once. The `publish.html` filter captures metadata (title, canonical URL) from the rendered HTML. This is intentional — no page enumeration API exists in the plugin sandbox.
+The sitemap uses `api.cms.pages.list()` to enumerate all published pages directly. No pages need to be re-published after install for the sitemap to be complete. The `publish.html` filter captures per-page metadata (title, canonical URL, last-published timestamp) and stores it in the page index for the admin dashboard's SEO health view.
 
 ---
 

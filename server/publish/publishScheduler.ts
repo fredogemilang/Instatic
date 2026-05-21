@@ -77,7 +77,7 @@ let tickTimer: ReturnType<typeof setInterval> | null = null
 export function startPublishScheduler(db: DbClient): void {
   if (tickTimer !== null) return
   tickTimer = setInterval(() => {
-    void tickOnce(db).catch((err) => {
+    void tickPublishScheduler(db).catch((err) => {
       console.error('[publish-scheduler] tick failed:', err)
     })
   }, TICK_INTERVAL_MS)
@@ -97,7 +97,7 @@ export function stopPublishScheduler(): void {
  * One iteration of the tick. Exported for tests — production code uses
  * `startPublishScheduler` and lets `setInterval` drive.
  */
-export async function tickOnce(db: DbClient): Promise<void> {
+export async function tickPublishScheduler(db: DbClient): Promise<void> {
   const leaderToken = await tryAcquireLeader(db)
   if (!leaderToken) return
   try {

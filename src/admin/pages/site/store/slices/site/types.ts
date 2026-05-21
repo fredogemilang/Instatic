@@ -252,6 +252,12 @@ export interface SiteSlice {
  */
 export type SiteSliceImmerRecipe = (state: Draft<EditorStore>) => void | EditorStore
 
+/**
+ * Mutation recipes return `false` when they intentionally did not change the
+ * SiteDocument. `void` and `true` both mean the recipe performed a mutation.
+ */
+export type SiteMutationResult = void | boolean
+
 export interface SiteSliceHelpers {
   /** Raw set/get from the slice creator. Use only when no helper covers the case. */
   set: (recipe: SiteSliceImmerRecipe) => void
@@ -260,11 +266,11 @@ export interface SiteSliceHelpers {
   /** Snapshot current site into undo history, then clear redo stack. */
   pushHistory: () => void
 
-  /** Mutate the active page — auto-snapshots history first. */
-  mutatePage: (fn: (page: Page) => void) => void
+  /** Mutate the active page — commits undo history only on real changes. */
+  mutatePage: (fn: (page: Page) => SiteMutationResult) => boolean
 
   /**
-   * Mutate the active node tree — auto-snapshots history first.
+   * Mutate the active node tree — commits undo history only on real changes.
    *
    * Routes to the correct tree based on `activeDocument`:
    *   - Page mode (null or kind === 'page'): passes the active Page directly —
@@ -275,19 +281,27 @@ export interface SiteSliceHelpers {
    *     After the mutation, propagates any change in the VC's slot-outlet set
    *     to every consumer VC ref across all pages via `syncSlotInstances`.
    */
-  mutateActiveTree: (fn: (tree: NodeTree<PageNode>) => void) => void
+  mutateActiveTree: (fn: (tree: NodeTree<PageNode>) => SiteMutationResult) => boolean
 
   /**
    * Mutate the active node tree AND the surrounding site — auto-snapshots
-   * history first. Same active-document routing as `mutateActiveTree`, plus
+   * undo history only on real changes. Same active-document routing as `mutateActiveTree`, plus
    * a `SiteDocument` draft so callers can also mutate site-level state
    * (e.g. `site.classes` for scoped-class cloning) in one atomic recipe.
    */
   mutateActiveTreeAndSite: (
-    fn: (tree: NodeTree<PageNode>, site: SiteDocument) => void,
-  ) => void
+    fn: (tree: NodeTree<PageNode>, site: SiteDocument) => SiteMutationResult,
+  ) => boolean
 
-  /** Mutate the site — auto-snapshots history first. */
-  mutateSite: (fn: (site: SiteDocument) => void) => void
+  /** Mutate the site — commits undo history only on real changes. */
+  mutateSite: (fn: (site: SiteDocument) => SiteMutationResult) => boolean
+
+  /**
+   * Mutate the full editor state and site document in one undoable transaction.
+   * Use only when a site mutation must also update editor-local state such as
+   * the active document or selection.
+   */
+  mutateSiteState: (
+    fn: (state: Draft<EditorStore>, site: SiteDocument) => SiteMutationResult,
+  ) => boolean
 }
-

@@ -3,12 +3,10 @@ import React, { type ReactNode } from 'react'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from '@admin/lib/routing'
 import { Toolbar } from '@site/toolbar/Toolbar'
-import { PublishButton } from '@site/toolbar/PublishButton'
 import { AdminSessionProvider } from '@admin/session'
 import { StepUpProvider } from '@admin/shared/StepUp'
-import { useEditorStore } from '@site/store/store'
+import { useAdminUi } from '@admin/state/adminUi'
 import type { CmsCurrentUser } from '@core/persistence'
-import { makePage, makeSite } from '../fixtures'
 
 const now = '2026-05-07T10:00:00.000Z'
 
@@ -52,34 +50,24 @@ function Wrapper({ children }: { children: ReactNode }) {
   )
 }
 
-let originalFetch: typeof fetch
-
 beforeEach(() => {
   localStorage.clear()
-  originalFetch = globalThis.fetch
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ draftMatchesPublished: false }), { status: 200 })) as typeof fetch
-  const home = makePage({ id: 'page-home', title: 'Home', slug: 'index' })
-  const pricing = makePage({ id: 'page-pricing', title: 'Pricing', slug: 'pricing' })
-  useEditorStore.setState({
-    site: makeSite({ pages: [home, pricing] }),
-    activePageId: 'page-pricing',
-    activeDocument: null,
-    selectedNodeId: null,
-    selectedNodeIds: [],
-    hoveredNodeId: null,
-    hasUnsavedChanges: false,
-    previewOpen: false,
-  } as Parameters<typeof useEditorStore.setState>[0])
+  // OpenLivePageButton reads the active page slug from adminUi (NOT the
+  // editor store) so the same button can be mounted on every admin layout
+  // — including AdminPageLayout, which never loads the editor store. Tests
+  // set the slug directly here to simulate "the canvas is open at /<slug>".
+  useAdminUi.setState({ activePageSlug: null })
 })
 
 afterEach(() => {
-  globalThis.fetch = originalFetch
+  useAdminUi.setState({ activePageSlug: null })
   cleanup()
 })
 
-describe('Toolbar publishing actions', () => {
-  it('opens the active page in a new tab from the publishing actions menu', () => {
+describe('Toolbar — Open live page icon button', () => {
+  it('opens the active page in a new tab when a page is open in the editor', () => {
+    useAdminUi.setState({ activePageSlug: 'pricing' })
+
     const originalOpen = window.open
     const openCalls: unknown[] = []
     window.open = ((...args: unknown[]) => {
@@ -88,24 +76,76 @@ describe('Toolbar publishing actions', () => {
     }) as typeof window.open
 
     try {
-      // Toolbar is now prop-driven — the editor-only buttons (zoom,
-      // publish, settings) are passed in via the `rightSlot` by
-      // AdminCanvasLayout. This test exercises the PublishButton's
-      // "more actions" menu, so it has to provide the same mount.
+      // The "Open live page" icon button is rendered by the Toolbar
+      // itself (not the layout-supplied rightSlot) so every admin route
+      // gets it without per-layout wiring. We render the Toolbar with no
+      // rightSlot here — the icon must still appear.
       render(
         <Wrapper>
-          <Toolbar rightSlot={<PublishButton enabled={true} />} />
+          <Toolbar />
         </Wrapper>,
       )
 
       const toolbar = screen.getByTestId('toolbar')
-      fireEvent.click(within(toolbar).getByRole('button', { name: /more publishing actions/i }))
-      const menu = screen.getByRole('menu', { name: /publishing actions/i })
-      const openButton = within(menu).getByRole('menuitem', { name: /open live page/i })
-
+      const openButton = within(toolbar).getByTestId('toolbar-open-live-page-btn')
       fireEvent.click(openButton)
 
       expect(openCalls).toEqual([['/pricing', '_blank', 'noopener,noreferrer']])
+    } finally {
+      window.open = originalOpen
+    }
+  })
+
+  it('falls back to the site root when no page is active (non-editor routes)', () => {
+    // No activePageSlug set — this is the state on AdminPageLayout routes
+    // like /admin/plugins, /admin/users, /admin/account, etc.
+    const originalOpen = window.open
+    const openCalls: unknown[] = []
+    window.open = ((...args: unknown[]) => {
+      openCalls.push(args)
+      return null
+    }) as typeof window.open
+
+    try {
+      render(
+        <Wrapper>
+          <Toolbar />
+        </Wrapper>,
+      )
+
+      const toolbar = screen.getByTestId('toolbar')
+      const openButton = within(toolbar).getByTestId('toolbar-open-live-page-btn')
+      fireEvent.click(openButton)
+
+      expect(openCalls).toEqual([['/', '_blank', 'noopener,noreferrer']])
+    } finally {
+      window.open = originalOpen
+    }
+  })
+
+  it('opens "/" when the active page is the home page (slug "index")', () => {
+    // pagePublicPath maps the special "index" slug to "/" — the live URL
+    // of a published home page is the site root, not "/index".
+    useAdminUi.setState({ activePageSlug: 'index' })
+
+    const originalOpen = window.open
+    const openCalls: unknown[] = []
+    window.open = ((...args: unknown[]) => {
+      openCalls.push(args)
+      return null
+    }) as typeof window.open
+
+    try {
+      render(
+        <Wrapper>
+          <Toolbar />
+        </Wrapper>,
+      )
+
+      const toolbar = screen.getByTestId('toolbar')
+      fireEvent.click(within(toolbar).getByTestId('toolbar-open-live-page-btn'))
+
+      expect(openCalls).toEqual([['/', '_blank', 'noopener,noreferrer']])
     } finally {
       window.open = originalOpen
     }

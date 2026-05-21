@@ -15,7 +15,7 @@
  * authoring.
  */
 import { describe, expect, it } from 'bun:test'
-import { createPluginVm, type PluginVmEnv } from '../../../server/plugins/quickjsHost'
+import { createPluginVm, type PluginVmEnv } from '../../../server/plugins/quickjs/vm'
 
 interface RecorderEntry {
   target: string

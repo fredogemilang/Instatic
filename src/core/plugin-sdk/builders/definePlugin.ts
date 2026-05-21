@@ -26,7 +26,13 @@
  */
 
 import { PLUGIN_API_VERSION } from '../types'
-import type { PluginManifest, PluginAdminPage, PluginPermission, PluginResource } from '../types'
+import type {
+  PluginAdminPage,
+  PluginFrontendDeclarations,
+  PluginManifest,
+  PluginPermission,
+  PluginResource,
+} from '../types'
 import type { PluginModuleDefinition } from '../modules'
 import type { PluginPackContents } from './definePack'
 import {
@@ -92,10 +98,20 @@ export interface DefinePluginConfig {
   /**
    * Declarative plugin settings — the host renders a form using its
    * design-system primitives. Plugin reads values via
-   * `api.cms.settings.get(key)` (server / admin app) and
-   * `window.__pb.pluginSettings(id)` (frontend, non-secret values only).
+   * `api.cms.settings.get(key)` (server / admin app). Frontend bundles
+   * read settings via the plugin's own public route — the host does
+   * not expose plugin settings to the published page directly.
    */
   settings?: PluginSettingDefinition[]
+
+  /**
+   * Declarative frontend tag list — external/inline scripts, external/inline
+   * styles, `<link>`, and `<meta>` tags that the host injects into every
+   * published page on behalf of this plugin.
+   * Requires the `frontend.assets` permission. See `FrontendAsset` for
+   * the per-tag shape and the four placement anchors.
+   */
+  frontend?: PluginFrontendDeclarations
 }
 
 /**
@@ -169,6 +185,9 @@ export function definePlugin(config: DefinePluginConfig): PluginDefinition {
     ...(config.repository !== undefined ? { repository: config.repository } : {}),
     ...(config.keywords ? { keywords: [...config.keywords] } : {}),
     ...(config.icon !== undefined ? { icon: config.icon } : {}),
+    ...(config.frontend !== undefined
+      ? { frontend: { assets: config.frontend.assets.map((asset) => ({ ...asset })) } }
+      : {}),
   }
   return {
     manifest,

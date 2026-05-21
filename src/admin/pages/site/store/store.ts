@@ -11,12 +11,12 @@ import { createUiSlice } from './slices/uiSlice'
 import { createClassSlice } from './slices/classSlice'
 import { createFilesSlice } from './slices/filesSlice'
 import { createVisualComponentsSlice } from './slices/visualComponentsSlice'
-import { createSettingsSlice, bindEditorStoreApi as bindSettingsBridgeStoreApi } from './slices/settingsSlice'
+import { createSettingsSlice, bindSettingsBridgeStoreApi } from './slices/settingsSlice'
 import { createAgentSlice } from '@site/agent/agentSlice'
 import { createSitePanelSlice } from './slices/sitePanelSlice'
 import { createClipboardSlice } from './slices/clipboardSlice'
 import { setAgentStoreApi } from '@site/agent/storeRef'
-import { bindEditorStoreApi as bindPluginRuntimeStoreApi } from '@core/plugins/runtime'
+import { bindPluginRuntimeStoreApi } from '@core/plugins/runtime'
 import { useAdminUi } from '@admin/state/adminUi'
 
 /**
@@ -87,7 +87,7 @@ bindSettingsBridgeStoreApi(useEditorStore)
 // can subscribe without importing the editor store. This is a one-way
 // fan-out: editor → adminUi. The reverse path (admin shell calls
 // adminUi.openSettings → mirror back into the editor store) is wired in
-// `settingsSlice.bindEditorStoreApi` and gated by a re-entrance guard.
+// `settingsSlice.bindSettingsBridgeStoreApi` and gated by a re-entrance guard.
 useEditorStore.subscribe(
   (state) => ({ open: state.isSettingsOpen, section: state.activeSection }),
   ({ open, section }) => {

@@ -34,6 +34,7 @@ import {
   pluginsPayload,
   recordPluginAuditEvent,
   removePluginAssets,
+  removePluginVersionAssets,
 } from './shared'
 import { runPluginLifecycleHook } from './lifecycle'
 
@@ -50,8 +51,17 @@ async function setPluginEnabledFromRequest(
   pluginId: string,
   enabled: boolean,
 ): Promise<Response> {
-  const updated = await setPluginEnabled(db, pluginId, enabled)
-  if (!updated) return pluginNotFound()
+  const updatedResult = await setPluginEnabled(db, pluginId, enabled)
+  if (!updatedResult) return pluginNotFound()
+  // This shouldn't happen (we already rejected broken plugins before calling
+  // this helper), but guard defensively in case a concurrent mutation raced.
+  if (updatedResult.kind === 'broken') {
+    return jsonResponse(
+      { error: 'Cannot modify a plugin with a corrupt manifest — remove and reinstall it.' },
+      { status: 409 },
+    )
+  }
+  const updated = updatedResult.plugin
 
   await unloadPlugin(pluginId)
   const lifecycle = await runPluginLifecycleHook(
@@ -95,16 +105,42 @@ export async function handlePluginItem(
     const body = await readJsonObject(req)
     if (typeof body.enabled !== 'boolean') return badRequest('Plugin enabled must be a boolean')
 
-    const current = await getInstalledPlugin(db, pluginId)
-    if (!current) return pluginNotFound()
+    const lookup = await getInstalledPlugin(db, pluginId)
+    if (!lookup) return pluginNotFound()
+    if (lookup.kind === 'broken') {
+      return jsonResponse(
+        { error: 'Cannot modify a plugin with a corrupt manifest — remove and reinstall it.' },
+        { status: 409 },
+      )
+    }
 
     return setPluginEnabledFromRequest(req, db, options, user, pluginId, body.enabled)
   }
 
   if (req.method === 'DELETE') {
-    const current = await getInstalledPlugin(db, pluginId)
-    if (!current) return pluginNotFound()
+    const lookup = await getInstalledPlugin(db, pluginId)
+    if (!lookup) return pluginNotFound()
 
+    if (lookup.kind === 'broken') {
+      // Manifest is corrupt — skip lifecycle hooks (no valid plugin to uninstall).
+      // Delete the DB row and do a best-effort asset removal using the version
+      // stored in the row's own columns (reliable even when manifest_json is broken).
+      const deleted = await deletePlugin(db, pluginId)
+      if (!deleted) return pluginNotFound()
+      if (options.uploadsDir) {
+        await removePluginVersionAssets(options.uploadsDir, lookup.id, lookup.version)
+      }
+      await activateInstalledServerPlugins(db, options.uploadsDir)
+      await recordPluginAuditEvent(db, user, req, 'plugin.delete', lookup.id)
+      broadcastPluginEvent({
+        kind: 'uninstalled',
+        pluginId: lookup.id,
+        occurredAt: new Date().toISOString(),
+      })
+      return jsonResponse({ ok: true })
+    }
+
+    const current = lookup.plugin
     const lifecycle = await runPluginLifecycleHook(db, current, options, 'uninstall', current.lifecycleStatus)
     if (!lifecycle.ok) {
       return badRequest(lifecycle.plugin.lastError ?? 'Plugin uninstall failed')
@@ -148,8 +184,15 @@ export async function handlePluginRestart(
   pluginId: string,
 ): Promise<Response> {
   if (req.method !== 'POST') return methodNotAllowed()
-  const plugin = await getInstalledPlugin(db, pluginId)
-  if (!plugin) return pluginNotFound()
+  const lookup = await getInstalledPlugin(db, pluginId)
+  if (!lookup) return pluginNotFound()
+  if (lookup.kind === 'broken') {
+    return jsonResponse(
+      { error: 'Cannot restart a plugin with a corrupt manifest — remove and reinstall it.' },
+      { status: 409 },
+    )
+  }
+  const plugin = lookup.plugin
   if (!plugin.enabled) return badRequest('Cannot restart a disabled plugin — enable it first.')
 
   // Reset the crash counter + clear historical crash events so the UI starts
@@ -176,6 +219,7 @@ export async function handlePluginRestart(
     pluginId,
     occurredAt: new Date().toISOString(),
   })
-  const finalRow = (await getInstalledPlugin(db, pluginId)) ?? plugin
+  const finalResult = await getInstalledPlugin(db, pluginId)
+  const finalRow = (finalResult?.kind === 'ok' ? finalResult.plugin : null) ?? plugin
   return jsonResponse({ plugin: finalRow, ...(await pluginsPayload(db)) })
 }

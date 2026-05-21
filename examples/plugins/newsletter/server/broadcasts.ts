@@ -58,7 +58,7 @@ export function registerBroadcastRoutes(api: ServerPluginApi): void {
   // ── GET /broadcasts ───────────────────────────────────────────────────────
   api.cms.routes.get('/broadcasts', 'plugins.manage', async () => {
     try {
-      const all = await broadcasts.list()
+      const { records: all } = await broadcasts.list()
       return {
         ok: true,
         broadcasts: all.map((r) => {
@@ -163,7 +163,7 @@ export function registerBroadcastRoutes(api: ServerPluginApi): void {
         return { error: 'Valid email address required' }
       }
 
-      const allBroadcasts = await broadcasts.list()
+      const { records: allBroadcasts } = await broadcasts.list()
       const bRecord = allBroadcasts.find((r) => r.id === id)
       if (!bRecord) return { error: 'Broadcast not found' }
 
@@ -215,10 +215,10 @@ export function registerBroadcastSchedule(api: ServerPluginApi): void {
     maxDurationMs: 120_000,
     handler: async () => {
       const now = new Date().toISOString()
-      const allBroadcasts = await broadcasts.list()
-      const due = allBroadcasts.filter((r) => {
-        const d = r.data as BroadcastData
-        return d.status === 'scheduled' && d.scheduledAt != null && d.scheduledAt <= now
+      // Push the status + scheduledAt filter to the DB layer.
+      // ISO 8601 strings compare correctly lexicographically, so lte works fine.
+      const { records: due } = await broadcasts.list({
+        filter: { status: 'scheduled', scheduledAt: { lte: now } },
       })
 
       for (const bRecord of due) {
@@ -247,7 +247,7 @@ async function executeSend(
   subs: ReturnType<ServerPluginApi['cms']['storage']['collection']>,
   deliveries: ReturnType<ServerPluginApi['cms']['storage']['collection']>,
 ): Promise<Record<string, unknown>> {
-  const allBroadcasts = await broadcasts.list()
+  const { records: allBroadcasts } = await broadcasts.list()
   const bRecord = allBroadcasts.find((r) => r.id === broadcastId)
   if (!bRecord) return { error: 'Broadcast not found' }
 
@@ -269,11 +269,17 @@ async function executeSend(
     return { error: 'Resend API key or from address not configured' }
   }
 
-  // Collect confirmed subscribers in the target lists.
-  const allSubs = await subs.list()
-  const targetSubs = allSubs.filter((r) => {
+  // Fetch only confirmed subscribers — status is a scalar field so eq works.
+  // listId membership still requires JS filtering (listIds is a JSON array;
+  // array-contains is not expressible with the available filter operators).
+  // Limit: 1000 (storage API cap). Newsletters with more recipients would
+  // need cursor-based pagination — acceptable for a pre-release build.
+  const { records: confirmedSubs } = await subs.list({
+    filter: { status: 'confirmed' },
+    limit: 1000,
+  })
+  const targetSubs = confirmedSubs.filter((r) => {
     const sub = r.data as SubscriberData
-    if (sub.status !== 'confirmed') return false
     if (d.listIds.length === 0) return true
     return d.listIds.some((lid) => sub.listIds.includes(lid))
   })

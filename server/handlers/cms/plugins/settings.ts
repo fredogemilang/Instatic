@@ -32,8 +32,15 @@ export async function handlePluginSettings(
   user: AuthUser,
   pluginId: string,
 ): Promise<Response> {
-  const plugin = await getInstalledPlugin(db, pluginId)
-  if (!plugin) return pluginNotFound()
+  const result = await getInstalledPlugin(db, pluginId)
+  if (!result) return pluginNotFound()
+  if (result.kind === 'broken') {
+    return jsonResponse(
+      { error: 'Cannot manage settings for a plugin with a corrupt manifest — remove and reinstall it.' },
+      { status: 409 },
+    )
+  }
+  const plugin = result.plugin
   const declared = (plugin.manifest.settings ?? []) as PluginSettingDefinition[]
   if (declared.length === 0) {
     return badRequest(`Plugin "${pluginId}" does not declare settings`)

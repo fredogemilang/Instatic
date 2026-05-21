@@ -1,5 +1,6 @@
 import { Type } from '@sinclair/typebox'
 import type { PluginRecord, PluginResource } from '@core/plugin-sdk'
+import type { StorageListOptions } from '@core/plugin-sdk/storageSchemas'
 import { readEnvelope } from './httpJson'
 import { responseErrorMessage } from './httpErrors'
 
@@ -8,6 +9,7 @@ type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respo
 interface PluginRecordsPayload {
   resource?: PluginResource
   records?: PluginRecord[]
+  totalCount?: number
 }
 
 // Envelope schemas — same strategy as cmsContent / cmsPlugins. PluginRecord
@@ -19,6 +21,7 @@ const PluginRecordsEnvelope = Type.Object(
   {
     resource: Type.Optional(Type.Unknown()),
     records: Type.Optional(Type.Array(Type.Unknown())),
+    totalCount: Type.Optional(Type.Integer({ minimum: 0 })),
   },
   { additionalProperties: true },
 )
@@ -32,19 +35,35 @@ function recordsPath(basePath: string, pluginId: string, resourceId: string): st
   return `${basePath}/plugins/${encodeURIComponent(pluginId)}/resources/${encodeURIComponent(resourceId)}/records`
 }
 
+function buildQueryString(options?: StorageListOptions): string {
+  if (!options) return ''
+  const sp = new URLSearchParams()
+  if (options.filter !== undefined) sp.set('filter', JSON.stringify(options.filter))
+  if (options.orderBy !== undefined) sp.set('orderBy', JSON.stringify(options.orderBy))
+  if (options.limit !== undefined) sp.set('limit', String(options.limit))
+  if (options.offset !== undefined) sp.set('offset', String(options.offset))
+  const qs = sp.toString()
+  return qs ? `?${qs}` : ''
+}
+
 export async function listCmsPluginResourceRecords(
   pluginId: string,
   resourceId: string,
   fetchImpl: FetchLike = globalThis.fetch.bind(globalThis),
   basePath = '/admin/api/cms',
-): Promise<PluginRecord[]> {
-  const res = await fetchImpl(recordsPath(basePath, pluginId, resourceId), {
+  options?: StorageListOptions,
+): Promise<{ records: PluginRecord[]; totalCount: number }> {
+  const url = recordsPath(basePath, pluginId, resourceId) + buildQueryString(options)
+  const res = await fetchImpl(url, {
     method: 'GET',
     credentials: 'include',
   })
   const body = await readEnvelope(res, PluginRecordsEnvelope, `CMS plugin records failed with ${res.status}`)
   const cast = body as PluginRecordsPayload
-  return Array.isArray(cast.records) ? cast.records : []
+  return {
+    records: Array.isArray(cast.records) ? cast.records : [],
+    totalCount: typeof cast.totalCount === 'number' ? cast.totalCount : 0,
+  }
 }
 
 export async function loadCmsPluginResource(
@@ -52,7 +71,7 @@ export async function loadCmsPluginResource(
   resourceId: string,
   fetchImpl: FetchLike = globalThis.fetch.bind(globalThis),
   basePath = '/admin/api/cms',
-): Promise<{ resource: PluginResource; records: PluginRecord[] }> {
+): Promise<{ resource: PluginResource; records: PluginRecord[]; totalCount: number }> {
   const res = await fetchImpl(recordsPath(basePath, pluginId, resourceId), {
     method: 'GET',
     credentials: 'include',
@@ -63,6 +82,7 @@ export async function loadCmsPluginResource(
   return {
     resource: cast.resource,
     records: Array.isArray(cast.records) ? cast.records : [],
+    totalCount: typeof cast.totalCount === 'number' ? cast.totalCount : 0,
   }
 }
 

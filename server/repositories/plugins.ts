@@ -6,8 +6,26 @@ import type {
   PluginRecord,
 } from '@core/plugin-sdk'
 import { pluginSettingsDefaults } from '@core/plugin-sdk'
+import type { StorageListOptions, StorageFilterOperator } from '@core/plugin-sdk/storageSchemas'
 import { parsePluginManifest } from '@core/plugins/manifest'
-import type { DbClient } from '../db/client'
+import type { DbClient, Dialect } from '../db/client'
+import { jsonField } from '../db/jsonExtract'
+
+/**
+ * Discriminated union returned by every repository function that reads an
+ * installed-plugin row and needs to parse the stored `manifest_json`.
+ *
+ * `kind: 'ok'`     — manifest parsed successfully; `plugin` is fully typed.
+ * `kind: 'broken'` — manifest_json is corrupt or fails validation; the row
+ *                    still exists in the DB. `id`, `name`, `version` come
+ *                    from the row's own columns (written at install time and
+ *                    never derived from manifest_json), so they are reliable
+ *                    even when the manifest payload cannot be parsed.
+ *                    `reason` is the message from the parse error.
+ */
+export type InstalledPluginResult =
+  | { kind: 'ok'; plugin: InstalledPlugin }
+  | { kind: 'broken'; id: string; name: string; version: string; rawManifest: unknown; reason: string }
 
 interface InstalledPluginRow {
   id: string
@@ -53,26 +71,41 @@ function writeJson(value: unknown): string {
   return JSON.stringify(value)
 }
 
-function mapInstalledPlugin(row: InstalledPluginRow): InstalledPlugin {
-  const manifest = parsePluginManifest(readManifestJson(row.manifest_json))
-  const grantedPermissions = readManifestJson(row.granted_permissions_json)
-  const lifecycleStatus = readLifecycleStatus(row.lifecycle_status, Boolean(row.enabled))
-  const storedSettings = readManifestJson(row.settings_json)
-  const settings = mergeSettingsWithDefaults(manifest, storedSettings)
-  return {
-    id: row.id,
-    name: row.name,
-    version: row.version,
-    enabled: Boolean(row.enabled),
-    lifecycleStatus,
-    lastError: row.last_error ?? null,
-    grantedPermissions: Array.isArray(grantedPermissions)
-      ? grantedPermissions as PluginPermission[]
-      : manifest.grantedPermissions ?? [],
-    manifest,
-    settings,
-    installedAt: toIsoString(row.installed_at),
-    updatedAt: toIsoString(row.updated_at),
+function mapInstalledPlugin(row: InstalledPluginRow): InstalledPluginResult {
+  const rawManifest = readManifestJson(row.manifest_json)
+  try {
+    const manifest = parsePluginManifest(rawManifest)
+    const grantedPermissions = readManifestJson(row.granted_permissions_json)
+    const lifecycleStatus = readLifecycleStatus(row.lifecycle_status, Boolean(row.enabled))
+    const storedSettings = readManifestJson(row.settings_json)
+    const settings = mergeSettingsWithDefaults(manifest, storedSettings)
+    return {
+      kind: 'ok',
+      plugin: {
+        id: row.id,
+        name: row.name,
+        version: row.version,
+        enabled: Boolean(row.enabled),
+        lifecycleStatus,
+        lastError: row.last_error ?? null,
+        grantedPermissions: Array.isArray(grantedPermissions)
+          ? grantedPermissions as PluginPermission[]
+          : manifest.grantedPermissions ?? [],
+        manifest,
+        settings,
+        installedAt: toIsoString(row.installed_at),
+        updatedAt: toIsoString(row.updated_at),
+      },
+    }
+  } catch (err) {
+    return {
+      kind: 'broken',
+      id: row.id,
+      name: row.name,
+      version: row.version,
+      rawManifest,
+      reason: err instanceof Error ? err.message : 'Invalid plugin manifest',
+    }
   }
 }
 
@@ -124,7 +157,7 @@ function mapPluginRecord(row: PluginRecordRow): PluginRecord {
   }
 }
 
-export async function listInstalledPlugins(db: DbClient): Promise<InstalledPlugin[]> {
+export async function listInstalledPlugins(db: DbClient): Promise<InstalledPluginResult[]> {
   const { rows } = await db<InstalledPluginRow>`
     select id, name, version, enabled, lifecycle_status, last_error,
            granted_permissions_json, manifest_json, settings_json, installed_at, updated_at
@@ -134,7 +167,7 @@ export async function listInstalledPlugins(db: DbClient): Promise<InstalledPlugi
   return rows.map(mapInstalledPlugin)
 }
 
-export async function getInstalledPlugin(db: DbClient, id: string): Promise<InstalledPlugin | null> {
+export async function getInstalledPlugin(db: DbClient, id: string): Promise<InstalledPluginResult | null> {
   const { rows } = await db<InstalledPluginRow>`
     select id, name, version, enabled, lifecycle_status, last_error,
            granted_permissions_json, manifest_json, settings_json, installed_at, updated_at
@@ -170,14 +203,20 @@ export async function installPlugin(
     returning id, name, version, enabled, lifecycle_status, last_error,
               granted_permissions_json, manifest_json, settings_json, installed_at, updated_at
   `
-  return mapInstalledPlugin(rows[0])
+  const result = mapInstalledPlugin(rows[0])
+  // installPlugin is always called with a freshly-validated manifest — a
+  // broken result here indicates a serialisation invariant violation.
+  if (result.kind !== 'ok') {
+    throw new Error(`[plugins] Failed to re-parse just-installed manifest for "${manifest.id}": ${result.reason}`)
+  }
+  return result.plugin
 }
 
 export async function setPluginEnabled(
   db: DbClient,
   id: string,
   enabled: boolean,
-): Promise<InstalledPlugin | null> {
+): Promise<InstalledPluginResult | null> {
   const { rows } = await db<InstalledPluginRow>`
     update installed_plugins set enabled = ${enabled}, updated_at = current_timestamp
     where id = ${id}
@@ -192,7 +231,7 @@ export async function setPluginLifecycleStatus(
   id: string,
   lifecycleStatus: PluginLifecycleStatus,
   lastError: string | null = null,
-): Promise<InstalledPlugin | null> {
+): Promise<InstalledPluginResult | null> {
   const { rows } = await db<InstalledPluginRow>`
     update installed_plugins set lifecycle_status = ${lifecycleStatus}, last_error = ${lastError}, updated_at = current_timestamp
     where id = ${id}
@@ -211,7 +250,7 @@ export async function setPluginSettings(
   db: DbClient,
   id: string,
   settings: Record<string, string | number | boolean>,
-): Promise<InstalledPlugin | null> {
+): Promise<InstalledPluginResult | null> {
   const { rows } = await db<InstalledPluginRow>`
     update installed_plugins
        set settings_json = ${writeJson(settings)},
@@ -223,18 +262,131 @@ export async function setPluginSettings(
   return rows[0] ? mapInstalledPlugin(rows[0]) : null
 }
 
+/** Identifier regex — same rule as the jsonField() helper. */
+const FIELD_KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+
+/** Build a dialect-appropriate positional parameter placeholder. */
+function placeholder(dialect: Dialect, index: number): string {
+  return dialect === 'postgres' ? `$${index}` : '?'
+}
+
 export async function listPluginRecords(
   db: DbClient,
   pluginId: string,
   resourceId: string,
-): Promise<PluginRecord[]> {
-  const { rows } = await db<PluginRecordRow>`
+  options: StorageListOptions = {},
+): Promise<{ records: PluginRecord[]; totalCount: number }> {
+  const { filter, orderBy, limit = 100, offset = 0 } = options
+
+  const params: unknown[] = [pluginId, resourceId]
+  let paramIdx = 2
+
+  // Returns the next positional placeholder AND appends the value to params.
+  function addParam(value: unknown): string {
+    params.push(value)
+    paramIdx++
+    return placeholder(db.dialect, paramIdx)
+  }
+
+  // --- WHERE clause ---
+  let whereSql = `plugin_id = ${placeholder(db.dialect, 1)} and resource_id = ${placeholder(db.dialect, 2)}`
+
+  if (filter) {
+    for (const [key, value] of Object.entries(filter)) {
+      if (!FIELD_KEY_RE.test(key)) {
+        throw new Error(`[plugin:storage] invalid filter field name: ${JSON.stringify(key)}`)
+      }
+      const fragment = jsonField('data_json', key, db.dialect).sql
+
+      if (value === null || typeof value !== 'object') {
+        // Shorthand primitive — treat as eq
+        whereSql += ` and ${fragment} = ${addParam(value)}`
+      } else {
+        // Full operator object
+        const op = value as StorageFilterOperator
+        if (op.eq !== undefined) {
+          whereSql += ` and ${fragment} = ${addParam(op.eq)}`
+        }
+        if (op.ne !== undefined) {
+          whereSql += ` and ${fragment} != ${addParam(op.ne)}`
+        }
+        if (op.gt !== undefined) {
+          whereSql += ` and ${fragment} > ${addParam(op.gt)}`
+        }
+        if (op.gte !== undefined) {
+          whereSql += ` and ${fragment} >= ${addParam(op.gte)}`
+        }
+        if (op.lt !== undefined) {
+          whereSql += ` and ${fragment} < ${addParam(op.lt)}`
+        }
+        if (op.lte !== undefined) {
+          whereSql += ` and ${fragment} <= ${addParam(op.lte)}`
+        }
+        if (op.in !== undefined) {
+          if (op.in.length === 0) {
+            // Empty IN list — no rows can ever match
+            whereSql += ` and 1=0`
+          } else {
+            const inPlaceholders: string[] = op.in.map((v) => addParam(v))
+            whereSql += ` and ${fragment} in (${inPlaceholders.join(', ')})`
+          }
+        }
+        if (op.like !== undefined) {
+          whereSql += ` and lower(${fragment}) like lower(${addParam(op.like)})`
+        }
+      }
+    }
+  }
+
+  // Snapshot how many params the WHERE clause uses (for count query).
+  const countParamCount = params.length
+
+  // --- ORDER BY clause ---
+  let orderBySql = 'created_at desc'
+  if (orderBy && Object.keys(orderBy).length > 0) {
+    const parts: string[] = []
+    for (const [key, dir] of Object.entries(orderBy)) {
+      if (!FIELD_KEY_RE.test(key)) {
+        throw new Error(`[plugin:storage] invalid orderBy field name: ${JSON.stringify(key)}`)
+      }
+      const fragment = jsonField('data_json', key, db.dialect).sql
+      parts.push(`${fragment} ${dir}`)
+    }
+    orderBySql = parts.join(', ')
+  }
+
+  // --- LIMIT / OFFSET (appended after count params are captured) ---
+  const limitPlaceholder = addParam(limit)
+  const offsetPlaceholder = addParam(offset)
+
+  const dataSql = `
     select id, plugin_id, resource_id, data_json, created_at, updated_at
     from plugin_records
-    where plugin_id = ${pluginId} and resource_id = ${resourceId}
-    order by created_at desc
+    where ${whereSql}
+    order by ${orderBySql}
+    limit ${limitPlaceholder} offset ${offsetPlaceholder}
   `
-  return rows.map(mapPluginRecord)
+
+  const countSql = `
+    select count(*) as total
+    from plugin_records
+    where ${whereSql}
+  `
+
+  const dataParams = params
+  const countParams = params.slice(0, countParamCount)
+
+  const [dataResult, countResult] = await Promise.all([
+    db.unsafe<PluginRecordRow>(dataSql, dataParams),
+    db.unsafe<{ total: number | bigint | string }>(countSql, countParams),
+  ])
+
+  const totalCount = Number(countResult.rows[0]?.total ?? 0)
+
+  return {
+    records: dataResult.rows.map(mapPluginRecord),
+    totalCount,
+  }
 }
 
 export async function createPluginRecord(
