@@ -125,7 +125,7 @@ const LEGACY_IMPORTS: ForbiddenPattern[] = [
  *     not the legacy schema field). These are call-site identifiers, not
  *     schema definitions, so they are not part of the rename.
  *
- *   - `src/core/plugin-sdk/types.ts` — plugin event names like
+ *   - `src/core/plugin-sdk/types/` — plugin event names like
  *     `content.entry.*` use "collection" in their string identifiers.
  *     This is a separate naming concern not covered by the schema rename.
  *
@@ -155,7 +155,7 @@ const COLLECTION_ID_RENAME: ForbiddenPattern[] = [
       // Local variable names referring to DataTable.id, not the legacy schema field.
       join(PROJECT_ROOT, 'src/admin/pages/content/'),
       // Plugin event names (content.entry.*) — out of scope for this rename.
-      join(PROJECT_ROOT, 'src/core/plugin-sdk/types.ts'),
+      join(PROJECT_ROOT, 'src/core/plugin-sdk/types/'),
     ],
   },
 ]

@@ -20,7 +20,7 @@ async function read(relative: string): Promise<string> {
 
 describe('cms.pages plugin API surface', () => {
   it('ServerPluginApi.cms exposes pages.list, pages.republish, and pages.republishAll', async () => {
-    const source = await read('src/core/plugin-sdk/types.ts')
+    const source = await read('src/core/plugin-sdk/types/serverApi.ts')
     // The pages surface must be declared inside the cms object
     expect(source).toContain('pages.list')
     expect(source).toContain('pages.republish')
@@ -28,7 +28,7 @@ describe('cms.pages plugin API surface', () => {
   })
 
   it('cms.pages.read and cms.pages.publish are in PLUGIN_PERMISSION_VALUES', async () => {
-    const source = await read('src/core/plugin-sdk/types.ts')
+    const source = await read('src/core/plugin-sdk/types/permissions.ts')
     expect(source).toContain("'cms.pages.read'")
     expect(source).toContain("'cms.pages.publish'")
   })

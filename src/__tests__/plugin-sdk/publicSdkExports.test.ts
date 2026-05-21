@@ -80,7 +80,7 @@ describe('public plugin SDK exports', () => {
   })
 
   it('does not expose raw database access in server route context', async () => {
-    const content = await readFile(join(repoRoot, 'src/core/plugin-sdk/types.ts'), 'utf8')
+    const content = await readFile(join(repoRoot, 'src/core/plugin-sdk/types/routes.ts'), 'utf8')
     const routeContext = content.match(
       /export\s+interface\s+ServerPluginRouteContext\s+\{([\s\S]*?)\n\}/,
     )

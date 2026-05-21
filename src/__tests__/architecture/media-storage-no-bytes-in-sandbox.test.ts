@@ -33,7 +33,7 @@ async function read(relative: string): Promise<string> {
 
 describe('media storage — no bytes in sandbox', () => {
   it('MediaStorageBeginWriteInput carries metadata only, not bytes', async () => {
-    const source = await read('src/core/plugin-sdk/types.ts')
+    const source = await read('src/core/plugin-sdk/types/media.ts')
     // Locate the interface body and assert the byte-shaped names aren't in it.
     const match = source.match(
       /export interface MediaStorageBeginWriteInput \{([\s\S]*?)\}/,
