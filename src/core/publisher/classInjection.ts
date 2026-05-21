@@ -16,7 +16,7 @@
  * duplicated lines.
  */
 
-import type { SiteDocument } from '@core/page-tree/schemas'
+import type { SiteDocument } from '@core/page-tree'
 import { classNamesForClassIds } from '@core/page-tree/classNames'
 import { escapeHtml } from './utils'
 

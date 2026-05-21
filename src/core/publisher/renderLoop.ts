@@ -11,7 +11,7 @@
  * only thing that knows both ends of the recursion.
  */
 
-import type { PageNode } from '@core/page-tree/schemas'
+import type { PageNode } from '@core/page-tree'
 import type { LoopItem } from '@core/loops/types'
 import { resolveHtmlTag } from '@modules/base/utils/htmlTag'
 import { injectNodeClassIds } from './classInjection'

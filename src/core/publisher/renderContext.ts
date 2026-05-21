@@ -8,7 +8,7 @@
  * same type without circular dependencies.
  */
 
-import type { Page, SiteDocument } from '@core/page-tree/schemas'
+import type { Page, SiteDocument } from '@core/page-tree'
 import type { IModuleRegistry } from '@core/module-engine/types'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import type { LoopFetchResult } from '@core/loops/types'

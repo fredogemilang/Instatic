@@ -25,7 +25,7 @@
  * so existing callers (modules, server, tests) don't need to retarget.
  */
 
-import type { Page, SiteDocument } from '@core/page-tree/schemas'
+import type { Page, SiteDocument } from '@core/page-tree'
 import type { IModuleRegistry } from '@core/module-engine/types'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { buildPageFrame, buildSiteFrame, buildRouteFrame } from '@core/templates/contextFrames'

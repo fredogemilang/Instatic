@@ -12,7 +12,7 @@
  * only thing that knows both ends of the recursion.
  */
 
-import type { Page, PageNode } from '@core/page-tree/schemas'
+import type { Page, PageNode } from '@core/page-tree'
 import { selectVisualComponentById } from '@core/page-tree/siteSelectors'
 import { instantiateVCAtRef, type InstantiatedVCNode } from '@core/visualComponents/instantiate'
 import { injectNodeClassIds } from './classInjection'

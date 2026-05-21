@@ -21,7 +21,7 @@
  * ~60–80% on typical pages.
  */
 
-import type { PageNode } from '@core/page-tree/schemas'
+import type { PageNode } from '@core/page-tree'
 import type { AnyModuleDefinition } from '@core/module-engine/types'
 import { resolveProps } from '@core/page-tree/selectors'
 import { resolveDynamicProps } from '@core/templates/dynamicBindings'
