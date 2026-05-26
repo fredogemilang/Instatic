@@ -282,10 +282,17 @@
     border-radius: var(--editor-radius-sm);
 }
 
-.paneSearch {
+/*
+ * The right-pane search bar keeps its native pill design (per
+ * `docs/design.md` — inputs are bordered + pill-radius). It sits inside
+ * a small inset wrapper so it floats above the field list instead of
+ * fighting it for the pane's top edge.
+ */
+.fieldSearchHeader {
     flex-shrink: 0;
+    padding: 10px 12px 8px;
     border-bottom: 1px solid var(--editor-border);
-    border-radius: 0;
+    background: var(--editor-surface-2);
 }
 
 /* ── Field row internals ─────────────────────────────────────────────────── */

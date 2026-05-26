@@ -28,7 +28,7 @@ import { getFieldIcon } from '@admin/pages/data/utils/fieldIcons'
 import { isFieldBindable, type PropertyControlKind } from '../bindingCompatibility'
 import { _cachedMeta, loadDataMeta } from './cache'
 import { previewCmsDataLoopItems } from '@core/persistence/cmsData'
-import { SYSTEM_SOURCES, type SystemSource, type SystemSourceId } from '../systemSources'
+import { SYSTEM_SOURCES, type SystemSourceId } from '../systemSources'
 import {
   buildPageFrame,
   buildSiteFrame,
@@ -167,7 +167,6 @@ export function BindingPickerDialog({
 
   // ─── Picker state ──────────────────────────────────────────────────────
   const [selectedTableKey, setSelectedTableKey] = useState<string | null>(null)
-  const [tableSearch, setTableSearch] = useState('')
   const [fieldSearch, setFieldSearch] = useState('')
   const [pendingBinding, setPendingBinding] = useState<DynamicPropBinding | null>(null)
   // Hovered field id — drives the live preview pane on the right so users
@@ -210,7 +209,6 @@ export function BindingPickerDialog({
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!open) return
-    setTableSearch('')
     setFieldSearch('')
     setPendingBinding(null)
     if (scopedTable) {
@@ -338,18 +336,19 @@ export function BindingPickerDialog({
     [rightPaneGroups],
   )
 
-  // ─── Table lists for left pane ─────────────────────────────────────────
-  const postTypeTables = useMemo(() => {
-    if (!meta) return []
-    const q = tableSearch.trim().toLowerCase()
-    return meta.tables.filter((t) => t.kind === 'postType' && (!q || t.name.toLowerCase().includes(q)))
-  }, [meta, tableSearch])
+  // ─── Table existence checks ────────────────────────────────────────────
+  // The unscoped left pane only lists System sources. We still need to
+  // know whether ANY tables exist in the system so the footer hint can
+  // point authors at the loop / template workflow when relevant.
+  const postTypeTables = useMemo(
+    () => (meta ? meta.tables.filter((t) => t.kind === 'postType') : []),
+    [meta],
+  )
 
-  const dataTables = useMemo(() => {
-    if (!meta) return []
-    const q = tableSearch.trim().toLowerCase()
-    return meta.tables.filter((t) => t.kind === 'data' && (!q || t.name.toLowerCase().includes(q)))
-  }, [meta, tableSearch])
+  const dataTables = useMemo(
+    () => (meta ? meta.tables.filter((t) => t.kind === 'data') : []),
+    [meta],
+  )
 
   // ─── Handlers ──────────────────────────────────────────────────────────
   function handleTableSelect(key: string) {
@@ -600,13 +599,14 @@ export function BindingPickerDialog({
 
     return (
       <>
-        <SearchBar
-          value={fieldSearch}
-          onValueChange={setFieldSearch}
-          placeholder="Search fields…"
-          className={styles.paneSearch}
-          aria-label="Search fields"
-        />
+        <div className={styles.fieldSearchHeader}>
+          <SearchBar
+            value={fieldSearch}
+            onValueChange={setFieldSearch}
+            placeholder="Search fields…"
+            aria-label="Search fields"
+          />
+        </div>
         <div className={styles.fieldList}>
           {allFieldsIncompatible && (
             <p className={styles.incompatibleHint}>
@@ -652,23 +652,13 @@ export function BindingPickerDialog({
   // points authors at the loop / template flow when tables exist in the
   // system but aren't reachable.
   function renderLeftPane() {
-    const q = tableSearch.trim().toLowerCase()
-    const visibleSystemSources: SystemSource[] = q
-      ? SYSTEM_SOURCES.filter((s) => s.label.toLowerCase().includes(q) || s.id.includes(q))
-      : [...SYSTEM_SOURCES]
-    const hasSystem = visibleSystemSources.length > 0
+    // The unscoped left pane lists at most 4 sources (a loop scope plus
+    // page/site/route). A search box would be pure UI noise — every row
+    // is always on screen.
     const tablesExist = postTypeTables.length > 0 || dataTables.length > 0
-    const noResults = !hasLoopScope && !hasSystem && tableSearch
 
     return (
       <div className={styles.tablePane}>
-        <SearchBar
-          value={tableSearch}
-          onValueChange={setTableSearch}
-          placeholder="Search sources…"
-          className={styles.paneSearch}
-          aria-label="Search sources"
-        />
         <div className={styles.tableList}>
           {/* Loop scope entry — when the node is inside a loop whose
               source declared synthetic fields. Lets authors bind to the
@@ -694,7 +684,7 @@ export function BindingPickerDialog({
 
           {/* System sources — Page / Site / Route. Always available since
               the publisher seeds these frames on every render. */}
-          {hasSystem && visibleSystemSources.map((source) => (
+          {SYSTEM_SOURCES.map((source) => (
             <Button
               key={source.id}
               variant="ghost"
@@ -714,20 +704,13 @@ export function BindingPickerDialog({
               </span>
             </Button>
           ))}
-
-          {/* No results in search — the only legitimate empty state here. */}
-          {noResults && (
-            <p className={styles.subtleHint}>
-              No sources match &ldquo;{tableSearch}&rdquo;.
-            </p>
-          )}
         </div>
 
         {/* Subtle footer hint pointing at the loop / template workflow
             when there are tables but the current node can't bind to
             them. Lives outside the scrolling list so it doesn't
             compete with the source rows above. */}
-        {tablesExist && !tableSearch && (
+        {tablesExist && (
           <p className={styles.subtleHint}>
             Wrap in a Loop or open a postType template to bind to row
             fields.
