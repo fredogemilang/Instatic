@@ -29,11 +29,6 @@ import {
   clampZoom,
   incrementalScaleFromPinchMovement,
 } from '@site/canvas/math'
-import {
-  fitContentCanvas,
-  frameOrFitCanvas,
-  frameSelectedNodes,
-} from '@site/canvas/canvasFraming'
 
 interface Transform {
   zoom: number
@@ -326,24 +321,8 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
       } else if ((e.metaKey || e.ctrlKey) && e.key === '0') {
         e.preventDefault()
         resetCanvasView()
-      }
-      // ─── Framing shortcuts (Figma-style) ─────────────────────────────────
-      // `F` or `2`  → Frame the current selection. Falls back to "fit content"
-      //                when nothing is selected so the action never feels
-      //                like a no-op.
-      // `1`         → Fit the entire document into the viewport.
-      // `Shift+1`   → Reset to 100% zoom (was the old "fit-to-screen" behaviour,
-      //                kept as an explicit reset to satisfy muscle memory).
-      else if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault()
-        frameSelectedNodes()
-      } else if (e.key === '2' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-        e.preventDefault()
-        frameOrFitCanvas()
-      } else if (e.key === '1' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-        e.preventDefault()
-        fitContentCanvas()
       } else if (e.key === '1' && e.shiftKey) {
+        // `Shift+1` → Reset to 100% zoom (legacy muscle-memory shortcut).
         e.preventDefault()
         resetCanvasView()
       }

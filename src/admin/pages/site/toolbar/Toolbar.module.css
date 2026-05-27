@@ -186,20 +186,6 @@
     min-width: 44px;
 }
 
-/* Subtle vertical separator between the framing buttons (Frame/Fit) and
-   the +/− zoom step group inside ZoomControls. Matches the editor's
-   achromatic chrome — uses the same token as the global Toolbar `.divider`
-   but renders as a span (display: inline-block) so it can sit inside the
-   button row without forcing the flex parent to re-layout. */
-.zoomDivider {
-    display: inline-block;
-    width: 1px;
-    height: 14px;
-    flex-shrink: 0;
-    margin: 0 4px;
-    background: var(--editor-border);
-}
-
 /* ── SaveIndicator ────────────────────────────────────────────────────────── */
 .statusWrapper {
     position: relative;

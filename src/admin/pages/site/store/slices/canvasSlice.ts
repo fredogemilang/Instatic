@@ -1,7 +1,5 @@
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import {
-  computeFitTransform,
-  type ScreenRect,
   DEFAULT_ZOOM,
   clampZoom,
   clampPan,
@@ -64,23 +62,6 @@ export interface CanvasSlice {
   zoomIn: (originX?: number, originY?: number) => void
   zoomOut: (originX?: number, originY?: number) => void
   zoomTo: (zoom: number, originX?: number, originY?: number) => void
-  /**
-   * Pan + zoom so that `targetRect` (canvas-LOCAL screen coords, i.e. relative
-   * to the canvas root viewport) fits centred inside `viewport` with `padding`
-   * pixels on every side.
-   *
-   * This is the engine behind the toolbar "Frame selection" / "Fit content"
-   * buttons and the `F` / `1` / `2` keyboard shortcuts.  Math lives in
-   * `computeFitTransform`; this action only does the store write.
-   *
-   * `padding` defaults to 32px.  Pass a larger value (e.g. 80) when fitting
-   * the whole document so breakpoint labels stay visible.
-   */
-  zoomToRect: (
-    targetRect: ScreenRect,
-    viewport: { width: number; height: number },
-    padding?: number,
-  ) => void
 }
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
@@ -153,21 +134,6 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
     const newPanX = clampPan(originX - scale * (originX - panX))
     const newPanY = clampPan(originY - scale * (originY - panY))
     set({ zoom: newZoom, panX: newPanX, panY: newPanY })
-  },
-
-  zoomToRect: (targetRect, viewport, padding = 32) => {
-    const { zoom, panX, panY } = get()
-    const next = computeFitTransform(
-      targetRect,
-      viewport,
-      { zoom, panX, panY },
-      padding,
-    )
-    set({
-      zoom: clampZoom(next.zoom),
-      panX: clampPan(next.panX),
-      panY: clampPan(next.panY),
-    })
   },
 })
 
