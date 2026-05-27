@@ -1,4 +1,5 @@
-import { Suspense, lazy, useId, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useId, useRef, useState } from 'react'
+import { useAdminUi } from '@admin/state/adminUi'
 import { readTitleCell } from '@core/data/cells'
 import type {
   DataTable,
@@ -101,6 +102,20 @@ export function ContentPage() {
     : ''
   const canEditSelectedEntry = canEditContentEntry(permissionUser, workspace.selectedEntry)
   const canPublishSelectedEntry = canPublishContentEntry(permissionUser, workspace.selectedEntry)
+
+  // Mirror the selected entry's public URL into adminUi so the global
+  // toolbar's "Open live page" icon button deep-links to the post the
+  // user is editing — instead of the site root (Site editor publishes
+  // its own active-page path; here we publish the entry's path). Empty
+  // string (no entry / no slug yet) maps to null so the button falls
+  // back to the site root.
+  const publishActiveLivePath = useAdminUi((s) => s.setActiveLivePath)
+  useEffect(() => {
+    publishActiveLivePath(publicPath || null)
+    return () => {
+      publishActiveLivePath(null)
+    }
+  }, [publicPath, publishActiveLivePath])
 
   // Note: we used to unconditionally `setPropertiesPanel({ collapsed:
   // false })` here on mount, which forced the inspector open every time

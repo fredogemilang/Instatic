@@ -52,21 +52,22 @@ function Wrapper({ children }: { children: ReactNode }) {
 
 beforeEach(() => {
   localStorage.clear()
-  // OpenLivePageButton reads the active page slug from adminUi (NOT the
-  // editor store) so the same button can be mounted on every admin layout
-  // — including AdminPageLayout, which never loads the editor store. Tests
-  // set the slug directly here to simulate "the canvas is open at /<slug>".
-  useAdminUi.setState({ activePageSlug: null })
+  // OpenLivePageButton reads `activeLivePath` from adminUi (NOT the
+  // editor store) so the same button can be mounted on every admin
+  // layout — including AdminPageLayout, which never loads the editor
+  // store. Tests set the full path directly here to simulate "the
+  // canvas is open at <path>".
+  useAdminUi.setState({ activeLivePath: null })
 })
 
 afterEach(() => {
-  useAdminUi.setState({ activePageSlug: null })
+  useAdminUi.setState({ activeLivePath: null })
   cleanup()
 })
 
 describe('Toolbar — Open live page icon button', () => {
   it('opens the active page in a new tab when a page is open in the editor', () => {
-    useAdminUi.setState({ activePageSlug: 'pricing' })
+    useAdminUi.setState({ activeLivePath: '/pricing' })
 
     const originalOpen = window.open
     const openCalls: unknown[] = []
@@ -97,7 +98,7 @@ describe('Toolbar — Open live page icon button', () => {
   })
 
   it('falls back to the site root when no page is active (non-editor routes)', () => {
-    // No activePageSlug set — this is the state on AdminPageLayout routes
+    // No activeLivePath set — this is the state on AdminPageLayout routes
     // like /admin/plugins, /admin/users, /admin/account, etc.
     const originalOpen = window.open
     const openCalls: unknown[] = []
@@ -123,10 +124,11 @@ describe('Toolbar — Open live page icon button', () => {
     }
   })
 
-  it('opens "/" when the active page is the home page (slug "index")', () => {
-    // pagePublicPath maps the special "index" slug to "/" — the live URL
-    // of a published home page is the site root, not "/index".
-    useAdminUi.setState({ activePageSlug: 'index' })
+  it('opens "/" when the active page is the home page', () => {
+    // The layout publishes the full path; for the home page the path is
+    // simply "/" — the live URL of a published home page is the site
+    // root, not "/index".
+    useAdminUi.setState({ activeLivePath: '/' })
 
     const originalOpen = window.open
     const openCalls: unknown[] = []
@@ -146,6 +148,35 @@ describe('Toolbar — Open live page icon button', () => {
       fireEvent.click(within(toolbar).getByTestId('toolbar-open-live-page-btn'))
 
       expect(openCalls).toEqual([['/', '_blank', 'noopener,noreferrer']])
+    } finally {
+      window.open = originalOpen
+    }
+  })
+
+  it('opens a content entry path when editing a post in the Content workspace', () => {
+    // The Content workspace publishes the entry's full route-base + slug
+    // path (e.g. `/blog/getting-started`). The toolbar button just opens
+    // whatever path is set — the path field is workspace-agnostic.
+    useAdminUi.setState({ activeLivePath: '/blog/getting-started' })
+
+    const originalOpen = window.open
+    const openCalls: unknown[] = []
+    window.open = ((...args: unknown[]) => {
+      openCalls.push(args)
+      return null
+    }) as typeof window.open
+
+    try {
+      render(
+        <Wrapper>
+          <Toolbar />
+        </Wrapper>,
+      )
+
+      const toolbar = screen.getByTestId('toolbar')
+      fireEvent.click(within(toolbar).getByTestId('toolbar-open-live-page-btn'))
+
+      expect(openCalls).toEqual([['/blog/getting-started', '_blank', 'noopener,noreferrer']])
     } finally {
       window.open = originalOpen
     }

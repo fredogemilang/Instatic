@@ -62,6 +62,7 @@ import { selectActiveCanvasPage, selectActivePage, selectRightSidebarExpanded, u
 import { resolveInsertLocation } from '@admin/pages/site/store/insertLocation'
 import { cmsAdapter } from '@core/persistence'
 import { useAdminUi } from '@admin/state/adminUi'
+import { pagePublicPath } from '@core/page-tree/slugs'
 import { cn } from '@ui/cn'
 import { useInstalledEditorPlugins } from '@admin/pages/plugins/hooks/useInstalledEditorPlugins'
 import { usePluginEventBridge } from '@admin/pages/plugins/hooks/usePluginEventBridge'
@@ -162,13 +163,18 @@ export function AdminCanvasLayout({
   // shell reads from it too.
   const settingsOpen = useAdminUi((s) => s.settingsOpen)
   const publishSiteSummary = useAdminUi((s) => s.setSiteSummary)
-  const publishActivePageSlug = useAdminUi((s) => s.setActivePageSlug)
-  // Page slug currently open in the canvas — `null` in VC mode (no active
-  // page) and on every non-editor route. The toolbar's "Open live page"
-  // button uses it to deep-link to the published page; reading via the
-  // page-mode selector is correct because VC mode is intentionally
+  const publishActiveLivePath = useAdminUi((s) => s.setActiveLivePath)
+  // Public path of the page currently open in the Site-editor canvas —
+  // `null` in VC mode (no active page) and on every non-editor route.
+  // Forwarded to adminUi below so the toolbar's "Open live page" button
+  // can deep-link without subscribing to the editor store. Reading via
+  // the page-mode selector is correct because VC mode is intentionally
   // page-less.
-  const activePageSlug = useEditorStore((s) => selectActivePage(s)?.slug ?? null)
+  const activeSitePath = useEditorStore((s) => {
+    if (workspace !== 'site') return null
+    const slug = selectActivePage(s)?.slug
+    return slug ? pagePublicPath(slug) : null
+  })
   const currentUser = useCurrentAdminUser()
 
   // Keep the adminUi site summary in sync with whatever the editor store
@@ -179,19 +185,24 @@ export function AdminCanvasLayout({
   useEffect(() => {
     publishSiteSummary({ name: siteName, faviconUrl })
   }, [siteName, faviconUrl, publishSiteSummary])
-  // Mirror the active page slug into adminUi so the toolbar's "Open live
-  // page" icon — which is shared with non-editor admin routes via
+  // Mirror the active page's public path into adminUi so the toolbar's
+  // "Open live page" icon — shared with non-editor admin routes via
   // AdminPageLayout — can deep-link without subscribing to the editor
-  // store. Non-editor layouts never publish to this field, so it
-  // naturally falls back to `null` (and the button to "/") off the canvas.
+  // store. Only the 'site' workspace publishes here; the Content
+  // workspace owns its own publish (the entry's `/<routeBase>/<slug>`
+  // path) inside `ContentPage`. Non-editor layouts never publish, so
+  // the field naturally falls back to `null` (and the button to "/")
+  // off any editing surface.
   useEffect(() => {
-    publishActivePageSlug(activePageSlug)
+    if (workspace !== 'site') return
+    publishActiveLivePath(activeSitePath)
     return () => {
-      // Clear on unmount so navigating away from the editor leaves the
-      // toolbar pointing at the site root again rather than a stale slug.
-      publishActivePageSlug(null)
+      // Clear on unmount so navigating away from the editor leaves
+      // the toolbar pointing at the site root again rather than a
+      // stale path.
+      publishActiveLivePath(null)
     }
-  }, [activePageSlug, publishActivePageSlug])
+  }, [workspace, activeSitePath, publishActiveLivePath])
   const customRightSidebarExpanded = workspace !== 'site' && Boolean(contentRightPanel)
   const hasRightSidebar = customRightSidebarExpanded || (workspace === 'site' && rightSidebarExpanded)
   // Three-way edit permissions — see `src/admin/access.ts`. A user with all

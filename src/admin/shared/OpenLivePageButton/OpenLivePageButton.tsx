@@ -7,26 +7,28 @@
  * Account, plugin admin pages — with zero per-layout wiring.
  *
  * Target URL:
- *   - Site editor with an active page → that page's public slug
- *     (`pagePublicPath(slug)`).
+ *   - Site editor with an active page → that page's public path
+ *     (e.g. `/about`).
+ *   - Content workspace with a selected entry → the entry's public path
+ *     (e.g. `/blog/getting-started`).
  *   - Every other admin route → site root (`/`).
  *
- * The slug is read from `useAdminUi` (the tiny shared store) — NOT the
+ * The path is read from `useAdminUi` (the tiny shared store) — NOT the
  * editor store — so this component is safe to mount on `AdminPageLayout`
  * without pulling the ~165 KB editor chunk into the non-editor bundle.
- * `AdminCanvasLayout` mirrors `selectActivePage(s)?.slug` into adminUi via
- * an effect on every render, and clears it on unmount; non-editor layouts
- * never write the field, so it naturally stays `null` outside the canvas.
+ * Each workspace's top-level layout mirrors the current document's
+ * public path into `adminUi.activeLivePath` on every render and clears
+ * it on unmount; non-editor layouts never write the field, so it
+ * naturally stays `null` outside an editing surface.
  */
 import { Button } from '@ui/components/Button'
 import { ExternalLinkSolidIcon } from 'pixel-art-icons/icons/external-link-solid'
 import { useAdminUi } from '@admin/state/adminUi'
-import { pagePublicPath } from '@core/page-tree/slugs'
 
 export function OpenLivePageButton() {
-  const activePageSlug = useAdminUi((s) => s.activePageSlug)
-  const target = activePageSlug ? pagePublicPath(activePageSlug) : '/'
-  const tooltip = activePageSlug ? 'Open live page' : 'Open live site'
+  const activeLivePath = useAdminUi((s) => s.activeLivePath)
+  const target = activeLivePath ?? '/'
+  const tooltip = activeLivePath ? 'Open live page' : 'Open live site'
 
   return (
     <Button
