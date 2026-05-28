@@ -30,6 +30,9 @@ export default definePlugin({
     permissions.adminNavigation,
     permissions.cmsStorage,
     permissions.cmsRoutes,
+    // Public ingest + geo + is-admin + public-stats endpoints (no auth).
+    // Required on top of `cmsRoutes` to register `api.cms.routes.public.*`.
+    permissions.cmsRoutesPublic,
     permissions.cmsHooks,
     permissions.cmsSchedule,
     // Registers the Visitors dashboard widget on /admin via the editor

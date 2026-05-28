@@ -35,7 +35,7 @@ const mod: ServerPluginModule = {
     //   offset    — record offset (default 0)
     //
     // Response: { submissions: PluginRecord[]; totalCount: number }
-    api.cms.routes.get('/submissions', 'plugins.manage', async (ctx) => {
+    api.cms.routes.get('/submissions', 'plugins.read', async (ctx) => {
       const url = new URL(ctx.req.url)
       const formId = url.searchParams.get('formId')
       const status = url.searchParams.get('status')
@@ -63,7 +63,7 @@ const mod: ServerPluginModule = {
     })
 
     // Admin: resend email for a specific submission
-    api.cms.routes.post('/resend', 'plugins.manage', async (ctx) => {
+    api.cms.routes.post('/resend', 'plugins.configure', async (ctx) => {
       const url = new URL(ctx.req.url)
       const id = url.searchParams.get('id') ?? ''
       if (!id) return { error: 'Missing submission id' }
@@ -115,7 +115,7 @@ const mod: ServerPluginModule = {
     })
 
     // Admin: delete a submission
-    api.cms.routes.delete('/submissions/:id', 'plugins.manage', async (ctx) => {
+    api.cms.routes.delete('/submissions/:id', 'plugins.configure', async (ctx) => {
       const url = new URL(ctx.req.url)
       const id = url.pathname.split('/').at(-1) ?? ''
       if (!id) return { error: 'Missing id' }

@@ -1,8 +1,9 @@
 /**
  * SEO Suite — sitemap.xml + robots.txt public routes.
  *
- * Both routes are registered via `api.cms.routes.getPublic` so they are
- * reachable without authentication — search engines need them.
+ * Both routes are registered via `api.cms.routes.public.get` so they are
+ * reachable without authentication — search engines need them. The plugin
+ * manifest declares `cms.routes.public` so the install dialog flags it.
  *
  * Full mount paths (reverse-proxy these to the site root — see README.md):
  *   GET /admin/api/cms/plugins/pagebuilder.seo-suite/runtime/sitemap.xml
@@ -67,7 +68,7 @@ function isTruthy(value: boolean | string | undefined): boolean {
 
 export function registerSitemapRoutes(api: ServerPluginApi): void {
   // ── sitemap.xml ──────────────────────────────────────────────────────────
-  api.cms.routes.getPublic('/sitemap.xml', async () => {
+  api.cms.routes.public.get('/sitemap.xml', async () => {
     try {
       const siteUrl = (api.cms.settings.get<string>('siteUrl') ?? '').replace(/\/$/, '')
 
@@ -138,7 +139,7 @@ export function registerSitemapRoutes(api: ServerPluginApi): void {
   })
 
   // ── robots.txt ───────────────────────────────────────────────────────────
-  api.cms.routes.getPublic('/robots.txt', () => {
+  api.cms.routes.public.get('/robots.txt', () => {
     try {
       const siteUrl = (api.cms.settings.get<string>('siteUrl') ?? '').replace(/\/$/, '')
       const operatorContent = api.cms.settings.get<string>('robotsTxt') ?? 'User-agent: *\nAllow: /'

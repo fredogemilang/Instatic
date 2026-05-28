@@ -27,6 +27,9 @@ export default definePlugin({
     permissions.adminNavigation,
     permissions.cmsStorage,
     permissions.cmsRoutes,
+    // Public /subscribe + /confirm + /unsubscribe + /preferences/:token
+    // + /webhooks/resend endpoints — all anonymous-callable.
+    permissions.cmsRoutesPublic,
     permissions.cmsHooks,
     permissions.cmsSchedule,
     permissions.networkOutbound,

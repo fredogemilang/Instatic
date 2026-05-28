@@ -1,9 +1,11 @@
 /**
  * Subscribe, confirm, unsubscribe, and preferences routes.
  *
- * Public routes (no auth) use getPublic/postPublic — accessible from
- * published pages and email links. Admin routes use post/patch/delete
- * with the 'plugins.manage' capability.
+ * Public routes (no auth) use `api.cms.routes.public.*` — accessible
+ * from published pages and email links. Plugin manifest must declare
+ * `cms.routes.public` so the install dialog flags them to the operator.
+ * Admin-only routes use the standard `api.cms.routes.{post,patch,delete}`
+ * with a core capability (e.g. `plugins.configure`).
  *
  * Route URL prefix (all routes):
  *   /admin/api/cms/plugins/pagebuilder.newsletter/runtime
@@ -93,7 +95,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
   // ── GET /subscribe ──────────────────────────────────────────────────────
   // HTML form submission from published pages. Query params:
   //   email (required), name, listIds (comma-sep), consent (=true/1), redirect
-  api.cms.routes.getPublic('/subscribe', async (ctx) => {
+  api.cms.routes.public.get('/subscribe', async (ctx) => {
     const url = new URL(ctx.req.url)
     const email = url.searchParams.get('email')?.trim() ?? ''
     const name = url.searchParams.get('name')?.trim() ?? ''
@@ -195,7 +197,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
 
   // ── GET /confirm ─────────────────────────────────────────────────────────
   // Confirms a pending subscription via the token in the opt-in email.
-  api.cms.routes.getPublic('/confirm', async (ctx) => {
+  api.cms.routes.public.get('/confirm', async (ctx) => {
     const url = new URL(ctx.req.url)
     const token = url.searchParams.get('token') ?? ''
     const siteName = api.cms.settings.get<string>('fromName') ?? 'Newsletter'
@@ -233,7 +235,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
 
   // ── GET /unsubscribe ──────────────────────────────────────────────────────
   // One-click unsubscribe via the token embedded in every email footer.
-  api.cms.routes.getPublic('/unsubscribe', async (ctx) => {
+  api.cms.routes.public.get('/unsubscribe', async (ctx) => {
     const url = new URL(ctx.req.url)
     const token = url.searchParams.get('token') ?? ''
     const siteName = api.cms.settings.get<string>('fromName') ?? 'Newsletter'
@@ -271,7 +273,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
 
   // ── GET /preferences/:token ───────────────────────────────────────────────
   // HTML preferences page — lets subscribers manage their list memberships.
-  api.cms.routes.getPublic('/preferences/:token', async (ctx) => {
+  api.cms.routes.public.get('/preferences/:token', async (ctx) => {
     const segments = getSegments(ctx.req)
     const token = segments[1] ?? ''
     const siteName = api.cms.settings.get<string>('fromName') ?? 'Newsletter'
@@ -312,7 +314,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
   // ── GET /preferences/:token/save ─────────────────────────────────────────
   // Processes the GET form submission from the preferences page.
   // Selected checkboxes appear as repeated ?listId=... params.
-  api.cms.routes.getPublic('/preferences/:token/save', async (ctx) => {
+  api.cms.routes.public.get('/preferences/:token/save', async (ctx) => {
     const segments = getSegments(ctx.req)
     const token = segments[1] ?? ''
     const url = new URL(ctx.req.url)
@@ -348,7 +350,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
   //               serialised value). Filtered in JS after fetching.
   //   ?limit=    — page size (default 20, capped at 1000).
   //   ?offset=   — number of records to skip (default 0).
-  api.cms.routes.get('/subscribers', 'plugins.manage', async (ctx) => {
+  api.cms.routes.get('/subscribers', 'plugins.read', async (ctx) => {
     try {
       const url = new URL(ctx.req.url)
       const statusFilter = url.searchParams.get('status') ?? ''
@@ -391,7 +393,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
 
   // ── POST /subscribers ─────────────────────────────────────────────────────
   // Admin: manually add a subscriber (skips double-opt-in).
-  api.cms.routes.post('/subscribers', 'plugins.manage', async (ctx) => {
+  api.cms.routes.post('/subscribers', 'plugins.configure', async (ctx) => {
     try {
       const body = ctx.body
       const email = String(body.email ?? '').trim()
@@ -431,7 +433,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
   })
 
   // ── DELETE /subscribers/:id ───────────────────────────────────────────────
-  api.cms.routes.delete('/subscribers/:id', 'plugins.manage', async (ctx) => {
+  api.cms.routes.delete('/subscribers/:id', 'plugins.configure', async (ctx) => {
     try {
       const segments = getSegments(ctx.req)
       const id = segments[1] ?? ''
@@ -445,7 +447,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
   })
 
   // ── GET /subscribers.csv ──────────────────────────────────────────────────
-  api.cms.routes.get('/subscribers.csv', 'plugins.manage', async () => {
+  api.cms.routes.get('/subscribers.csv', 'plugins.read', async () => {
     try {
       const { records: all } = await subs.list({ limit: 1000 })
       const headers = ['id', 'email', 'name', 'status', 'listIds', 'subscribedAt', 'confirmedAt']
@@ -478,7 +480,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
   })
 
   // ── GET/POST /stats ───────────────────────────────────────────────────────
-  api.cms.routes.get('/stats', 'plugins.manage', async () => {
+  api.cms.routes.get('/stats', 'plugins.read', async () => {
     try {
       const { records: allSubs, totalCount: totalSubs } = await subs.list({ limit: 1000 })
       const counts: Record<string, number> = { pending: 0, confirmed: 0, unsubscribed: 0, bounced: 0 }
@@ -524,7 +526,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
 
   // ── List management ───────────────────────────────────────────────────────
 
-  api.cms.routes.get('/lists', 'plugins.manage', async () => {
+  api.cms.routes.get('/lists', 'plugins.read', async () => {
     try {
       const { records: all } = await lists.list()
       return {
@@ -543,7 +545,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
     }
   })
 
-  api.cms.routes.post('/lists', 'plugins.manage', async (ctx) => {
+  api.cms.routes.post('/lists', 'plugins.configure', async (ctx) => {
     try {
       const body = ctx.body
       const name = String(body.name ?? '').trim()
@@ -560,7 +562,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
     }
   })
 
-  api.cms.routes.patch('/lists/:id', 'plugins.manage', async (ctx) => {
+  api.cms.routes.patch('/lists/:id', 'plugins.configure', async (ctx) => {
     try {
       const segments = getSegments(ctx.req)
       const id = segments[1] ?? ''
@@ -578,7 +580,7 @@ export function registerSubscribeRoutes(api: ServerPluginApi): void {
     }
   })
 
-  api.cms.routes.delete('/lists/:id', 'plugins.manage', async (ctx) => {
+  api.cms.routes.delete('/lists/:id', 'plugins.configure', async (ctx) => {
     try {
       const segments = getSegments(ctx.req)
       const id = segments[1] ?? ''

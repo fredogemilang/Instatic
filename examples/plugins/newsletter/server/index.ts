@@ -43,7 +43,7 @@ const mod: ServerPluginModule = {
     // Broadcast CRUD + on-demand send + preview routes.
     registerBroadcastRoutes(api)
 
-    // Resend webhook handler (postPublic — no auth required, signature-verified).
+    // Resend webhook handler (public.post — no auth required, signature-verified).
     registerWebhookRoutes(api)
 
     // Scheduled job: every 5 min, dispatch any due scheduled broadcasts.

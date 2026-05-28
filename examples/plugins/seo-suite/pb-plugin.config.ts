@@ -26,6 +26,9 @@ export default definePlugin({
     permissions.adminNavigation,
     permissions.cmsStorage,
     permissions.cmsRoutes,
+    // Public /sitemap.xml + /robots.txt — search engines need to fetch
+    // these without auth. Required on top of `cmsRoutes`.
+    permissions.cmsRoutesPublic,
     permissions.cmsHooks,
     permissions.cmsSchedule,
     permissions.networkOutbound,

@@ -6,7 +6,8 @@
  * tracker IIFE in `frontend/tracker.ts` POSTs to this plugin's own
  * `/runtime/ingest` route (registered below). The host provides no
  * tracker channel — the only generic surface this plugin uses is
- * `cms.routes.postPublic`.
+ * `api.cms.routes.public.post`. The plugin manifest declares
+ * `cms.routes.public` so the install dialog flags it to the operator.
  *
  * Delegates heavy lifting to the sibling modules:
  *   - ingest.ts  — incoming event handler + visitor hashing
@@ -76,7 +77,7 @@ const mod: ServerPluginModule = {
     // ── Authenticated routes ───────────────────────────────────────
 
     // GET /stats?range=7d — full dashboard payload
-    api.cms.routes.get('/stats', 'plugins.manage', async (ctx) => {
+    api.cms.routes.get('/stats', 'plugins.read', async (ctx) => {
       const url = new URL(ctx.req.url)
       const rangeParam = url.searchParams.get('range') ?? '7d'
       const validRanges = ['1d', '7d', '30d', '90d'] as const
@@ -88,7 +89,7 @@ const mod: ServerPluginModule = {
     })
 
     // GET /live — last 5 minutes of raw events (at most 100)
-    api.cms.routes.get('/live', 'plugins.manage', async () => {
+    api.cms.routes.get('/live', 'plugins.read', async () => {
       const cutoffIso = new Date(Date.now() - 5 * 60_000).toISOString()
       const { records } = await events.list({
         filter: { receivedAt: { gte: cutoffIso } },
@@ -98,7 +99,7 @@ const mod: ServerPluginModule = {
     })
 
     // GET /export.csv?resource=events|daily-stats&range=30d
-    api.cms.routes.get('/export.csv', 'plugins.manage', async (ctx) => {
+    api.cms.routes.get('/export.csv', 'plugins.read', async (ctx) => {
       const url = new URL(ctx.req.url)
       const resource = url.searchParams.get('resource') ?? 'events'
       const rangeParam = url.searchParams.get('range') ?? '30d'
@@ -141,7 +142,7 @@ const mod: ServerPluginModule = {
     // Public by design (the tracker runs on the published page with no
     // admin session). Validation, normalization, hashing, and storage
     // all happen inside `handleTrackerEvent`.
-    api.cms.routes.postPublic('/ingest', async (ctx) => {
+    api.cms.routes.public.post('/ingest', async (ctx) => {
       try {
         const body = ctx.body as Record<string, unknown>
         const eventName = typeof body.eventName === 'string' ? body.eventName : ''
@@ -173,7 +174,7 @@ const mod: ServerPluginModule = {
     })
 
     // GET /geo — country lookup from CF-IPCountry header (cached per session by tracker)
-    api.cms.routes.getPublic('/geo', async (ctx) => {
+    api.cms.routes.public.get('/geo', async (ctx) => {
       const country =
         ctx.req.headers.get('CF-IPCountry') ??
         ctx.req.headers.get('X-Country-Code') ??
@@ -187,7 +188,7 @@ const mod: ServerPluginModule = {
     // The frontend tracker calls this once per session and includes the result
     // in every subsequent event payload. The ingest handler drops admin events
     // when `excludeAdmins` is true.
-    api.cms.routes.getPublic('/is-admin', async (ctx) => {
+    api.cms.routes.public.get('/is-admin', async (ctx) => {
       const cookie = ctx.req.headers.get('cookie') ?? ''
       // Cookie presence check — an expired-but-not-cleared cookie gives a
       // false positive, which is the safe direction (under-count, not over-count).
@@ -196,7 +197,7 @@ const mod: ServerPluginModule = {
     })
 
     // GET /public-stats.json?token=<publicStatsToken>
-    api.cms.routes.getPublic('/public-stats.json', async (ctx) => {
+    api.cms.routes.public.get('/public-stats.json', async (ctx) => {
       const token = api.cms.settings.get<string>('publicStatsToken') ?? ''
       if (!token) {
         return { __response: true, status: 404, headers: {}, body: '{"error":"disabled"}' }

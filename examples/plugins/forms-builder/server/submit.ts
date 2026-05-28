@@ -51,7 +51,7 @@ function readEmailSettings(api: ServerPluginApi): EmailSettings {
 export function registerSubmitRoute(api: ServerPluginApi): void {
   const submissions = api.cms.storage.collection('submissions')
 
-  api.cms.routes.postPublic('/submit', async (ctx) => {
+  api.cms.routes.public.post('/submit', async (ctx) => {
     const body = ctx.body as Record<string, unknown>
 
     // Helper: build a JSON error response with status + machine-readable

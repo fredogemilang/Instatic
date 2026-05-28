@@ -9,7 +9,7 @@
  *                  so the filter pipeline is observable from the HTML
  *
  * Notice how the plugin owns its frontend ingestion end-to-end: its IIFE
- * (`frontend/tracker.ts`) POSTs to `routes.postPublic('/ingest', ...)`
+ * (`frontend/tracker.ts`) POSTs to `routes.public.post('/ingest', ...)`
  * declared here. The host does not provide any shared frontend event
  * channel — every plugin that wants to receive frontend events
  * registers its own public route.
@@ -28,7 +28,7 @@ const mod: ServerPluginModule = {
 
     const events = api.cms.storage.collection('events')
 
-    api.cms.routes.get('/status', 'plugins.manage', async () => {
+    api.cms.routes.get('/status', 'plugins.read', async () => {
       const { records } = await events.list()
       const byEvent: Record<string, number> = {}
       for (const record of records) {
@@ -43,14 +43,14 @@ const mod: ServerPluginModule = {
       }
     })
 
-    api.cms.routes.post('/clear', 'plugins.manage', async () => {
+    api.cms.routes.post('/clear', 'plugins.configure', async () => {
       const { records } = await events.list()
       await Promise.all(records.map((r) => events.delete(r.id)))
       return { ok: true, deleted: records.length }
     })
 
     // Frontend bundle POSTs events here. Plugin owns the envelope.
-    api.cms.routes.postPublic('/ingest', async (ctx) => {
+    api.cms.routes.public.post('/ingest', async (ctx) => {
       const body = (ctx.body ?? {}) as Record<string, unknown>
       const eventName = typeof body.eventName === 'string' ? body.eventName : ''
       if (!eventName) {

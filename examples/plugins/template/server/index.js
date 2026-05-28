@@ -17,7 +17,7 @@ export function activate(api) {
   // Register a simple status route at:
   //   GET /admin/api/cms/plugins/acme.template/runtime/status
   // Requires the cms.routes permission.
-  api.cms.routes.get('/status', 'plugins.manage', () => ({
+  api.cms.routes.get('/status', 'plugins.read', () => ({
     ok: true,
     plugin: api.plugin.id,
     version: api.plugin.version,

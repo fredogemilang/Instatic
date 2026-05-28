@@ -27,6 +27,8 @@ export default definePlugin({
     permissions.adminNavigation,
     permissions.cmsStorage,
     permissions.cmsRoutes,
+    // Public /search endpoint for the in-page search UI.
+    permissions.cmsRoutesPublic,
     permissions.cmsHooks,
     permissions.networkOutbound,
     permissions.cmsPagesPublish,

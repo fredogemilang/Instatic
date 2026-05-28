@@ -4,7 +4,9 @@
  * Mounted at:
  *   /admin/api/cms/plugins/pagebuilder.search/runtime/search
  *
- * No authentication required (capability=null via getPublic).
+ * No authentication required — registered via `api.cms.routes.public.get`.
+ * Plugin manifest declares `cms.routes.public` so the install dialog
+ * flags the anonymous endpoint to the operator.
  *
  * Query parameters:
  *   q        — search query (required, trimmed, max 200 chars)
@@ -55,7 +57,7 @@ export interface SearchRouteHandlerOptions {
 
 /**
  * Build the route handler. Call once during `activate`, pass the result to
- * `api.cms.routes.getPublic('/search', handler)`.
+ * `api.cms.routes.public.get('/search', handler)`.
  */
 export function buildSearchRouteHandler(opts: SearchRouteHandlerOptions) {
   const { backend, limiter, api } = opts

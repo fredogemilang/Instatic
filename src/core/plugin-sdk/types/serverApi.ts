@@ -42,15 +42,43 @@ export interface ServerPluginApi {
     assetUrl: (path: string) => string
   }
   cms: {
+    /**
+     * Register backend HTTP routes scoped under
+     * `/admin/api/cms/plugins/:id/runtime/<path>`. Three access shapes:
+     *
+     *   api.cms.routes.get(path, capability, handler)
+     *       Standard gated route — caller must hold the named core capability
+     *       (e.g. 'content.manage'). Most plugin endpoints use this form.
+     *
+     *   api.cms.routes.authenticated.get(path, handler)
+     *       Any logged-in admin user — session cookie required, no specific
+     *       capability check. Useful for read-only "currently-logged-in user"
+     *       endpoints (e.g. a per-user dashboard payload).
+     *
+     *   api.cms.routes.public.get(path, handler)
+     *       Anonymous-callable — NO authentication. Plugin must additionally
+     *       declare `cms.routes.public` in its manifest permissions so the
+     *       install consent dialog flags the plugin to the operator. Use for
+     *       webhook receivers, public read APIs (sitemaps, robots, search),
+     *       and frontend tracker ingest endpoints.
+     */
     routes: {
       get: (path: string, capability: string, handler: ServerPluginRouteHandler) => void
       post: (path: string, capability: string, handler: ServerPluginRouteHandler) => void
       patch: (path: string, capability: string, handler: ServerPluginRouteHandler) => void
       delete: (path: string, capability: string, handler: ServerPluginRouteHandler) => void
-      getPublic: (path: string, handler: ServerPluginRouteHandler) => void
-      postPublic: (path: string, handler: ServerPluginRouteHandler) => void
-      patchPublic: (path: string, handler: ServerPluginRouteHandler) => void
-      deletePublic: (path: string, handler: ServerPluginRouteHandler) => void
+      authenticated: {
+        get: (path: string, handler: ServerPluginRouteHandler) => void
+        post: (path: string, handler: ServerPluginRouteHandler) => void
+        patch: (path: string, handler: ServerPluginRouteHandler) => void
+        delete: (path: string, handler: ServerPluginRouteHandler) => void
+      }
+      public: {
+        get: (path: string, handler: ServerPluginRouteHandler) => void
+        post: (path: string, handler: ServerPluginRouteHandler) => void
+        patch: (path: string, handler: ServerPluginRouteHandler) => void
+        delete: (path: string, handler: ServerPluginRouteHandler) => void
+      }
     }
     loops: {
       /**

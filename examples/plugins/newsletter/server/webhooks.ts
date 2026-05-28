@@ -15,7 +15,7 @@ import type { ServerPluginApi } from '@pagebuilder/plugin-sdk'
 import { verifyWebhookSignature } from './resend'
 
 export function registerWebhookRoutes(api: ServerPluginApi): void {
-  api.cms.routes.postPublic('/webhooks/resend', async (ctx) => {
+  api.cms.routes.public.post('/webhooks/resend', async (ctx) => {
     try {
       const secret = api.cms.settings.get<string>('resendWebhookSecret') ?? ''
       if (!secret) {

@@ -1,7 +1,7 @@
 /**
  * Broadcast management routes + scheduled-send worker.
  *
- * Routes (all require 'plugins.manage'):
+ * Routes — GET requires `plugins.read`; mutating routes require `plugins.configure`:
  *   GET    /broadcasts            — list all broadcasts
  *   POST   /broadcasts            — create draft
  *   PATCH  /broadcasts/:id        — update draft (subject, body, lists, scheduledAt)
@@ -56,7 +56,7 @@ export function registerBroadcastRoutes(api: ServerPluginApi): void {
   const deliveries = api.cms.storage.collection('deliveries')
 
   // ── GET /broadcasts ───────────────────────────────────────────────────────
-  api.cms.routes.get('/broadcasts', 'plugins.manage', async () => {
+  api.cms.routes.get('/broadcasts', 'plugins.read', async () => {
     try {
       const { records: all } = await broadcasts.list()
       return {
@@ -84,7 +84,7 @@ export function registerBroadcastRoutes(api: ServerPluginApi): void {
   })
 
   // ── POST /broadcasts ──────────────────────────────────────────────────────
-  api.cms.routes.post('/broadcasts', 'plugins.manage', async (ctx) => {
+  api.cms.routes.post('/broadcasts', 'plugins.configure', async (ctx) => {
     try {
       const body = ctx.body
       const subject = String(body.subject ?? '').trim()
@@ -111,7 +111,7 @@ export function registerBroadcastRoutes(api: ServerPluginApi): void {
   })
 
   // ── PATCH /broadcasts/:id ─────────────────────────────────────────────────
-  api.cms.routes.patch('/broadcasts/:id', 'plugins.manage', async (ctx) => {
+  api.cms.routes.patch('/broadcasts/:id', 'plugins.configure', async (ctx) => {
     try {
       const segments = getSegments(ctx.req)
       const id = segments[1] ?? ''
@@ -137,7 +137,7 @@ export function registerBroadcastRoutes(api: ServerPluginApi): void {
   })
 
   // ── POST /broadcasts/:id/send ─────────────────────────────────────────────
-  api.cms.routes.post('/broadcasts/:id/send', 'plugins.manage', async (ctx) => {
+  api.cms.routes.post('/broadcasts/:id/send', 'plugins.configure', async (ctx) => {
     try {
       const segments = getSegments(ctx.req)
       const id = segments[1] ?? ''
@@ -152,7 +152,7 @@ export function registerBroadcastRoutes(api: ServerPluginApi): void {
   })
 
   // ── POST /broadcasts/:id/preview ──────────────────────────────────────────
-  api.cms.routes.post('/broadcasts/:id/preview', 'plugins.manage', async (ctx) => {
+  api.cms.routes.post('/broadcasts/:id/preview', 'plugins.configure', async (ctx) => {
     try {
       const segments = getSegments(ctx.req)
       const id = segments[1] ?? ''

@@ -59,7 +59,7 @@ const mod: ServerPluginModule = {
     // newly-added URLs show up immediately as "Pending" before the schedule
     // has had a chance to fire, and URLs removed from settings drop out of
     // the dashboard even if old history still exists.
-    api.cms.routes.get('/status', 'plugins.manage', async () => {
+    api.cms.routes.get('/status', 'plugins.read', async () => {
       const configuredUrls = parseUrls(api.cms.settings.get('urls') ?? '')
       const { records } = await api.cms.storage.collection('checks').list()
       const byUrl = new Map<string, CheckRecord[]>()

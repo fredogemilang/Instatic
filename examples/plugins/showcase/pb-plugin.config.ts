@@ -31,6 +31,8 @@ export default definePlugin({
     permissions.adminNavigation,
     permissions.cmsStorage,
     permissions.cmsRoutes,
+    // Public /ingest endpoint for the frontend tracker IIFE.
+    permissions.cmsRoutesPublic,
     permissions.cmsHooks,
     permissions.editorToolbar,
     permissions.editorCommands,

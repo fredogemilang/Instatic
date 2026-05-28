@@ -8,7 +8,7 @@
  *   POST /seo-entries/:pageId  — upsert an entry for a page
  *
  * The admin dashboard calls these routes via `usePluginRoutes().fetch(...)`.
- * All three require the `plugins.manage` capability (admin-only).
+ * GET routes require `plugins.read`; POST upsert requires `plugins.configure`.
  */
 import type { ServerPluginApi, ServerPluginRouteContext } from '@pagebuilder/plugin-sdk'
 
@@ -16,7 +16,7 @@ export function registerSeoEntriesRoutes(api: ServerPluginApi): void {
   const seoEntries = api.cms.storage.collection('seo-entries')
 
   // ── GET /seo-entries — list all entries ──────────────────────────────────
-  api.cms.routes.get('/seo-entries', 'plugins.manage', async () => {
+  api.cms.routes.get('/seo-entries', 'plugins.read', async () => {
     try {
       const { records: all } = await seoEntries.list()
       return { ok: true, entries: all }
@@ -31,7 +31,7 @@ export function registerSeoEntriesRoutes(api: ServerPluginApi): void {
   // The route path doesn't capture URL params in the current SDK, so we read
   // pageId from the request body instead. The admin sends:
   //   { pageId, titleOverride, metaDescription, ... }
-  api.cms.routes.post('/seo-entries', 'plugins.manage', async (ctx: ServerPluginRouteContext) => {
+  api.cms.routes.post('/seo-entries', 'plugins.configure', async (ctx: ServerPluginRouteContext) => {
     try {
       const body = ctx.body as Record<string, unknown>
       const pageId = typeof body['page-id'] === 'string' ? body['page-id'] : null
@@ -84,7 +84,7 @@ export function registerSeoEntriesRoutes(api: ServerPluginApi): void {
   })
 
   // ── GET /page-index — list the page index (for dashboard stats) ──────────
-  api.cms.routes.get('/page-index', 'plugins.manage', async () => {
+  api.cms.routes.get('/page-index', 'plugins.read', async () => {
     try {
       const { records: all } = await api.cms.storage.collection('page-index').list()
       return { ok: true, pages: all }

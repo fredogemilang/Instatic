@@ -10,7 +10,7 @@ export interface CmsServerEvents {
   'content.entry.deleted': { tableSlug: string; entryId: string }
   // Plugin-defined events fall through. The host does not pre-define any
   // frontend-specific event channels — plugins that ingest events from
-  // their own published-page bundles register their own `routes.postPublic`
+  // their own published-page bundles register their own `routes.public.post`
   // endpoints and (optionally) re-emit on the hook bus under a namespaced
   // name (`pagebuilder.analytics.page-view`) for cross-plugin coordination.
   [key: string]: Record<string, unknown>

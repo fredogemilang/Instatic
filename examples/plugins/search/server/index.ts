@@ -10,10 +10,10 @@
  *
  * Routes registered:
  *   GET  /search          (public)          — full-text search, rate-limited
- *   GET  /admin-search    (plugins.manage)  — same search but authenticated (for admin UI)
- *   GET  /status          (plugins.manage)  — index stats + backend info
- *   POST /clear           (plugins.manage)  — delete all documents from the index
- *   GET  /analytics       (plugins.manage)  — top queries / top no-results
+ *   GET  /admin-search    (plugins.read)     — same search but authenticated (for admin UI)
+ *   GET  /status          (plugins.read)     — index stats + backend info
+ *   POST /clear           (plugins.configure) — delete all documents from the index
+ *   GET  /analytics       (plugins.read)     — top queries / top no-results
  *   POST /reindex         (reindex.all)     — republish all pages to rebuild the index
  *
  * Hooks:
@@ -124,9 +124,9 @@ const mod: ServerPluginModule = {
     // ── Public search route ──────────────────────────────────────────────
     if (backend) {
       const searchHandler = buildSearchRouteHandler({ backend, limiter, api })
-      api.cms.routes.getPublic('/search', searchHandler)
+      api.cms.routes.public.get('/search', searchHandler)
     } else {
-      api.cms.routes.getPublic('/search', async () => {
+      api.cms.routes.public.get('/search', async () => {
         return new Response(
           JSON.stringify({ error: 'Search is not configured. Set endpoint and API keys in plugin Settings.' }),
           { status: 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } },
@@ -139,7 +139,7 @@ const mod: ServerPluginModule = {
     // that helper points at the plugin's runtime base URL. We register a parallel
     // authenticated route so the admin UI can search the index without the CORS /
     // path mismatch. No rate-limit on authenticated requests.
-    api.cms.routes.get('/admin-search', 'plugins.manage', async (ctx) => {
+    api.cms.routes.get('/admin-search', 'plugins.read', async (ctx) => {
       if (!backend) {
         return new Response(
           JSON.stringify({ error: 'Backend not configured.' }),
@@ -172,7 +172,7 @@ const mod: ServerPluginModule = {
     })
 
     // ── Admin: status ────────────────────────────────────────────────────
-    api.cms.routes.get('/status', 'plugins.manage', async () => {
+    api.cms.routes.get('/status', 'plugins.read', async () => {
       if (!backend) {
         const currentOpts = readBackendOptions(api)
         return {
@@ -195,7 +195,7 @@ const mod: ServerPluginModule = {
     })
 
     // ── Admin: analytics ─────────────────────────────────────────────────
-    api.cms.routes.get('/analytics', 'plugins.manage', async () => {
+    api.cms.routes.get('/analytics', 'plugins.read', async () => {
       const enableLogging = api.cms.settings.get<boolean>('enableQueryLogging') ?? true
       if (!enableLogging) {
         return { ok: true, loggingDisabled: true, topQueries: [], topNoResults: [] }
@@ -205,7 +205,7 @@ const mod: ServerPluginModule = {
     })
 
     // ── Admin: clear index ───────────────────────────────────────────────
-    api.cms.routes.post('/clear', 'plugins.manage', async () => {
+    api.cms.routes.post('/clear', 'plugins.configure', async () => {
       if (!backend) {
         return { ok: false, message: 'Backend not configured.' }
       }

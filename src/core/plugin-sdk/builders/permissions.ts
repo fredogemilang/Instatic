@@ -15,6 +15,11 @@ export const permissions = {
   adminNavigation: 'admin.navigation',
   cmsStorage: 'cms.storage',
   cmsRoutes: 'cms.routes',
+  // Anonymous-callable routes (webhooks, public read APIs, frontend
+  // tracker ingest). Required ON TOP of `cmsRoutes` to register a route
+  // via `api.cms.routes.public.*`. Surfaced separately so the install
+  // dialog can flag the plugin as exposing public endpoints.
+  cmsRoutesPublic: 'cms.routes.public',
   cmsHooks: 'cms.hooks',
   editorToolbar: 'editor.toolbar',
   editorCommands: 'editor.commands',

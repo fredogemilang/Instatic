@@ -26,6 +26,9 @@ export default definePlugin({
     permissions.adminNavigation,
     permissions.cmsStorage,
     permissions.cmsRoutes,
+    // Public /submit endpoint — form submissions arrive from the
+    // published page, where the visitor isn't authenticated.
+    permissions.cmsRoutesPublic,
     permissions.modulesRegister,
     permissions.networkOutbound,
   ],
