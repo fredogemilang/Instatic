@@ -2,19 +2,26 @@ import { useRef, type CSSProperties, type ReactNode } from 'react'
 import { Button } from '@ui/components/Button'
 import { BookOpenSolidIcon } from 'pixel-art-icons/icons/book-open-solid'
 import { ImagesSolidIcon } from 'pixel-art-icons/icons/images-solid'
+import { AiSettingsSolidIcon } from 'pixel-art-icons/icons/ai-settings-solid'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { useEditorStore } from '@site/store/store'
 import leftSidebarStyles from '../../../site/sidebars/LeftSidebar/LeftSidebar.module.css'
 import panelRailStyles from '../../../site/sidebars/PanelRail/PanelRail.module.css'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 
-export type ContentPanelId = 'content' | 'media'
+export type ContentPanelId = 'content' | 'media' | 'agent'
 
 interface ContentSidebarProps {
   activePanel: ContentPanelId | null
   onActivePanelChange: (panel: ContentPanelId | null) => void
   contentPanel: ReactNode
   mediaPanel: ReactNode
+  /**
+   * AI Assistant panel. Mounted in the same panel slot as content + media
+   * (same docked variant the site editor uses), so the chat lives inside
+   * the workspace chrome instead of floating over it.
+   */
+  agentPanel: ReactNode
 }
 
 export function ContentSidebar({
@@ -22,6 +29,7 @@ export function ContentSidebar({
   onActivePanelChange,
   contentPanel,
   mediaPanel,
+  agentPanel,
 }: ContentSidebarProps) {
   const sidebarRef = useRef<HTMLElement | null>(null)
   const leftSidebarWidth = useEditorStore((s) => s.leftSidebarWidth)
@@ -64,6 +72,15 @@ export function ContentSidebar({
             active={activePanel === 'media'}
             onToggle={() => onActivePanelChange(activePanel === 'media' ? null : 'media')}
           />
+          <ContentRailButton
+            id="agent"
+            label="AI assistant"
+            icon={AiSettingsSolidIcon}
+            iconName="ai-settings-solid"
+            accent="lilac"
+            active={activePanel === 'agent'}
+            onToggle={() => onActivePanelChange(activePanel === 'agent' ? null : 'agent')}
+          />
         </div>
       </nav>
 
@@ -73,7 +90,13 @@ export function ContentSidebar({
         aria-hidden={activePanel ? undefined : 'true'}
       >
         <div className={leftSidebarStyles.panelMount}>
-          {activePanel === 'content' ? contentPanel : activePanel === 'media' ? mediaPanel : null}
+          {activePanel === 'content'
+            ? contentPanel
+            : activePanel === 'media'
+              ? mediaPanel
+              : activePanel === 'agent'
+                ? agentPanel
+                : null}
         </div>
       </div>
 
@@ -96,7 +119,7 @@ interface ContentRailButtonProps {
   label: string
   icon: IconComponent
   iconName: string
-  accent: 'mint' | 'sky'
+  accent: 'mint' | 'sky' | 'lilac'
   active: boolean
   onToggle: () => void
 }

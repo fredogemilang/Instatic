@@ -1,10 +1,13 @@
 /**
  * ContentAgentMount — encapsulates the content workspace's agent wiring.
  *
- * One render: a per-mount Zustand store (AgentSlice only) + a bridge
- * handle registered into the module-level `contentBridgeHandle` registry
- * + the AgentPanel itself rendered in floating mode + a "AI" toggle
- * button bottom-right of the canvas.
+ * Renders the docked AgentPanel (mirroring the site editor's pattern) +
+ * a per-mount Zustand store (AgentSlice only) + a bridge handle
+ * registered into the module-level `contentBridgeHandle` registry.
+ *
+ * Mounted as ContentSidebar's `agentPanel` slot — visibility is driven
+ * by ContentSidebar's panel-rail toggle. This component renders nothing
+ * UI-decorative itself; just the panel + the provider it needs.
  *
  * Splits out of ContentPage so the page component stays manageable.
  * ContentPage just passes the live workspace + draft + currentUser; this
@@ -18,9 +21,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { AgentPanel } from '@site/panels/AgentPanel'
 import { AgentStoreProvider } from '@admin/ai/AgentStoreContext'
-import { Button } from '@ui/components/Button'
-import { AiBoxSolidIcon } from 'pixel-art-icons/icons/ai-box-solid'
-import { useStore as useZustandStore } from 'zustand'
 import { readTitleCell } from '@core/data/cells'
 import { normalizeDataTableFields } from '@core/data/fields'
 import type { DataField, DataRow, DataTable } from '@core/data/schemas'
@@ -37,7 +37,6 @@ import {
   type ContentAgentSnapshot,
   type ContentBridgeHandle,
 } from './contentBridgeHandle'
-import styles from './ContentAgentMount.module.css'
 
 // `data` (custom tables) + `component` (visual-component definitions) belong
 // to other workspaces — keep the agent's view of the world consistent with
@@ -51,6 +50,15 @@ interface ContentAgentMountProps {
   draft: ContentAgentDraftSurface
   /** Caller identity for the snapshot's `currentUser` field. */
   currentUser: ContentAgentCurrentUser
+  /**
+   * Whether the panel is currently visible (ContentSidebar's panel-rail
+   * toggle). When true, we set the store's `isAgentOpen` so the
+   * AgentPanel renders its UI (the panel CSS hides itself when the slice
+   * thinks it's closed, regardless of `display: none` from the sidebar).
+   * When false, we clear the open flag so any in-flight focus traps /
+   * keyboard handlers tear down cleanly.
+   */
+  isVisible: boolean
 }
 
 /**
@@ -92,6 +100,7 @@ export function ContentAgentMount({
   workspace,
   draft,
   currentUser,
+  isVisible,
 }: ContentAgentMountProps) {
   // Per-mount store — one Zustand instance for the lifetime of this
   // ContentPage render. The store takes no parameters; the agent's
@@ -236,28 +245,28 @@ export function ContentAgentMount({
     }
   }, [])
 
-  // Read the open flag through the standalone store to flip the toggle
-  // button's pressed state. useZustandStore subscribes properly across
-  // store boundaries.
-  const isOpen = useZustandStore(store, (s) => s.isAgentOpen)
-  const toggleAgent = useZustandStore(store, (s) => s.toggleAgent)
+  // Sync the parent-controlled `isVisible` flag into the store's
+  // `isAgentOpen`. AgentPanel checks the slice flag to decide whether
+  // to render its UI (it uses `display: none` via `.floatPanelClosed`
+  // when closed); without this sync, the panel would stay hidden even
+  // when the sidebar tab is active.
+  useEffect(() => {
+    if (isVisible) {
+      store.getState().openAgent()
+    } else {
+      store.getState().closeAgent()
+    }
+  }, [isVisible, store])
 
+  // AgentPanel is always-mounted (`display: none` when closed). The
+  // wrapper provides the store so AgentPanel + ModelPicker +
+  // ConversationHistory can read the content-scope state via
+  // `useAgentStore`. The panel uses `variant="docked"` so it fills the
+  // sidebar slot the same way the site editor's agent panel does — no
+  // floating chrome.
   return (
     <AgentStoreProvider store={store}>
-      <Button
-        type="button"
-        variant="ghost"
-        size="md"
-        iconOnly
-        pressed={isOpen}
-        onClick={toggleAgent}
-        tooltip={isOpen ? 'Close AI Assistant' : 'Open AI Assistant'}
-        aria-label={isOpen ? 'Close AI Assistant' : 'Open AI Assistant'}
-        className={styles.toggleButton}
-      >
-        <AiBoxSolidIcon size={18} />
-      </Button>
-      <AgentPanel variant="floating" />
+      <AgentPanel variant="docked" />
     </AgentStoreProvider>
   )
 }
