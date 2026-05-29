@@ -17,22 +17,19 @@
  * point of the iframe-per-frame architecture (see
  * `docs/features/canvas-iframe-per-frame.md`).
  *
- * Concatenation order matches `collectUserStylesheetCss` (server-side) so
- * each iframe loads the same bytes the published page receives. Both
- * helpers sort by `path` ascending and prefix each file with a CSS
- * comment carrying the source path.
+ * The injected CSS is produced by `collectUserStylesheetCss` (the same helper
+ * the publisher uses) scoped to the active page, so each iframe loads the
+ * exact bytes the published page receives — same stylesheet selection (scope
+ * + enable state), same cascade order (priority, then path), same comment
+ * wrapping.
  */
 
 import { useEffect, useMemo } from 'react'
 import { useEditorStore } from '@site/store/store'
-import type { SiteFile } from '@core/files/schemas'
+import { collectUserStylesheetCss } from '@core/publisher/userStylesheets'
+import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
 
 const STYLE_TAG_ID = 'mc-user-styles'
-
-// Reference-stable empty array for the ?? fallback — matches the pattern used
-// in ClassStyleInjector. An inline `?? []` would create a new array per
-// render and force the useMemo below to re-run every time.
-const EMPTY_FILES: readonly SiteFile[] = []
 
 interface UserStylesheetInjectorProps {
   /**
@@ -40,30 +37,32 @@ interface UserStylesheetInjectorProps {
    * document.
    */
   targetDocument?: Document
+  /**
+   * Frame viewport used to resolve CSS viewport units (`vh`/`vw`/…) to fixed
+   * px so they don't feed the iframe's grow-to-content height loop. When
+   * omitted (non-iframe contexts), CSS is injected verbatim. See
+   * `resolveViewportUnits.ts`.
+   */
+  viewport?: CanvasViewport
 }
 
-export function UserStylesheetInjector({ targetDocument }: UserStylesheetInjectorProps = {}) {
-  const files = useEditorStore((s) => s.site?.files ?? EMPTY_FILES)
+export function UserStylesheetInjector({ targetDocument, viewport }: UserStylesheetInjectorProps = {}) {
+  const site = useEditorStore((s) => s.site)
+  const activePageId = useEditorStore((s) => s.activePageId)
 
-  // Concatenate user stylesheets in stable path order. Memoised on the files
-  // array reference so the effect skips when nothing relevant changed.
-  // Mirrors `collectUserStylesheetCss` (server-side) byte-for-byte: ordering,
-  // comment wrapping, and no transformation of the body itself.
+  // Concatenate the user stylesheets that target the active page, in cascade
+  // order. Delegates to `collectUserStylesheetCss` so the canvas loads the
+  // exact bytes the published page receives — scope, priority, and enable
+  // state all honoured. Viewport units are then pinned to the frame viewport
+  // (canvas-only) so authored `vh`/`vmax`/… can't make the grow-to-content
+  // iframe height explode. Memoised on `site` + active page + viewport so the
+  // effect skips when nothing relevant changed.
   const css = useMemo(() => {
-    // Project to a typed `{ path, content }` tuple so map() doesn't have to
-    // re-narrow `content` (which is optional on the schema).
-    const stylesheets = files
-      .flatMap<{ path: string; content: string }>((f) =>
-        f.type === 'style' && typeof f.content === 'string' && f.content.length > 0
-          ? [{ path: f.path, content: f.content }]
-          : [],
-      )
-      .sort((a, b) => a.path.localeCompare(b.path))
-    if (stylesheets.length === 0) return ''
-    return stylesheets
-      .map((f) => `/* ${escapeCommentPath(f.path)} */\n${f.content}`)
-      .join('\n\n')
-  }, [files])
+    if (!site) return ''
+    const activePage = site.pages.find((page) => page.id === activePageId) ?? site.pages[0]
+    const collected = collectUserStylesheetCss(site, activePage)
+    return viewport ? resolveViewportUnitsForCanvas(collected, viewport) : collected
+  }, [site, activePageId, viewport])
 
   useEffect(() => {
     const targetDoc = targetDocument ?? document
@@ -85,14 +84,4 @@ export function UserStylesheetInjector({ targetDocument }: UserStylesheetInjecto
   }, [targetDocument])
 
   return null
-}
-
-/**
- * Sanitise a path for safe inclusion inside a CSS comment block. The only
- * sequence that can break out is the asterisk-slash pair — replace any
- * accidental occurrences so the comment can't terminate early. Mirrors the
- * helper of the same shape in `src/core/publisher/userStylesheets.ts`.
- */
-function escapeCommentPath(path: string): string {
-  return path.replace(/\*\//g, '*\\/')
 }

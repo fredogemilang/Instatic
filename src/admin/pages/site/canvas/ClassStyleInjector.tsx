@@ -35,6 +35,7 @@
 import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { generateCanvasClassCSS, generatePreviewClassCSS } from './canvasClassCss'
+import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
 
 interface ClassStyleInjectorProps {
   /**
@@ -43,6 +44,13 @@ interface ClassStyleInjectorProps {
    * a single breakpoint frame.
    */
   targetDocument?: Document
+  /**
+   * Frame viewport used to resolve CSS viewport units (`vh`/`vw`/…) in class
+   * styles to fixed px so they don't feed the iframe's grow-to-content height
+   * loop. When omitted (non-iframe contexts), CSS is injected verbatim. See
+   * `resolveViewportUnits.ts`.
+   */
+  viewport?: CanvasViewport
 }
 
 // ---------------------------------------------------------------------------
@@ -60,7 +68,7 @@ const PREVIEW_STYLE_TAG_ID = 'mc-classes-preview'
  */
 const EMPTY_BREAKPOINTS: Array<{ id: string; width: number }> = []
 
-export function ClassStyleInjector({ targetDocument }: ClassStyleInjectorProps = {}) {
+export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjectorProps = {}) {
   // Subscribe to class registry — shallow equality so we only re-run when
   // the classes object reference changes (Immer always creates a new ref on mutation)
   const classes = useEditorStore((s) => s.site?.classes ?? null)
@@ -83,22 +91,12 @@ export function ClassStyleInjector({ targetDocument }: ClassStyleInjectorProps =
       targetDoc.head.appendChild(styleEl)
     }
 
-    if (!classes || Object.keys(classes).length === 0) {
-      styleEl.textContent =
-        generateCanvasClassCSS(
-          {},
-          breakpoints,
-          frameworkColors,
-          frameworkTypography,
-          frameworkSpacing,
-          frameworkPreferences,
-          fonts,
-        ) || '/* no classes */'
-      return
-    }
+    // Pin viewport units to the frame viewport (canvas-only) so class styles
+    // using `vh`/`vmax`/… don't feed the iframe's grow-to-content height loop.
+    const forCanvas = (css: string) => (viewport ? resolveViewportUnitsForCanvas(css, viewport) : css)
 
-    styleEl.textContent = generateCanvasClassCSS(
-      classes,
+    const generated = generateCanvasClassCSS(
+      classes && Object.keys(classes).length > 0 ? classes : {},
       breakpoints,
       frameworkColors,
       frameworkTypography,
@@ -106,7 +104,8 @@ export function ClassStyleInjector({ targetDocument }: ClassStyleInjectorProps =
       frameworkPreferences,
       fonts,
     )
-  }, [targetDocument, classes, breakpoints, frameworkColors, frameworkTypography, frameworkSpacing, frameworkPreferences, fonts])
+    styleEl.textContent = forCanvas(generated) || '/* no classes */'
+  }, [targetDocument, viewport, classes, breakpoints, frameworkColors, frameworkTypography, frameworkSpacing, frameworkPreferences, fonts])
 
   // Preview overlay — a higher-specificity rule emitted while a user is
   // hovering a suggestion in a property control (e.g. spacing token
@@ -130,11 +129,12 @@ export function ClassStyleInjector({ targetDocument }: ClassStyleInjectorProps =
       previewEl.textContent = ''
       return
     }
-    previewEl.textContent = generatePreviewClassCSS(cls, {
+    const previewCss = generatePreviewClassCSS(cls, {
       breakpointId: previewClassStyles.breakpointId ?? null,
       styles: previewClassStyles.styles,
     })
-  }, [targetDocument, classes, previewClassStyles])
+    previewEl.textContent = viewport ? resolveViewportUnitsForCanvas(previewCss, viewport) : previewCss
+  }, [targetDocument, viewport, classes, previewClassStyles])
 
   // Cleanup: remove the style elements when the component unmounts. We
   // capture `targetDocument` into the effect so cleanup targets the same

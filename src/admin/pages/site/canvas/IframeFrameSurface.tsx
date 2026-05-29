@@ -66,6 +66,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -75,6 +76,7 @@ import { createPortal } from 'react-dom'
 import { cn } from '@ui/cn'
 import { ClassStyleInjector } from './ClassStyleInjector'
 import { UserStylesheetInjector } from './UserStylesheetInjector'
+import { CANVAS_VIEWPORT_HEIGHT, type CanvasViewport } from './resolveViewportUnits'
 import styles from './IframeFrameSurface.module.css'
 
 const IFRAME_SRC_DOC = '<!doctype html><html><head></head><body></body></html>'
@@ -214,11 +216,44 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     //  2. Wheel events for canvas pan are never consumed by inner scroll.
     //  3. The whole page is visible at once, the way the legacy in-document
     //     frame rendered it.
+    //
+    // Viewport-unit feedback loop — why this is guarded
+    // ─────────────────────────────────────────────────
+    // The iframe element's height IS the `vh`/`vw` reference for the page
+    // rendered inside it. So writing `iframe.style.height` from the measured
+    // content height feeds straight back into any authored CSS that sizes
+    // against the viewport (`min-height: 88vh`, `height: 100vh`, percentage
+    // heights chained off such an ancestor, …): we grow the frame → `vh`
+    // recomputes larger → content grows → the ResizeObserver fires → we grow
+    // again. Below 100% of viewport units this converges slowly; at ≥ 100%
+    // it diverges and pins the CPU. An unguarded loop makes the editor
+    // unusable the instant a user pastes viewport-relative CSS.
+    //
+    // The guard:
+    //  - Coalesce measurements into a single rAF so a write can't trigger a
+    //    synchronous re-measure on the same frame.
+    //  - Cap how many times we may resize from our OWN height writes before
+    //    treating the layout as settled (a viewport feedback chain only ever
+    //    grows from our writes, with no DOM mutation in between). The frame
+    //    is left at its last height once the cap trips — convergent pages
+    //    reach their natural height, divergent ones stop at a bounded height,
+    //    and the CPU is never pinned.
+    //  - A genuine content/style change (nodes added/removed, text edited,
+    //    injected CSS replaced) fires the MutationObserver, which resets the
+    //    budget so real edits always earn a fresh fit. Our own height writes
+    //    land on the iframe element in the PARENT document, so they never
+    //    trip the MutationObserver and never reset the budget themselves.
     useEffect(() => {
       if (!iframeDoc) return
       const iframe = iframeRef.current
       if (!iframe) return
+
+      const MAX_SELF_RESIZES = 60
+      let selfResizes = 0
+      let rafId: number | null = null
+
       const measure = () => {
+        rafId = null
         const body = iframeDoc.body
         const html = iframeDoc.documentElement
         if (!body || !html) return
@@ -226,24 +261,51 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         // some content (e.g. fixed-position children) only contributes to
         // one of the two.
         const target = Math.max(body.scrollHeight, html.scrollHeight)
-        // Avoid layout thrash: only write when the size actually changes.
         const current = parseFloat(iframe.style.height || '0')
-        if (Math.abs(current - target) > 0.5) {
-          iframe.style.height = `${target}px`
+        if (Math.abs(current - target) <= 0.5) {
+          // Layout settled — clear the budget so the next genuine change
+          // gets a fresh fit.
+          selfResizes = 0
+          return
         }
+        // Not settling after many consecutive self-driven resizes → this is
+        // a viewport-unit feedback loop. Stop writing to break it.
+        if (selfResizes >= MAX_SELF_RESIZES) return
+        iframe.style.height = `${target}px`
+        selfResizes += 1
       }
+      const scheduleMeasure = () => {
+        if (rafId === null) rafId = requestAnimationFrame(measure)
+      }
+
+      // First fit runs synchronously so the frame doesn't flash at the
+      // ~150px default height before the first rAF lands.
       measure()
-      // ResizeObserver fires for any layout change inside the iframe —
-      // covers font load reflow, image decode, image lazy-load, content
-      // edits.
-      const ro = new ResizeObserver(measure)
+
+      // ResizeObserver fires for any layout change inside the iframe — font
+      // load reflow, image decode/lazy-load, authored style edits, and our
+      // own height writes (hence the self-resize cap above).
+      const ro = new ResizeObserver(scheduleMeasure)
       ro.observe(iframeDoc.body)
       ro.observe(iframeDoc.documentElement)
-      // MutationObserver covers tree mutations (added/removed nodes) that
-      // don't trigger ResizeObserver on the root.
-      const mo = new MutationObserver(measure)
-      mo.observe(iframeDoc.body, { childList: true, subtree: true, attributes: true })
+      // MutationObserver covers structural edits (nodes added/removed, text
+      // changed) and injected-CSS replacements (the class/user-style tags in
+      // <head>), resetting the self-resize budget so a real change always
+      // re-fits. We deliberately do NOT observe `attributes`: the canvas
+      // toggles selection/hover `data-*`/`aria-*` attributes on every pointer
+      // move, and re-measuring (a forced reflow) on each of those was a
+      // second, hover-driven source of jank on large pages.
+      const mo = new MutationObserver(() => {
+        selfResizes = 0
+        scheduleMeasure()
+      })
+      mo.observe(iframeDoc.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      })
       return () => {
+        if (rafId !== null) cancelAnimationFrame(rafId)
         ro.disconnect()
         mo.disconnect()
       }
@@ -458,6 +520,16 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         )
       : {}
 
+    // Frame viewport for canvas viewport-unit resolution. Width is the
+    // breakpoint width (the iframe's real width); height is a fixed
+    // device-like value. Pinning `vh`/`vmax`/… to this stops authored
+    // viewport units from feeding the grow-to-content height loop above.
+    // Memoised so the injector effects don't re-run on unrelated re-renders.
+    const viewport: CanvasViewport = useMemo(
+      () => ({ width, height: CANVAS_VIEWPORT_HEIGHT }),
+      [width],
+    )
+
     return (
       <>
         <iframe
@@ -476,8 +548,8 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         {iframeDoc &&
           createPortal(
             <>
-              <ClassStyleInjector targetDocument={iframeDoc} />
-              <UserStylesheetInjector targetDocument={iframeDoc} />
+              <ClassStyleInjector targetDocument={iframeDoc} viewport={viewport} />
+              <UserStylesheetInjector targetDocument={iframeDoc} viewport={viewport} />
               {children}
             </>,
             iframeDoc.body,
