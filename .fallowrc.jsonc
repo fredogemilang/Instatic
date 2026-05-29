@@ -6,9 +6,13 @@
   //     compose.prod.yml's healthcheck block (Docker, not JS).
   //   - scripts/build-google-fonts.ts is a manually-run dev script that
   //     refreshes src/core/fonts/google-fonts.json.
+  //   - scripts/generate-secret-key.ts is a manually-run ops helper that
+  //     prints a fresh AI master key; server/ai/credentials/masterKey.ts
+  //     points operators at it from its error messages.
   "entry": [
     "server/healthcheck.ts",
-    "scripts/build-google-fonts.ts"
+    "scripts/build-google-fonts.ts",
+    "scripts/generate-secret-key.ts"
   ],
 
   // Example plugins are zip-distributable user code that gets loaded at runtime
@@ -18,7 +22,15 @@
     "examples/plugins/**",
     "src/ui/icons/icon-browser.html",
     "vendor/**",
-    ".tmp/**"
+    ".tmp/**",
+
+    // Intentional doc-only `export {}` barrels. They deliberately export
+    // nothing — each carries a comment telling devs to deep-import the
+    // per-module file so rolldown can code-split (the barrel would defeat
+    // tree-shaking / the React.lazy boundary). Nothing imports them, so
+    // fallow flags them as unused files; exclude them from analysis.
+    "src/admin/layouts/index.ts",
+    "src/admin/modals/Settings/index.ts"
   ],
 
   // CSS-modules `:global(.cm-editor)` reaches into the CodeMirror runtime tree
@@ -81,27 +93,20 @@
       "exports": ["ServerPluginModule"]
     },
 
-    // Plugin host-ui re-exports — the `*Props` type aliases form the
-    // `@pagebuilder/host-ui` package surface that plugin authors consume.
+    // Plugin host-ui / host-hooks barrels — the entire named surface of these
+    // two modules IS the `@pagebuilder/host-ui` + `@pagebuilder/host-hooks`
+    // plugin contract. Plugins consume them via a dynamic
+    // `import('@admin/plugin-host-ui')` namespace in
+    // `src/admin/pluginRuntimeBootstrap.ts` (member access, which fallow can't
+    // trace) and the contract is pinned by
+    // `plugin-host-ui-runtime-parity.test.ts`. Suppress the whole barrel.
     {
       "file": "src/admin/plugin-host-ui/index.ts",
-      "exports": [
-        "AlertProps",
-        "ButtonProps",
-        "CardProps",
-        "CheckboxProps",
-        "CodeProps",
-        "EmptyStateProps",
-        "HeadingProps",
-        "InputProps",
-        "SearchBarProps",
-        "SelectProps",
-        "SeparatorProps",
-        "StackProps",
-        "SwitchProps",
-        "TextProps",
-        "TextareaProps"
-      ]
+      "exports": ["*"]
+    },
+    {
+      "file": "src/admin/plugin-host-hooks/index.ts",
+      "exports": ["*"]
     }
   ]
 }

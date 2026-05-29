@@ -36,7 +36,7 @@ const CreateDocumentInput = Type.Object({
   status: Type.Optional(DocumentStatus),
 })
 
-export const createDocumentTool: AiTool = {
+const createDocumentTool: AiTool = {
   name: 'create_document',
   scope: 'content',
   execution: 'browser',
@@ -53,7 +53,7 @@ const DeleteDocumentInput = Type.Object({
   documentId: Type.String({ minLength: 1 }),
 })
 
-export const deleteDocumentTool: AiTool = {
+const deleteDocumentTool: AiTool = {
   name: 'delete_document',
   scope: 'content',
   execution: 'browser',
@@ -72,7 +72,7 @@ const SetDocumentStatusInput = Type.Object({
   scheduledAt: Type.Optional(Type.String({ minLength: 1 })),
 })
 
-export const setDocumentStatusTool: AiTool = {
+const setDocumentStatusTool: AiTool = {
   name: 'set_document_status',
   scope: 'content',
   execution: 'browser',
@@ -91,7 +91,7 @@ const SetDocumentFieldInput = Type.Object({
   value: Type.Unknown(),
 })
 
-export const setDocumentFieldTool: AiTool = {
+const setDocumentFieldTool: AiTool = {
   name: 'set_document_field',
   scope: 'content',
   execution: 'browser',
@@ -109,7 +109,7 @@ const SetDocumentFieldsInput = Type.Object({
   fields: FieldsRecord,
 })
 
-export const setDocumentFieldsTool: AiTool = {
+const setDocumentFieldsTool: AiTool = {
   name: 'set_document_fields',
   scope: 'content',
   execution: 'browser',
@@ -127,7 +127,7 @@ const SetDocumentAuthorInput = Type.Object({
   userId: Type.String({ minLength: 1 }),
 })
 
-export const setDocumentAuthorTool: AiTool = {
+const setDocumentAuthorTool: AiTool = {
   name: 'set_document_author',
   scope: 'content',
   execution: 'browser',
@@ -144,7 +144,7 @@ const SetActiveDocumentInput = Type.Object({
   documentId: Type.String({ minLength: 1 }),
 })
 
-export const setActiveDocumentTool: AiTool = {
+const setActiveDocumentTool: AiTool = {
   name: 'set_active_document',
   scope: 'content',
   execution: 'browser',
@@ -161,7 +161,7 @@ const SetActiveCollectionInput = Type.Object({
   tableId: Type.String({ minLength: 1 }),
 })
 
-export const setActiveCollectionTool: AiTool = {
+const setActiveCollectionTool: AiTool = {
   name: 'set_active_collection',
   scope: 'content',
   execution: 'browser',

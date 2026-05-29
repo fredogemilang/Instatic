@@ -1,8 +1,0 @@
-/**
- * Body-only styling for PluginSettingsDialog. Backdrop, header, footer
- * chrome lives in @ui/components/Dialog. The dialog body's loading
- * skeleton is handled by `<Dialog loading>` — no per-dialog styles
- * needed here.
- */
-
-

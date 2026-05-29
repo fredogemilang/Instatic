@@ -31,7 +31,7 @@ const ListModulesInput = Type.Object({
   category: Type.Optional(Type.String()),
 })
 
-export const listModulesTool: AiTool = {
+const listModulesTool: AiTool = {
   name: 'list_modules',
   scope: 'site',
   execution: 'server',
@@ -57,7 +57,7 @@ const ListClassesInput = Type.Object({
   query: Type.Optional(Type.String()),
 })
 
-export const listClassesTool: AiTool = {
+const listClassesTool: AiTool = {
   name: 'list_classes',
   scope: 'site',
   execution: 'server',
@@ -83,7 +83,7 @@ export const listClassesTool: AiTool = {
 
 const ListBreakpointsInput = Type.Object({})
 
-export const listBreakpointsTool: AiTool = {
+const listBreakpointsTool: AiTool = {
   name: 'list_breakpoints',
   scope: 'site',
   execution: 'server',
@@ -105,7 +105,7 @@ export const listBreakpointsTool: AiTool = {
 
 const InspectPageInput = Type.Object({})
 
-export const inspectPageTool: AiTool = {
+const inspectPageTool: AiTool = {
   name: 'inspect_page',
   scope: 'site',
   execution: 'server',
@@ -140,7 +140,7 @@ const SearchNodesInput = Type.Object({
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
 })
 
-export const searchNodesTool: AiTool = {
+const searchNodesTool: AiTool = {
   name: 'search_nodes',
   scope: 'site',
   execution: 'server',
@@ -163,7 +163,7 @@ const InspectNodeInput = Type.Object({
   maxDepth: Type.Optional(Type.Integer({ minimum: 0, maximum: 50 })),
 })
 
-export const inspectNodeTool: AiTool = {
+const inspectNodeTool: AiTool = {
   name: 'inspect_node',
   scope: 'site',
   execution: 'server',
@@ -185,7 +185,7 @@ const InspectClassInput = Type.Object({
   breakpointId: Type.Optional(Type.String({ minLength: 1 })),
 })
 
-export const inspectClassTool: AiTool = {
+const inspectClassTool: AiTool = {
   name: 'inspect_class',
   scope: 'site',
   execution: 'server',
@@ -204,7 +204,7 @@ export const inspectClassTool: AiTool = {
 
 const ListPagesInput = Type.Object({})
 
-export const listPagesTool: AiTool = {
+const listPagesTool: AiTool = {
   name: 'list_pages',
   scope: 'site',
   execution: 'server',

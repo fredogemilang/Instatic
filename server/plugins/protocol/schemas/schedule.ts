@@ -13,9 +13,9 @@ import { Type } from '@sinclair/typebox'
 // Cadence shapes the plugin can pass to `cms.schedule.register`. The
 // validator rejects anything that doesn't match one of the documented
 // intervals.
-export const TimeOfDayPattern = '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+const TimeOfDayPattern = '^([01][0-9]|2[0-3]):[0-5][0-9]$'
 
-export const CadenceSchema = Type.Union([
+const CadenceSchema = Type.Union([
   Type.Object({ interval: Type.Literal('hourly') }, { additionalProperties: false }),
   Type.Object(
     {

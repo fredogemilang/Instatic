@@ -9,14 +9,14 @@
 
 import { Type } from '@sinclair/typebox'
 
-export const HashAlgorithmSchema = Type.Union([
+const HashAlgorithmSchema = Type.Union([
   Type.Literal('SHA-256'),
   Type.Literal('SHA-1'),
   Type.Literal('SHA-512'),
 ])
 
 /** Max base64 payload — 8 MB after decode. (base64 inflates by 4/3 → ~10.7 MB encoded.) */
-export const MAX_CRYPTO_PAYLOAD_BASE64 = 12 * 1024 * 1024
+const MAX_CRYPTO_PAYLOAD_BASE64 = 12 * 1024 * 1024
 
 export const CryptoDigestArgSchema = Type.Object(
   {

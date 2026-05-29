@@ -18,7 +18,7 @@
 import { shouldInterruptAfterDeadline, type QuickJSContext, type QuickJSHandle } from 'quickjs-emscripten'
 import { DEFAULT_EVAL_TIMEOUT_MS } from './limits'
 
-export function withDeadline<T>(ctx: QuickJSContext, timeoutMs: number, body: () => Promise<T>): Promise<T> {
+function withDeadline<T>(ctx: QuickJSContext, timeoutMs: number, body: () => Promise<T>): Promise<T> {
   const deadline = Date.now() + timeoutMs
   ctx.runtime.setInterruptHandler(shouldInterruptAfterDeadline(deadline))
   return body().finally(() => {
@@ -26,7 +26,7 @@ export function withDeadline<T>(ctx: QuickJSContext, timeoutMs: number, body: ()
   })
 }
 
-export function evalResolved<T>(
+function evalResolved<T>(
   ctx: QuickJSContext,
   code: string,
   read: (handle: QuickJSHandle) => T,
@@ -39,7 +39,7 @@ export function evalResolved<T>(
   return withDeadline(ctx, timeoutMs, () => evalResolvedInner(ctx, code, read))
 }
 
-export async function evalResolvedInner<T>(
+async function evalResolvedInner<T>(
   ctx: QuickJSContext,
   code: string,
   read: (handle: QuickJSHandle) => T,
@@ -108,7 +108,7 @@ export async function evalResolvedInner<T>(
  * mean a plugin bug that the calling eval's reject path will surface
  * cleanly.
  */
-export function drainJobs(ctx: QuickJSContext): number {
+function drainJobs(ctx: QuickJSContext): number {
   const result = ctx.runtime.executePendingJobs()
   if ('error' in result && result.error) {
     try { result.error.dispose() } catch { /* ignore */ }

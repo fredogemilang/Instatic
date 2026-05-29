@@ -6,18 +6,18 @@
 import { Type } from '@sinclair/typebox'
 import { NETWORK_HOST_PATTERN } from './network'
 
-export const MEDIA_ID_PATTERN = '^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$'
-export const MEDIA_ROLE_VALUES = ['original', 'variant', 'avatar', 'font', 'plugin-pack'] as const
+const MEDIA_ID_PATTERN = '^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$'
+const MEDIA_ROLE_VALUES = ['original', 'variant', 'avatar', 'font', 'plugin-pack'] as const
 
-export const MediaRoleSchema = Type.Union(MEDIA_ROLE_VALUES.map((v) => Type.Literal(v)))
+const MediaRoleSchema = Type.Union(MEDIA_ROLE_VALUES.map((v) => Type.Literal(v)))
 
-export const MediaServingModeSchema = Type.Union([
+const MediaServingModeSchema = Type.Union([
   Type.Literal('public-url'),
   Type.Literal('signed-redirect'),
   Type.Literal('proxy'),
 ])
 
-export const MediaCspOriginSchema = Type.Object(
+const MediaCspOriginSchema = Type.Object(
   {
     directive: Type.Union([
       Type.Literal('img-src'),

@@ -58,13 +58,4 @@ export function selectToolsForScope(
   return tools.filter((t) => !t.mutates)
 }
 
-/**
- * Look up a single tool by name within a scope, ignoring capability filters.
- * Used by handlers that route inbound tool-result POSTs and which run AFTER
- * the chat handler has already filtered the registered toolset.
- */
-export function getToolByName(scope: ToolScope, toolName: string): AiTool | undefined {
-  return scopeToolset(scope).find((t) => t.name === toolName)
-}
-
 export type { AiTool, ToolScope } from './types'

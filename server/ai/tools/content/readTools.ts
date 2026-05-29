@@ -98,7 +98,7 @@ function projectRow(row: DataRow) {
 
 const ListCollectionsInput = Type.Object({})
 
-export const listCollectionsTool: AiTool = {
+const listCollectionsTool: AiTool = {
   name: 'list_collections',
   scope: 'content',
   execution: 'server',
@@ -123,7 +123,7 @@ const GetCollectionSchemaInput = Type.Object({
   tableId: Type.String({ minLength: 1 }),
 })
 
-export const getCollectionSchemaTool: AiTool = {
+const getCollectionSchemaTool: AiTool = {
   name: 'get_collection_schema',
   scope: 'content',
   execution: 'server',
@@ -164,7 +164,7 @@ const ListDocumentsInput = Type.Object({
   offset: Type.Optional(Type.Integer({ minimum: 0 })),
 })
 
-export const listDocumentsTool: AiTool = {
+const listDocumentsTool: AiTool = {
   name: 'list_documents',
   scope: 'content',
   execution: 'server',
@@ -197,7 +197,7 @@ const GetDocumentInput = Type.Object({
   documentId: Type.String({ minLength: 1 }),
 })
 
-export const getDocumentTool: AiTool = {
+const getDocumentTool: AiTool = {
   name: 'get_document',
   scope: 'content',
   execution: 'server',
@@ -237,7 +237,7 @@ const SearchDocumentsInput = Type.Object({
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
 })
 
-export const searchDocumentsTool: AiTool = {
+const searchDocumentsTool: AiTool = {
   name: 'search_documents',
   scope: 'content',
   execution: 'server',
@@ -275,7 +275,7 @@ export const searchDocumentsTool: AiTool = {
 
 const ListUsersInput = Type.Object({})
 
-export const listUsersTool: AiTool = {
+const listUsersTool: AiTool = {
   name: 'list_users',
   scope: 'content',
   execution: 'server',
@@ -298,7 +298,7 @@ const ListMediaInput = Type.Object({
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
 })
 
-export const listMediaTool: AiTool = {
+const listMediaTool: AiTool = {
   name: 'list_media',
   scope: 'content',
   execution: 'server',

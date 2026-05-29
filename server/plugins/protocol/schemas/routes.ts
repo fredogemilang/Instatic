@@ -25,14 +25,14 @@
 
 import { Type } from '@sinclair/typebox'
 
-export const RouteMethodSchema = Type.Union([
+const RouteMethodSchema = Type.Union([
   Type.Literal('GET'),
   Type.Literal('POST'),
   Type.Literal('PATCH'),
   Type.Literal('DELETE'),
 ])
 
-export const RouteAccessSchema = Type.Union([
+const RouteAccessSchema = Type.Union([
   Type.Object(
     {
       kind: Type.Literal('capability'),
