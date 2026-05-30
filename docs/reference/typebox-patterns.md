@@ -12,7 +12,7 @@ Schemas are the **source of truth**. Domain types come from `Static<typeof Schem
 
 - **Helpers live in `src/core/utils/typeboxHelpers.ts`** — `Type`, `Value`, `Static`, `withFallback`, `parseValue`, `safeParseValue`, `filterArray`, `formatValueErrors`.
 - **JSON boundary helpers live in `src/core/utils/jsonValidate.ts`** — `safeParseJson`, `parseJsonWithFallback`, `parseJsonResponse`.
-- **HTTP envelope helper:** `readEnvelope(res, Schema, fallback)` from `src/core/persistence/httpJson.ts`.
+- **Canonical client HTTP layer:** `@core/http` — `apiRequest(path, { schema, … })` (the default for browser→server calls), plus `ApiError`, `isAbortError`, `readEnvelope`, `responseErrorMessage`, `ErrorEnvelopeSchema`. All defined in `src/core/http/apiClient.ts`.
 - **Schemas are source of truth.** `type Foo = Static<typeof FooSchema>` — never a hand-rolled interface beside the schema.
 - **Soft fallbacks** for corrupted local storage / optional config use `withFallback(schema, default)` + `parseJsonWithFallback`.
 - **Hard fallbacks** for required documents throw and bubble to an error boundary.
@@ -78,17 +78,16 @@ const prefs = parseJsonWithFallback(
 | `parseJsonWithFallback(raw, schema, default)`   | Best-effort read; returns the default on parse / validate failure|
 | `parseJsonResponse(res, schema)`                | Validate `await res.json()` against a schema; throws on mismatch  |
 
-### `src/core/persistence/httpJson.ts`
+### `src/core/http/apiClient.ts` (canonical client HTTP layer, `@core/http`)
 
 | Helper                                          | Purpose                                                          |
 |-------------------------------------------------|------------------------------------------------------------------|
-| `readEnvelope(res, schema, fallbackMessage)`    | One-shot: check `res.ok` (throw with `responseErrorMessage(res, fallback)` if not), then validate body against `schema` |
-
-### `src/core/persistence/httpErrors.ts`
-
-| Helper                                          | Purpose                                                          |
-|-------------------------------------------------|------------------------------------------------------------------|
-| `responseErrorMessage(res, fallback)`           | Extract a useful error message from a failed `Response` (reads `{ error: string }` envelope if present, otherwise the fallback) |
+| `apiRequest(path, { method, body, schema, query, signal, … })` | **The default for browser→server calls.** Sets `credentials`, JSON-serializes `body`, validates the success body against `schema` (returns `Static<schema>`; `void` without one), and throws `ApiError` on a non-OK status. |
+| `readEnvelope(res, schema, fallbackMessage)`    | For code that already holds a `Response` (the persistence layer, which injects its own `fetch`): check `res.ok` (throw `ApiError` with `responseErrorMessage(res, fallback)` if not), then validate body against `schema` |
+| `assertOk(res, fallbackMessage)`                | No-body counterpart to `readEnvelope`: throw `ApiError` if the `Response` is not OK, otherwise return (for void mutations / bodies parsed separately) |
+| `responseErrorMessage(res, fallback)`           | Extract a useful error message from a failed `Response` (reads `{ error: string }` envelope if present, then raw text, otherwise the fallback) |
+| `ApiError`                                      | The single error type thrown by `apiRequest`/`readEnvelope`; carries `.status` so UI can branch (403, 404, …) |
+| `isAbortError(err)`                             | True for an aborted fetch (user cancellation / superseded request) — the uniform replacement for `(err as Error).name === 'AbortError'` |
 
 ---
 
@@ -140,15 +139,19 @@ try {
 
 ```ts
 import { Type } from '@core/utils/typeboxHelpers'
-import { readEnvelope } from '@core/persistence/httpJson'
+import { apiRequest } from '@core/http'
 
 const PostsResponseSchema = Type.Object({
   rows: Type.Array(PostSchema),
 })
 
-const res = await fetch('/admin/api/cms/posts')
-const data = await readEnvelope(res, PostsResponseSchema, 'Failed to load posts')
+// Canonical client call: sets credentials, validates the body, throws ApiError.
+const data = await apiRequest('/admin/api/cms/posts', { schema: PostsResponseSchema })
 // data.rows is typed
+
+// Code that already holds a Response (e.g. the persistence layer, which injects
+// its own fetch) validates with readEnvelope instead:
+//   const data = await readEnvelope(res, PostsResponseSchema, 'Failed to load posts')
 ```
 
 ### Validate persisted JSON (localStorage / DB JSON column)
@@ -199,16 +202,25 @@ The annotation is read by parsers like `parseWithFallbackAnnotation` to fill in 
 
 ### Server error envelope
 
-Every CMS handler error returns `{ error: string }`. Clients read it via `responseErrorMessage`:
+Every CMS handler error returns `{ error: string }`. `apiRequest` reads it automatically (via `responseErrorMessage`) and throws an `ApiError` carrying the HTTP status — so callers branch on the error type instead of re-checking `res.ok`:
 
 ```ts
-const res = await fetch('/admin/api/cms/site')
-if (!res.ok) {
-  throw new Error(await responseErrorMessage(res, 'Failed to load site'))
+import { apiRequest, ApiError } from '@core/http'
+
+try {
+  const site = await apiRequest('/admin/api/cms/site', {
+    schema: SiteEnvelopeSchema,
+    fallbackMessage: 'Failed to load site',
+  })
+} catch (err) {
+  if (err instanceof ApiError && err.status === 403) {
+    // render "no access" state
+  }
+  throw err
 }
 ```
 
-`readEnvelope` combines this with response validation in one call. Use it as the default.
+`apiRequest` is the default for browser→server calls. `readEnvelope` is the equivalent for code that already holds a `Response`.
 
 ### Throwing a typed error
 
@@ -251,7 +263,8 @@ Common boundaries already wrapped — extend the same pattern when you add a new
 
 | Boundary                                   | Helper                                              | Lives in                                |
 |--------------------------------------------|-----------------------------------------------------|-----------------------------------------|
-| HTTP response (client → CMS API)           | `readEnvelope(res, Schema, fallback)`               | `src/core/persistence/httpJson.ts`      |
+| HTTP request (client, canonical)           | `apiRequest(path, { schema, … })`                   | `src/core/http/apiClient.ts`            |
+| HTTP response from a held `Response`        | `readEnvelope(res, Schema, fallback)`               | `src/core/http/apiClient.ts`            |
 | HTTP response (generic JSON)               | `parseJsonResponse(res, Schema)`                    | `src/core/utils/jsonValidate.ts`        |
 | Request body (server handler)              | `parseValue(Schema, await readJsonObject(req))`     | `server/http.ts` + per-handler          |
 | `JSON.parse` of localStorage               | `parseJsonWithFallback(raw, Schema, default)`       | `src/core/utils/jsonValidate.ts`        |
@@ -286,9 +299,8 @@ Common boundaries already wrapped — extend the same pattern when you add a new
 - Source-of-truth files:
   - `src/core/utils/typeboxHelpers.ts` — helper layer (`parseValue`, `withFallback`, `filterArray`, etc.)
   - `src/core/utils/jsonValidate.ts` — JSON boundary helpers
-  - `src/core/persistence/httpJson.ts` — `readEnvelope`
-  - `src/core/persistence/httpErrors.ts` — `responseErrorMessage`
-  - `src/core/persistence/responseSchemas.ts` — shared HTTP response schemas
+  - `src/core/http/apiClient.ts` — `apiRequest`, `ApiError`, `isAbortError`, `readEnvelope`, `assertOk`, `responseErrorMessage`, `ErrorEnvelopeSchema`
+  - `src/core/persistence/responseSchemas.ts` — shared CMS HTTP response schemas
   - `src/core/persistence/validate.ts` — `validateSite`, `SiteValidationError`
   - `src/core/plugins/manifest.ts` — `parsePluginManifest`
   - `server/http.ts` — `readJsonObject`, `jsonResponse`, `badRequest`

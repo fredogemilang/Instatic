@@ -167,7 +167,7 @@ Detailed patterns: [`docs/reference/typebox-patterns.md`](docs/reference/typebox
 
 Every untyped boundary uses TypeBox. Inside the boundary, code trusts the parsed value.
 
-- **HTTP responses (client):** `parseJsonResponse(res, Schema)` or — for the persistence layer — `readEnvelope(res, Schema, fallbackMessage)`.
+- **HTTP responses (client):** use the canonical client `apiRequest(path, { schema, … })` from `@core/http`. It sets `credentials`, serializes a JSON body, validates the success body against `schema`, and throws a single `ApiError` (carrying the HTTP status) on failure — detect cancellation with `isAbortError(err)`. Do NOT hand-roll `fetch` + `res.ok` + `res.json()` in admin code. The persistence layer performs its own injectable `fetch` and hands the response to `readEnvelope(res, Schema, fallbackMessage)` (same `@core/http`, also throws `ApiError`).
 - **`JSON.parse` of persisted data:** `safeParseJson(raw, Schema)` for hard, `parseJsonWithFallback(raw, Schema, default)` for soft.
 - **Request bodies (server):** validate with a TypeBox schema before handing to handlers. Helpers in `server/http.ts`.
 - **Plugin manifests:** `parsePluginManifest` in `src/core/plugins/manifest.ts`.
@@ -180,8 +180,8 @@ Every untyped boundary uses TypeBox. Inside the boundary, code trusts the parsed
 
 ### Server error envelope
 
-- Server endpoints return `{ error: string }` on failure (validated by `ErrorEnvelopeSchema`).
-- Clients read it via `responseErrorMessage(res, fallback)`.
+- Server endpoints return `{ error: string }` on failure (validated by `ErrorEnvelopeSchema` in `@core/http`).
+- `apiRequest`/`readEnvelope` surface this message automatically via `responseErrorMessage(res, fallback)` (also in `@core/http`), which prefers the `{ error }` envelope, then raw response text, then the fallback.
 - Server logs use the prefix `console.error('[<module>]', err)` — example: `'[plugin:acme.workflow]'`.
 
 ### UI error handling

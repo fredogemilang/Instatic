@@ -18,8 +18,8 @@ import {
   listDefaults,
   listModels,
   setDefault,
-  AiApiError,
 } from '../../../ai/api'
+import { ApiError } from '@core/http'
 import styles from '../AiPage.module.css'
 
 type ToolScope = 'site' | 'content' | 'data' | 'plugin'
@@ -114,7 +114,7 @@ export function DefaultsTab() {
                   setStatusByScope((prev) => ({ ...prev, [scope]: 'Saved.' }))
                   setRefreshKey((n) => n + 1)
                 } catch (err) {
-                  const message = err instanceof AiApiError
+                  const message = err instanceof ApiError
                     ? err.message
                     : err instanceof Error
                       ? err.message

@@ -1,8 +1,7 @@
 import { Type } from '@sinclair/typebox'
 import type { PluginRecord, PluginResource } from '@core/plugin-sdk'
 import type { StorageListOptions } from '@core/plugin-sdk/storageSchemas'
-import { readEnvelope } from './httpJson'
-import { responseErrorMessage } from './httpErrors'
+import { readEnvelope, assertOk } from '@core/http'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
@@ -134,7 +133,5 @@ export async function deleteCmsPluginResourceRecord(
     method: 'DELETE',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS plugin record delete failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS plugin record delete failed with ${res.status}`)
 }

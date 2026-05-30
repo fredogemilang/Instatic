@@ -1,9 +1,9 @@
 /**
  * TypeBox response schemas for spotlight async providers.
  *
- * One schema per HTTP endpoint. Every provider validates its fetch response
- * through these schemas via parseJsonResponse / readEnvelope so the provider
- * code never does `as Foo` past a JSON boundary.
+ * One schema per HTTP endpoint. Every provider passes its schema to
+ * `apiRequest` (`@core/http`), which validates the response body so the
+ * provider code never does `as Foo` past a JSON boundary.
  *
  * §3 of the master plan: TypeBox at every untyped boundary.
  */

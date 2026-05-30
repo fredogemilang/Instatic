@@ -1,17 +1,18 @@
 /**
  * Thin client-side API wrappers for the AI runtime HTTP surface.
  *
- * Every function POSTs/GETs the canonical wire shapes defined in
- * `server/ai/handlers/*` and parses the response with TypeBox. Errors
- * surface as thrown `AiApiError`s with the server's status + message —
- * pages render them via `role="alert"` panels.
+ * Every function goes through the canonical `apiRequest` (`@core/http`),
+ * which POSTs/GETs the wire shapes defined in `server/ai/handlers/*`,
+ * validates the response with TypeBox, and throws an `ApiError` (carrying
+ * the server status + message) on failure — pages render these via
+ * `role="alert"` panels.
  *
  * Constraint #272 — every untyped boundary (HTTP response) is validated
  * against a TypeBox schema before reaching React state.
  */
 
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { parseJsonResponse } from '@core/utils/jsonValidate'
+import { apiRequest, ApiError } from '@core/http'
 
 // ---------------------------------------------------------------------------
 // Wire schemas — match server projections in:
@@ -111,42 +112,17 @@ const ConversationListResponseSchema = Type.Object({
   conversations: Type.Array(ConversationViewSchema),
 })
 
-const ErrorResponseSchema = Type.Object({
-  error: Type.String(),
-})
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
-export class AiApiError extends Error {
-  readonly status: number
-
-  constructor(message: string, status: number) {
-    super(message)
-    this.name = 'AiApiError'
-    this.status = status
-  }
-}
-
-async function throwIfNotOk(res: Response): Promise<void> {
-  if (res.ok) return
-  let message = `Request failed: ${res.status}`
-  try {
-    const data = await res.json() as { error?: string }
-    if (data?.error) message = data.error
-  } catch { /* fall through */ }
-  throw new AiApiError(message, res.status)
-}
-
 // ---------------------------------------------------------------------------
 // Endpoints — credentials
+//
+// Every call goes through the canonical `apiRequest` (`@core/http`): it sets
+// credentials, validates the success body with TypeBox, and throws a single
+// `ApiError` (carrying the HTTP status) on failure. UI branches on
+// `err instanceof ApiError && err.status === …`.
 // ---------------------------------------------------------------------------
 
 export async function listCredentials(): Promise<CredentialView[]> {
-  const res = await fetch('/admin/api/ai/credentials')
-  await throwIfNotOk(res)
-  const body = await parseJsonResponse(res, CredentialListResponseSchema)
+  const body = await apiRequest('/admin/api/ai/credentials', { schema: CredentialListResponseSchema })
   return body.credentials
 }
 
@@ -166,13 +142,11 @@ export type CreateCredentialBody =
     }
 
 export async function createCredential(body: CreateCredentialBody): Promise<CredentialView> {
-  const res = await fetch('/admin/api/ai/credentials', {
+  const parsed = await apiRequest('/admin/api/ai/credentials', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    schema: CredentialItemResponseSchema,
   })
-  await throwIfNotOk(res)
-  const parsed = await parseJsonResponse(res, CredentialItemResponseSchema)
   return parsed.credential
 }
 
@@ -183,19 +157,16 @@ export interface UpdateCredentialBody {
 }
 
 export async function updateCredential(id: string, body: UpdateCredentialBody): Promise<CredentialView> {
-  const res = await fetch(`/admin/api/ai/credentials/${encodeURIComponent(id)}`, {
+  const parsed = await apiRequest(`/admin/api/ai/credentials/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    schema: CredentialItemResponseSchema,
   })
-  await throwIfNotOk(res)
-  const parsed = await parseJsonResponse(res, CredentialItemResponseSchema)
   return parsed.credential
 }
 
 export async function deleteCredential(id: string): Promise<void> {
-  const res = await fetch(`/admin/api/ai/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' })
-  await throwIfNotOk(res)
+  await apiRequest(`/admin/api/ai/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export interface TestResult {
@@ -205,14 +176,20 @@ export interface TestResult {
 }
 
 export async function testCredential(id: string): Promise<TestResult> {
-  const res = await fetch(`/admin/api/ai/credentials/${encodeURIComponent(id)}/test`, { method: 'POST' })
   // The test endpoint returns 200 even on auth failure (the body carries
-  // `{ ok: false, error }`) so callers can render the error inline.
-  if (res.status !== 200 && res.status !== 404) {
-    await throwIfNotOk(res)
+  // `{ ok: false, error }`) so callers can render the error inline. A 404
+  // means the credential row is gone — surface a friendly message.
+  try {
+    return await apiRequest(`/admin/api/ai/credentials/${encodeURIComponent(id)}/test`, {
+      method: 'POST',
+      schema: TestResponseSchema,
+    })
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      throw new ApiError('Credential not found.', 404)
+    }
+    throw err
   }
-  if (res.status === 404) throw new AiApiError('Credential not found.', 404)
-  return parseJsonResponse(res, TestResponseSchema)
 }
 
 // ---------------------------------------------------------------------------
@@ -223,10 +200,10 @@ export async function listModels(
   providerId: 'anthropic' | 'openai' | 'ollama',
   credentialId?: string,
 ): Promise<AiModel[]> {
-  const q = credentialId ? `?credentialId=${encodeURIComponent(credentialId)}` : ''
-  const res = await fetch(`/admin/api/ai/providers/${providerId}/models${q}`)
-  await throwIfNotOk(res)
-  const body = await parseJsonResponse(res, ModelListResponseSchema)
+  const body = await apiRequest(`/admin/api/ai/providers/${providerId}/models`, {
+    query: { credentialId },
+    schema: ModelListResponseSchema,
+  })
   return body.models
 }
 
@@ -235,9 +212,7 @@ export async function listModels(
 // ---------------------------------------------------------------------------
 
 export async function listDefaults(): Promise<AiDefaults> {
-  const res = await fetch('/admin/api/ai/defaults')
-  await throwIfNotOk(res)
-  const body = await parseJsonResponse(res, DefaultsResponseSchema)
+  const body = await apiRequest('/admin/api/ai/defaults', { schema: DefaultsResponseSchema })
   return body.defaults
 }
 
@@ -245,12 +220,7 @@ export async function setDefault(
   scope: 'site' | 'content' | 'data' | 'plugin',
   body: { credentialId: string; modelId: string },
 ): Promise<void> {
-  const res = await fetch(`/admin/api/ai/defaults/${scope}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  await throwIfNotOk(res)
+  await apiRequest(`/admin/api/ai/defaults/${scope}`, { method: 'PUT', body })
 }
 
 // ---------------------------------------------------------------------------
@@ -258,9 +228,10 @@ export async function setDefault(
 // ---------------------------------------------------------------------------
 
 export async function listConversations(scope: 'site' | 'content' | 'data' | 'plugin'): Promise<ConversationView[]> {
-  const res = await fetch(`/admin/api/ai/conversations?scope=${scope}`)
-  await throwIfNotOk(res)
-  const body = await parseJsonResponse(res, ConversationListResponseSchema)
+  const body = await apiRequest('/admin/api/ai/conversations', {
+    query: { scope },
+    schema: ConversationListResponseSchema,
+  })
   return body.conversations
 }
 
@@ -331,12 +302,5 @@ export type AiAuditResponse = Static<typeof AuditResponseSchema>
  * server's 30-day window.
  */
 export async function listAiAudit(since?: string): Promise<AiAuditResponse> {
-  const q = since ? `?since=${encodeURIComponent(since)}` : ''
-  const res = await fetch(`/admin/api/ai/audit${q}`)
-  await throwIfNotOk(res)
-  return parseJsonResponse(res, AuditResponseSchema)
+  return apiRequest('/admin/api/ai/audit', { query: { since }, schema: AuditResponseSchema })
 }
-
-// Re-export the error response schema for callers that want to assert wire
-// errors directly (e.g. integration tests).
-export { ErrorResponseSchema }

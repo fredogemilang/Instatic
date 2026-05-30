@@ -1,6 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox'
-import { readEnvelope } from './httpJson'
-import { responseErrorMessage } from './httpErrors'
+import { readEnvelope, assertOk } from '@core/http'
 import { CmsCurrentUserSchema, type CmsCurrentUser } from './cmsAuth'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
@@ -92,7 +91,7 @@ export async function deleteCmsUser(
     method: 'DELETE',
     credentials: 'include',
   })
-  if (!res.ok) throw new Error(await responseErrorMessage(res, `CMS user delete failed with ${res.status}`))
+  await assertOk(res, `CMS user delete failed with ${res.status}`)
 }
 
 export async function listCmsRoles(
@@ -146,7 +145,7 @@ export async function deleteCmsRole(
     method: 'DELETE',
     credentials: 'include',
   })
-  if (!res.ok) throw new Error(await responseErrorMessage(res, `CMS role delete failed with ${res.status}`))
+  await assertOk(res, `CMS role delete failed with ${res.status}`)
 }
 
 export async function listCmsAuditEvents(

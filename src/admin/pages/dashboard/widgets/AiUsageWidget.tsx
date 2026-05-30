@@ -18,10 +18,10 @@ import type { DashboardWidgetRendererProps } from '@core/dashboard'
 import { Sparkline, StatValue } from '@ui/components/charts'
 import { Widget } from '@ui/components/Widget'
 import {
-  AiApiError,
   listAiAudit,
   type AiAuditResponse,
 } from '@admin/ai/api'
+import { ApiError } from '@core/http'
 import styles from './widgets.module.css'
 
 function startOfMonthIso(): string {
@@ -67,7 +67,7 @@ function useAiUsageThisMonth(): UsageState {
         // 403 means the caller doesn't hold `ai.audit.read` — the widget
         // simply hides the numeric content rather than blowing up the
         // dashboard. Any other error is logged and treated as "no data".
-        if (err instanceof AiApiError && err.status === 403) {
+        if (err instanceof ApiError && err.status === 403) {
           setState({ data: null, forbidden: true })
           return
         }

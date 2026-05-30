@@ -1,5 +1,5 @@
 import { parseJsonResponse, safeParseJson } from '@core/utils/jsonValidate'
-import { responseErrorMessage } from './httpErrors'
+import { assertOk } from '@core/http'
 import {
   CmsMediaAssetEnvelopeSchema,
   CmsMediaFolderEnvelopeSchema,
@@ -117,9 +117,7 @@ export async function listCmsMediaAssets(
     method: 'GET',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS media listing failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS media listing failed with ${res.status}`)
   // Use safeParseJson here so a malformed response degrades to an empty list
   // instead of crashing the media panel.
   const text = await res.text()
@@ -145,9 +143,7 @@ export async function uploadCmsMediaAsset(
     credentials: 'include',
     body,
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS media upload failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS media upload failed with ${res.status}`)
   const payload = await parseJsonResponse(res, CmsMediaAssetEnvelopeSchema)
   return normalizeCmsMediaAsset(payload.asset)
 }
@@ -176,9 +172,7 @@ export async function updateCmsMediaAsset(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS media update failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS media update failed with ${res.status}`)
   const payload = await parseJsonResponse(res, CmsMediaAssetEnvelopeSchema)
   return normalizeCmsMediaAsset(payload.asset)
 }
@@ -213,9 +207,7 @@ export async function deleteCmsMediaAsset(
     method: 'DELETE',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS media delete failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS media delete failed with ${res.status}`)
 }
 
 export async function restoreCmsMediaAsset(
@@ -227,9 +219,7 @@ export async function restoreCmsMediaAsset(
     method: 'POST',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS media restore failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS media restore failed with ${res.status}`)
   const payload = await parseJsonResponse(res, CmsMediaAssetEnvelopeSchema)
   return normalizeCmsMediaAsset(payload.asset)
 }
@@ -252,9 +242,7 @@ export async function replaceCmsMediaAssetFile(
     credentials: 'include',
     body,
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS media replace failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS media replace failed with ${res.status}`)
   const payload = await parseJsonResponse(res, CmsMediaAssetEnvelopeSchema)
   return normalizeCmsMediaAsset(payload.asset)
 }
@@ -273,9 +261,7 @@ export async function purgeCmsMediaAsset(
     method: 'DELETE',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS media purge failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS media purge failed with ${res.status}`)
 }
 
 export async function setCmsMediaAssetFolders(
@@ -290,9 +276,7 @@ export async function setCmsMediaAssetFolders(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS media folder assignment failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS media folder assignment failed with ${res.status}`)
   const payload = await parseJsonResponse(res, CmsMediaAssetEnvelopeSchema)
   return normalizeCmsMediaAsset(payload.asset)
 }
@@ -307,9 +291,7 @@ export async function listCmsMediaFolders(options: ClientBase = {}): Promise<Cms
     method: 'GET',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS folder listing failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS folder listing failed with ${res.status}`)
   const payload = await parseJsonResponse(res, CmsMediaFolderListResponseSchema)
   return payload.folders
 }
@@ -325,9 +307,7 @@ export async function createCmsMediaFolder(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS folder create failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS folder create failed with ${res.status}`)
   const payload = await parseJsonResponse(res, CmsMediaFolderEnvelopeSchema)
   return payload.folder
 }
@@ -344,9 +324,7 @@ export async function updateCmsMediaFolder(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS folder update failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS folder update failed with ${res.status}`)
   const payload = await parseJsonResponse(res, CmsMediaFolderEnvelopeSchema)
   return payload.folder
 }
@@ -360,7 +338,5 @@ export async function deleteCmsMediaFolder(
     method: 'DELETE',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS folder delete failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS folder delete failed with ${res.status}`)
 }

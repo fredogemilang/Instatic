@@ -31,13 +31,11 @@ export type { BundlePreview, ImportResult } from '@core/data/bundleSchema'
 // where each consumer module also declared its own TS interface.
 
 // ---------------------------------------------------------------------------
-// Error envelope used by every CMS endpoint
+// Error envelope used by every CMS endpoint. Defined in the generic HTTP layer
+// (`@core/http`) and re-exported here for persistence-domain consumers.
 // ---------------------------------------------------------------------------
 
-export const ErrorEnvelopeSchema = Type.Object(
-  { error: Type.Optional(Type.Unknown()) },
-  { additionalProperties: true },
-)
+export { ErrorEnvelopeSchema } from '@core/http'
 
 // ---------------------------------------------------------------------------
 // cmsAuth.ts

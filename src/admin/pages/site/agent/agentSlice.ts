@@ -33,7 +33,7 @@ import type {
   PropertyControl,
   PropertySchema,
 } from '@core/module-engine/types'
-import { Type } from '@core/utils/typeboxHelpers'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { Page } from '@core/page-tree'
 import {
   AGENT_TOOL_RESULT_PATH,
@@ -41,6 +41,7 @@ import {
   AI_DEFAULTS_PATH,
 } from './agentConfig'
 import { safeParseJson } from '@core/utils/jsonValidate'
+import { apiRequest } from '@core/http'
 import type {
   AgentActionResult,
   AgentModuleContext,
@@ -406,16 +407,22 @@ function rehydrateMessages(
   return out
 }
 
-interface ScopeDefaultEntry {
-  credentialId: string
-  modelId: string
-}
+const ScopeDefaultEntrySchema = Type.Object({
+  credentialId: Type.String(),
+  modelId: Type.String(),
+})
+type ScopeDefaultEntry = Static<typeof ScopeDefaultEntrySchema>
+
+const ScopeDefaultsResponseSchema = Type.Object(
+  { defaults: Type.Optional(Type.Record(Type.String(), ScopeDefaultEntrySchema)) },
+  { additionalProperties: true },
+)
 
 async function fetchScopeDefault(scope: AgentToolScope): Promise<ScopeDefaultEntry | null> {
+  // Soft fetch: any failure (no default set, network, bad shape) just means
+  // "no preselected credential/model" — the caller falls back to the picker.
   try {
-    const res = await fetch(AI_DEFAULTS_PATH)
-    if (!res.ok) return null
-    const body = await res.json() as { defaults?: Record<string, ScopeDefaultEntry> }
+    const body = await apiRequest(AI_DEFAULTS_PATH, { schema: ScopeDefaultsResponseSchema })
     return body.defaults?.[scope] ?? null
   } catch (err) {
     console.error(`[AgentSlice] Failed to fetch ${scope} default:`, err)
@@ -423,9 +430,11 @@ async function fetchScopeDefault(scope: AgentToolScope): Promise<ScopeDefaultEnt
   }
 }
 
-interface CreatedConversation {
-  id: string
-}
+const CreatedConversationEnvelopeSchema = Type.Object(
+  { conversation: Type.Object({ id: Type.String() }) },
+  { additionalProperties: true },
+)
+type CreatedConversation = Static<typeof CreatedConversationEnvelopeSchema>['conversation']
 
 async function createConversationForScope(
   scope: AgentToolScope,
@@ -433,25 +442,12 @@ async function createConversationForScope(
   modelId: string,
   contextJson: string | undefined,
 ): Promise<CreatedConversation> {
-  const res = await fetch(AI_CONVERSATIONS_PATH, {
+  const body = await apiRequest(AI_CONVERSATIONS_PATH, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      scope,
-      credentialId,
-      modelId,
-      ...(contextJson ? { contextJson } : {}),
-    }),
+    body: { scope, credentialId, modelId, ...(contextJson ? { contextJson } : {}) },
+    schema: CreatedConversationEnvelopeSchema,
+    fallbackMessage: 'Conversation create failed',
   })
-  if (!res.ok) {
-    let detail = `Conversation create failed: ${res.status}`
-    try {
-      const body = await res.json() as { error?: string }
-      if (body?.error) detail = body.error
-    } catch { /* fall through */ }
-    throw new Error(detail)
-  }
-  const body = await res.json() as { conversation: CreatedConversation }
   return body.conversation
 }
 
@@ -1016,12 +1012,22 @@ export function buildPageContext(
     .sort((a, b) => a.id.localeCompare(b.id))
     .map(moduleDefinitionToAgentContext)
 
-  const classes = Object.values(state.site.styleRules ?? {}).map((c) => ({
-    id: c.id,
-    name: c.name,
-    styles: toSerializableRecord(c.styles ?? {}),
-    breakpointStyles: toSerializableBreakpointStyles(c.breakpointStyles ?? {}),
-  }))
+  // The agent works in terms of width breakpoints; surface only the
+  // breakpoint-keyed subset of the unified contextStyles map (custom @media /
+  // @container / @supports conditions are not part of the agent's model yet).
+  const breakpointIds = new Set(state.site.breakpoints.map((bp) => bp.id))
+  const classes = Object.values(state.site.styleRules ?? {}).map((c) => {
+    const breakpointStyles: Record<string, Record<string, unknown>> = {}
+    for (const [contextId, bag] of Object.entries(c.contextStyles ?? {})) {
+      if (breakpointIds.has(contextId)) breakpointStyles[contextId] = bag
+    }
+    return {
+      id: c.id,
+      name: c.name,
+      styles: toSerializableRecord(c.styles ?? {}),
+      breakpointStyles: toSerializableBreakpointStyles(breakpointStyles),
+    }
+  })
 
   const pages = state.site.pages.map((page) => ({
     id: page.id,

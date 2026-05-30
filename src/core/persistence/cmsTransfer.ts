@@ -13,8 +13,7 @@ import type { SiteBundle, BundlePreview, ImportResult, ImportStrategy, ExportReq
 import { SiteBundleSchema, BundlePreviewSchema, ImportResultSchema } from '@core/data/bundleSchema'
 import { parseValue, formatValueErrors } from '@core/utils/typeboxHelpers'
 import { Value } from '@sinclair/typebox/value'
-import { readEnvelope } from './httpJson'
-import { responseErrorMessage } from './httpErrors'
+import { readEnvelope, assertOk } from '@core/http'
 
 // ---------------------------------------------------------------------------
 // SiteBundleParseError
@@ -59,9 +58,7 @@ export async function exportSiteBundle(opts: ExportRequest): Promise<Blob> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(opts),
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, 'Failed to export site'))
-  }
+  await assertOk(res, 'Failed to export site')
   return res.blob()
 }
 

@@ -199,7 +199,7 @@ Conventions:
 
 `readJsonObject` is the canonical body parser: it guarantees callers can safely destructure with no runtime crash. Individual handlers narrow further with their own TypeBox schemas.
 
-**Error envelope.** Every CMS handler error returns `{ error: string }` and is validated client-side by `ErrorEnvelopeSchema` in `src/core/persistence/responseSchemas.ts`. Clients extract the message via `responseErrorMessage(res, fallback)`.
+**Error envelope.** Every CMS handler error returns `{ error: string }` and is validated client-side by `ErrorEnvelopeSchema` in `src/core/http/apiClient.ts` (re-exported from `responseSchemas.ts`). The canonical client `apiRequest` (and `readEnvelope`) extract the message via `responseErrorMessage(res, fallback)` and throw an `ApiError` carrying the HTTP status.
 
 ---
 
@@ -466,7 +466,7 @@ Three static handlers, in order:
 
 4. **If new persisted shape is involved,** add the migration to both `migrations-pg.ts` and `migrations-sqlite.ts` with the same ID. JSON columns end in `_json`. Run `bun test src/__tests__/architecture/migration-parity.test.ts` and `db-json-column-naming.test.ts` to confirm.
 
-5. **If client-side calls the endpoint,** add a TypeBox response schema in `src/core/persistence/responseSchemas.ts` and read via `readEnvelope` or `parseJsonResponse`.
+5. **If client-side calls the endpoint,** add a TypeBox response schema (in `src/core/persistence/responseSchemas.ts` for CMS endpoints, or alongside the caller) and fetch via the canonical `apiRequest(path, { schema })` from `@core/http`. Persistence-layer functions that inject their own `fetch` validate via `readEnvelope`.
 
 ---
 

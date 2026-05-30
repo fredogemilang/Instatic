@@ -65,7 +65,7 @@ describe('CMS plugins client', () => {
   it('installs, disables, and removes plugins through the CMS API', async () => {
     const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
 
-    await installCmsPluginManifest(mapManifest, async (input, init) => {
+    await installCmsPluginManifest(mapManifest, [], async (input, init) => {
       calls.push({ input, init })
       return new Response(JSON.stringify({ plugin: { id: mapManifest.id, manifest: mapManifest }, adminPages: [] }), {
         status: 201,

@@ -9,7 +9,8 @@
  */
 
 import type { SpotlightProvider, Command } from '../types'
-import { parseJsonResponse } from '@core/utils/jsonValidate'
+import { apiRequest, isAbortError } from '@core/http'
+import type { Static } from '@core/utils/typeboxHelpers'
 import { MediaListResponseSchema } from './schemas'
 
 const ENDPOINT = '/admin/api/cms/media'
@@ -24,19 +25,13 @@ export const mediaProvider: SpotlightProvider = {
     if (!query.trim()) return []
 
     const url = `${ENDPOINT}?query=${encodeURIComponent(query)}&limit=${MAX_RESULTS}`
-    let res: Response
+    let body: Static<typeof MediaListResponseSchema>
     try {
-      res = await fetch(url, { credentials: 'include', signal })
+      body = await apiRequest(url, { schema: MediaListResponseSchema, signal })
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return []
+      if (isAbortError(err)) return []
       throw err
     }
-
-    if (!res.ok) {
-      throw new Error(`Media search failed: ${res.status}`)
-    }
-
-    const body = await parseJsonResponse(res, MediaListResponseSchema)
 
     return body.assets.map((asset): Command => ({
       id: `media:${asset.id}`,

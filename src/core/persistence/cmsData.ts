@@ -22,7 +22,7 @@ import { SiteBundleSchema } from '@core/data/bundleSchema'
 import type { LoopItem } from '@core/loops/types'
 import { LoopItemSchema } from '@core/loops/types'
 import { parseValue } from '@core/utils/typeboxHelpers'
-import { readEnvelope } from './httpJson'
+import { readEnvelope } from '@core/http'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 

@@ -8,7 +8,8 @@
  */
 
 import type { SpotlightProvider, Command } from '../types'
-import { parseJsonResponse } from '@core/utils/jsonValidate'
+import { apiRequest, isAbortError } from '@core/http'
+import type { Static } from '@core/utils/typeboxHelpers'
 import { DataTablesListResponseSchema } from './schemas'
 
 const ENDPOINT = '/admin/api/cms/data/tables'
@@ -23,19 +24,13 @@ export const dataProvider: SpotlightProvider = {
     if (!query.trim()) return []
 
     const url = `${ENDPOINT}?query=${encodeURIComponent(query)}&limit=${MAX_RESULTS}`
-    let res: Response
+    let body: Static<typeof DataTablesListResponseSchema>
     try {
-      res = await fetch(url, { credentials: 'include', signal })
+      body = await apiRequest(url, { schema: DataTablesListResponseSchema, signal })
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return []
+      if (isAbortError(err)) return []
       throw err
     }
-
-    if (!res.ok) {
-      throw new Error(`Data tables search failed: ${res.status}`)
-    }
-
-    const body = await parseJsonResponse(res, DataTablesListResponseSchema)
 
     return body.tables.map((table): Command => ({
       id: `data:${table.id}`,

@@ -10,7 +10,8 @@
  */
 
 import type { SpotlightProvider, Command } from '../types'
-import { parseJsonResponse } from '@core/utils/jsonValidate'
+import { apiRequest, isAbortError } from '@core/http'
+import type { Static } from '@core/utils/typeboxHelpers'
 import { PluginsListResponseSchema } from './schemas'
 
 const ENDPOINT = '/admin/api/cms/plugins'
@@ -22,19 +23,13 @@ export const pluginPagesProvider: SpotlightProvider = {
   debounceMs: 150,
 
   async search(query, _ctx, signal): Promise<Command[]> {
-    let res: Response
+    let body: Static<typeof PluginsListResponseSchema>
     try {
-      res = await fetch(ENDPOINT, { credentials: 'include', signal })
+      body = await apiRequest(ENDPOINT, { schema: PluginsListResponseSchema, signal })
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return []
+      if (isAbortError(err)) return []
       throw err
     }
-
-    if (!res.ok) {
-      throw new Error(`Plugin list failed: ${res.status}`)
-    }
-
-    const body = await parseJsonResponse(res, PluginsListResponseSchema)
 
     const q = query.toLowerCase()
     const results: Command[] = []

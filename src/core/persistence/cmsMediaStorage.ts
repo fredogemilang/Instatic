@@ -22,7 +22,7 @@ import type {
   MediaStorageServingMode,
   MediaStorageVerifyResult,
 } from '@core/plugin-sdk'
-import { readEnvelope } from './httpJson'
+import { readEnvelope } from '@core/http'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 

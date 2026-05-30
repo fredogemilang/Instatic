@@ -2,12 +2,11 @@ import { parseJsonResponse } from '@core/utils/jsonValidate'
 import {
   CmsPublicSiteSchema,
   CmsSetupStatusSchema,
-  ErrorEnvelopeSchema,
   type CmsPublicSite,
   type CmsSetupStatus,
 } from './responseSchemas'
 import { Type, type Static } from '@sinclair/typebox'
-import { readEnvelope } from './httpJson'
+import { readEnvelope, assertOk } from '@core/http'
 
 interface CmsSetupInput {
   siteName: string
@@ -91,18 +90,6 @@ const CmsLoginResponseSchema = Type.Object({
   ok: Type.Boolean(),
   mfaRequired: Type.Optional(Type.Boolean()),
 })
-
-async function assertOk(res: Response, fallback: string): Promise<void> {
-  if (res.ok) return
-  try {
-    const body = await parseJsonResponse(res, ErrorEnvelopeSchema)
-    const errorText = typeof body.error === 'string' ? body.error : ''
-    throw new Error(errorText || fallback)
-  } catch (err) {
-    if (err instanceof Error && err.message !== 'Unexpected end of JSON input') throw err
-    throw new Error(fallback, { cause: err })
-  }
-}
 
 export async function getCmsSetupStatus(
   fetchImpl: FetchLike = globalThis.fetch.bind(globalThis),

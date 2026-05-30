@@ -260,12 +260,23 @@ Append to `src/admin/spotlight/builtinCommands.ts`:
 Create `src/admin/spotlight/providers/myThings.ts`:
 
 ```ts
+import { apiRequest, isAbortError } from '@core/http'
+
 export const myThingsProvider: SpotlightProvider = {
   id: 'my-things',
   group: 'site',
   async search(query, ctx, signal) {
-    const res = await fetch(`/admin/api/cms/things?q=${encodeURIComponent(query)}`, { signal })
-    const data = await readEnvelope(res, MyThingsSchema, 'Failed to load things')
+    let data: Static<typeof MyThingsSchema>
+    try {
+      data = await apiRequest('/admin/api/cms/things', {
+        query: { q: query },
+        schema: MyThingsSchema,
+        signal,
+      })
+    } catch (err) {
+      if (isAbortError(err)) return [] // superseded query — drop silently
+      throw err
+    }
     return data.rows.map((row) => ({
       id: `thing:${row.id}`,
       label: row.name,

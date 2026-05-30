@@ -1,5 +1,5 @@
 import { parseJsonResponse } from '@core/utils/jsonValidate'
-import { responseErrorMessage } from './httpErrors'
+import { assertOk } from '@core/http'
 import {
   CmsPublishResultSchema,
   CmsPublishStatusSchema,
@@ -17,9 +17,7 @@ export async function publishCmsDraft(
     method: 'POST',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS publish failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS publish failed with ${res.status}`)
   return await parseJsonResponse(res, CmsPublishResultSchema)
 }
 
@@ -31,8 +29,6 @@ export async function getCmsPublishStatus(
     method: 'GET',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS publish status failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS publish status failed with ${res.status}`)
   return await parseJsonResponse(res, CmsPublishStatusSchema)
 }

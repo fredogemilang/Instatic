@@ -1,7 +1,7 @@
 import type { SiteDocument, SiteShell } from '@core/page-tree'
 import type { IPersistenceAdapter } from './types'
 import { parseJsonResponse } from '@core/utils/jsonValidate'
-import { responseErrorMessage } from './httpErrors'
+import { assertOk } from '@core/http'
 import { CmsSiteEnvelopeSchema, CmsPagesEnvelopeSchema, CmsComponentsEnvelopeSchema } from './responseSchemas'
 import { validateSite, validatePages, validateVisualComponents } from './validate'
 import { pageFromRow } from '@core/data/pageFromRow'
@@ -43,9 +43,7 @@ export class CmsAdapter implements IPersistenceAdapter {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ site: shell }),
     })
-    if (!shellRes.ok) {
-      throw new Error(await responseErrorMessage(shellRes, `CMS shell save failed with ${shellRes.status}`))
-    }
+    await assertOk(shellRes, `CMS shell save failed with ${shellRes.status}`)
 
     // Pages and components can be written in parallel — neither depends on the other.
     const [pagesRes, componentsRes] = await Promise.all([
@@ -63,12 +61,8 @@ export class CmsAdapter implements IPersistenceAdapter {
       }),
     ])
 
-    if (!pagesRes.ok) {
-      throw new Error(await responseErrorMessage(pagesRes, `CMS pages save failed with ${pagesRes.status}`))
-    }
-    if (!componentsRes.ok) {
-      throw new Error(await responseErrorMessage(componentsRes, `CMS components save failed with ${componentsRes.status}`))
-    }
+    await assertOk(pagesRes, `CMS pages save failed with ${pagesRes.status}`)
+    await assertOk(componentsRes, `CMS components save failed with ${componentsRes.status}`)
   }
 
   /**
@@ -99,15 +93,9 @@ export class CmsAdapter implements IPersistenceAdapter {
     ])
 
     if (shellRes.status === 404 || pagesRes.status === 404 || componentsRes.status === 404) return undefined
-    if (!shellRes.ok) {
-      throw new Error(await responseErrorMessage(shellRes, `CMS shell load failed with ${shellRes.status}`))
-    }
-    if (!pagesRes.ok) {
-      throw new Error(await responseErrorMessage(pagesRes, `CMS pages load failed with ${pagesRes.status}`))
-    }
-    if (!componentsRes.ok) {
-      throw new Error(await responseErrorMessage(componentsRes, `CMS components load failed with ${componentsRes.status}`))
-    }
+    await assertOk(shellRes, `CMS shell load failed with ${shellRes.status}`)
+    await assertOk(pagesRes, `CMS pages load failed with ${pagesRes.status}`)
+    await assertOk(componentsRes, `CMS components load failed with ${componentsRes.status}`)
 
     const shellBody = await parseJsonResponse(shellRes, CmsSiteEnvelopeSchema)
     const pagesBody = await parseJsonResponse(pagesRes, CmsPagesEnvelopeSchema)

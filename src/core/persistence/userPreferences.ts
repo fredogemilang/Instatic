@@ -30,8 +30,7 @@
  */
 import type { TSchema } from '@sinclair/typebox'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { readEnvelope } from './httpJson'
-import { responseErrorMessage } from './httpErrors'
+import { readEnvelope, responseErrorMessage } from '@core/http'
 
 // ---------------------------------------------------------------------------
 // Per-key value schemas

@@ -7,7 +7,7 @@ import type {
 import type { SitePackageJson } from '@core/site-dependencies/manifest'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { parseJsonResponse } from '@core/utils/jsonValidate'
-import { responseErrorMessage } from './httpErrors'
+import { assertOk } from '@core/http'
 import {
   CmsRuntimeDependencyEnvelopeSchema,
   CmsRuntimePreviewResponseSchema,
@@ -59,9 +59,7 @@ export async function resolveCmsRuntimeDependencies(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ packageJson }),
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `Runtime dependency resolution failed with ${res.status}`))
-  }
+  await assertOk(res, `Runtime dependency resolution failed with ${res.status}`)
   // Envelope validated; SiteDependencyLock + RuntimePackageImportmap are
   // both deep shapes — pass through as unknown, then the casts below
   // restore the typed surface for callers.
@@ -85,9 +83,7 @@ export async function buildCmsRuntimePreview(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `Runtime preview build failed with ${res.status}`))
-  }
+  await assertOk(res, `Runtime preview build failed with ${res.status}`)
   // Envelope validated; deep nested types (PublishedPageRuntimeAssets,
   // SiteRuntimeDiagnostic) pass through as unknown — see responseSchemas.ts
   // for the strategy. Callers continue to see the original interface.

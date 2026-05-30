@@ -5,8 +5,7 @@ import type {
   PluginManifest,
   PluginPermission,
 } from '@core/plugin-sdk'
-import { readEnvelope } from './httpJson'
-import { responseErrorMessage } from './httpErrors'
+import { readEnvelope, assertOk } from '@core/http'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
@@ -68,22 +67,10 @@ export async function listCmsPlugins(
 
 export async function installCmsPluginManifest(
   manifest: PluginManifest,
-  grantedPermissionsOrFetch: PluginPermission[] | FetchLike = [],
-  fetchImplOrBasePath: FetchLike | string = globalThis.fetch.bind(globalThis),
-  maybeBasePath = '/admin/api/cms',
+  grantedPermissions: PluginPermission[] = [],
+  fetchImpl: FetchLike = globalThis.fetch.bind(globalThis),
+  basePath = '/admin/api/cms',
 ): Promise<{ plugin?: InstalledPlugin } & CmsPluginsPayload> {
-  const grantedPermissions = Array.isArray(grantedPermissionsOrFetch) ? grantedPermissionsOrFetch : []
-  const fetchImpl =
-    typeof grantedPermissionsOrFetch === 'function'
-      ? grantedPermissionsOrFetch
-      : typeof fetchImplOrBasePath === 'function'
-        ? fetchImplOrBasePath
-        : globalThis.fetch.bind(globalThis)
-  const basePath =
-    typeof fetchImplOrBasePath === 'string'
-      ? fetchImplOrBasePath
-      : maybeBasePath
-
   const res = await fetchImpl(`${basePath}/plugins`, {
     method: 'POST',
     credentials: 'include',
@@ -168,9 +155,7 @@ export async function removeCmsPlugin(
     method: 'DELETE',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS plugin delete failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS plugin delete failed with ${res.status}`)
 }
 
 /**
@@ -218,9 +203,7 @@ export async function installCmsPluginPack(
     method: 'POST',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS plugin pack install failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS plugin pack install failed with ${res.status}`)
   const body = (await res.json()) as CmsPluginPackInstallSummary
   return body
 }
@@ -328,9 +311,7 @@ export async function listCmsPluginSchedules(
   const res = await fetchImpl(`${basePath}/plugins/${encodeURIComponent(pluginId)}/schedules`, {
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS plugin schedules list failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS plugin schedules list failed with ${res.status}`)
   return (await res.json()) as CmsPluginSchedulesResponse
 }
 
@@ -342,9 +323,7 @@ export async function runCmsPluginScheduleNow(
 ): Promise<{ outcome: { ok: boolean; status: string; error?: string; durationMs: number } }> {
   const url = `${basePath}/plugins/${encodeURIComponent(pluginId)}/schedules/${encodeURIComponent(scheduleId)}/run-now`
   const res = await fetchImpl(url, { method: 'POST', credentials: 'include' })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS plugin schedule run-now failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS plugin schedule run-now failed with ${res.status}`)
   return (await res.json()) as { outcome: { ok: boolean; status: string; error?: string; durationMs: number } }
 }
 
@@ -356,9 +335,7 @@ export async function pauseCmsPluginSchedule(
 ): Promise<void> {
   const url = `${basePath}/plugins/${encodeURIComponent(pluginId)}/schedules/${encodeURIComponent(scheduleId)}/pause`
   const res = await fetchImpl(url, { method: 'POST', credentials: 'include' })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS plugin schedule pause failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS plugin schedule pause failed with ${res.status}`)
 }
 
 export async function resumeCmsPluginSchedule(
@@ -369,7 +346,5 @@ export async function resumeCmsPluginSchedule(
 ): Promise<void> {
   const url = `${basePath}/plugins/${encodeURIComponent(pluginId)}/schedules/${encodeURIComponent(scheduleId)}/resume`
   const res = await fetchImpl(url, { method: 'POST', credentials: 'include' })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `CMS plugin schedule resume failed with ${res.status}`))
-  }
+  await assertOk(res, `CMS plugin schedule resume failed with ${res.status}`)
 }

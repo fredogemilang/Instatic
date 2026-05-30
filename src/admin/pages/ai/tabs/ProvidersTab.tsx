@@ -21,8 +21,8 @@ import {
   deleteCredential,
   listCredentials,
   testCredential,
-  AiApiError,
 } from '../../../ai/api'
+import { ApiError } from '@core/http'
 import styles from '../AiPage.module.css'
 
 type ProviderId = 'anthropic' | 'openai' | 'ollama'
@@ -256,7 +256,7 @@ function AddCredentialDialog({
       await createCredential(body)
       onCreated()
     } catch (err) {
-      if (err instanceof AiApiError) {
+      if (err instanceof ApiError) {
         setError(err.message)
       } else {
         setError(err instanceof Error ? err.message : 'Failed to create credential.')

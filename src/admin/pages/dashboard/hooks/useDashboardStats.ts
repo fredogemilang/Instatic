@@ -21,9 +21,11 @@
  *   • `useRecentActivityStats()`— Activity widget (a 50-row audit-events
  *                                  scan + projections; slowest)
  *
- * Validation: each response is type-guarded at the JSON boundary.
- * Mismatched payloads fall back to `null` (the widget keeps showing
- * its skeleton — better than throwing and blanking the dashboard).
+ * Validation: each response is validated at the JSON boundary against the
+ * TypeBox schema below via the canonical `apiRequest` (`@core/http`).
+ * On any failure — non-OK status, abort, or a payload that doesn't match —
+ * the hook keeps `null` (the widget keeps showing its skeleton, which is
+ * better than throwing and blanking the dashboard).
  *
  * Cancellation: each effect tracks a `cancelled` flag so a fast
  * unmount-then-remount doesn't race the response into a stale state.
@@ -34,39 +36,57 @@
  * domain (none today) reuse one fetch.
  */
 import { useEffect, useState } from 'react'
+import type { TSchema, TProperties } from '@sinclair/typebox'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { apiRequest, isAbortError } from '@core/http'
 
 // ---------------------------------------------------------------------------
-// Response shapes (must stay in sync with `server/handlers/cms/dashboard.ts`)
+// Response shapes (must stay in sync with `server/handlers/cms/dashboard.ts`).
+// The schemas are the source of truth; the exported types follow. Objects
+// allow additional properties so a server-side additive change never trips
+// the boundary and blanks a widget.
 // ---------------------------------------------------------------------------
 
-export interface DashboardMediaThumb {
-  id: string
-  publicPath: string
-  altText: string
-  mimeType: string
-  width: number | null
-  height: number | null
-  variants: Array<{ width: number; height: number; format: string; path: string }>
-}
+const looseObject = <T extends TProperties>(properties: T) =>
+  Type.Object(properties, { additionalProperties: true })
 
-export interface DashboardPluginRow {
-  id: string
-  name: string
-  version: string
-  state: 'active' | 'disabled' | 'error'
+const DashboardMediaThumbSchema = looseObject({
+  id: Type.String(),
+  publicPath: Type.String(),
+  altText: Type.String(),
+  mimeType: Type.String(),
+  width: Type.Union([Type.Number(), Type.Null()]),
+  height: Type.Union([Type.Number(), Type.Null()]),
+  variants: Type.Array(
+    looseObject({
+      width: Type.Number(),
+      height: Type.Number(),
+      format: Type.String(),
+      path: Type.String(),
+    }),
+  ),
+})
+export type DashboardMediaThumb = Static<typeof DashboardMediaThumbSchema>
+
+const DashboardPluginRowSchema = looseObject({
+  id: Type.String(),
+  name: Type.String(),
+  version: Type.String(),
+  state: Type.Union([Type.Literal('active'), Type.Literal('disabled'), Type.Literal('error')]),
   /**
    * Public URL for the plugin's manifest-declared icon, resolved on the
    * server. `null` when the plugin omits an icon — the widget renders
    * its fallback plug glyph in that case.
    */
-  iconUrl: string | null
-}
+  iconUrl: Type.Union([Type.String(), Type.Null()]),
+})
+export type DashboardPluginRow = Static<typeof DashboardPluginRowSchema>
 
-export interface DashboardPublishLineupRow {
-  id: string
+const DashboardPublishLineupRowSchema = looseObject({
+  id: Type.String(),
   /** Public path (`/blog/sandbox-deep-dive`). */
-  path: string
-  status: 'scheduled' | 'published' | 'draft'
+  path: Type.String(),
+  status: Type.Union([Type.Literal('scheduled'), Type.Literal('published'), Type.Literal('draft')]),
   /**
    * ISO datetime relevant to the status:
    *   - scheduled → future scheduled_publish_at
@@ -74,57 +94,65 @@ export interface DashboardPublishLineupRow {
    *   - draft     → null
    * The widget renders this as a relative-time label client-side.
    */
-  at: string | null
-}
+  at: Type.Union([Type.String(), Type.Null()]),
+})
+export type DashboardPublishLineupRow = Static<typeof DashboardPublishLineupRowSchema>
 
-export interface DashboardActivityActor {
-  displayName: string
-  email: string
-  avatarUrl: string | null
-  gravatarHash: string
-}
+const DashboardActivityActorSchema = looseObject({
+  displayName: Type.String(),
+  email: Type.String(),
+  avatarUrl: Type.Union([Type.String(), Type.Null()]),
+  gravatarHash: Type.String(),
+})
+export type DashboardActivityActor = Static<typeof DashboardActivityActorSchema>
 
-export interface DashboardActivityEntry {
-  id: string
-  action: string
-  actor: DashboardActivityActor | null
-  targetCode: string | null
-  targetText: string | null
-  createdAt: string
-}
+const DashboardActivityEntrySchema = looseObject({
+  id: Type.String(),
+  action: Type.String(),
+  actor: Type.Union([DashboardActivityActorSchema, Type.Null()]),
+  targetCode: Type.Union([Type.String(), Type.Null()]),
+  targetText: Type.Union([Type.String(), Type.Null()]),
+  createdAt: Type.String(),
+})
+export type DashboardActivityEntry = Static<typeof DashboardActivityEntrySchema>
 
-export interface DashboardPagesStats {
-  total: number
-  published: number
-  drafts: number
-  scheduled: number
-  deltaPublishedThisWeek: number
-}
+const DashboardPagesStatsSchema = looseObject({
+  total: Type.Number(),
+  published: Type.Number(),
+  drafts: Type.Number(),
+  scheduled: Type.Number(),
+  deltaPublishedThisWeek: Type.Number(),
+})
+export type DashboardPagesStats = Static<typeof DashboardPagesStatsSchema>
 
-export interface DashboardPostsStats {
-  total: number
-  categories: number
-  scheduled: number
-  daily28: number[]
-}
+const DashboardPostsStatsSchema = looseObject({
+  total: Type.Number(),
+  categories: Type.Number(),
+  scheduled: Type.Number(),
+  daily28: Type.Array(Type.Number()),
+})
+export type DashboardPostsStats = Static<typeof DashboardPostsStatsSchema>
 
-export interface DashboardMediaStats {
-  count: number
-  totalBytes: number
-  latestThumbs: DashboardMediaThumb[]
-}
+const DashboardMediaStatsSchema = looseObject({
+  count: Type.Number(),
+  totalBytes: Type.Number(),
+  latestThumbs: Type.Array(DashboardMediaThumbSchema),
+})
+export type DashboardMediaStats = Static<typeof DashboardMediaStatsSchema>
 
-export interface DashboardPluginsStats {
-  total: number
-  active: number
-  disabled: number
-  errored: number
-  rows: DashboardPluginRow[]
-}
+const DashboardPluginsStatsSchema = looseObject({
+  total: Type.Number(),
+  active: Type.Number(),
+  disabled: Type.Number(),
+  errored: Type.Number(),
+  rows: Type.Array(DashboardPluginRowSchema),
+})
+export type DashboardPluginsStats = Static<typeof DashboardPluginsStatsSchema>
 
-export interface DashboardPublishLineupStats {
-  rows: DashboardPublishLineupRow[]
-}
+const DashboardPublishLineupStatsSchema = looseObject({
+  rows: Type.Array(DashboardPublishLineupRowSchema),
+})
+export type DashboardPublishLineupStats = Static<typeof DashboardPublishLineupStatsSchema>
 
 /**
  * Storage widget payload. Mirrors `StorageStats` on the server (see
@@ -138,130 +166,48 @@ export interface DashboardPublishLineupStats {
  * `video/*` (PDFs, audio, archives, rows with NULL mime_type) lands in
  * `documentBytes`, so the three sub-counters sum to the full media total.
  */
-export interface DashboardStorageStats {
-  imageBytes: number
-  videoBytes: number
-  documentBytes: number
-  pluginBytes: number
-  databaseBytes: number
-  totalBytes: number
-  dialect: 'sqlite' | 'postgres'
-}
+const DashboardStorageStatsSchema = looseObject({
+  imageBytes: Type.Number(),
+  videoBytes: Type.Number(),
+  documentBytes: Type.Number(),
+  pluginBytes: Type.Number(),
+  databaseBytes: Type.Number(),
+  totalBytes: Type.Number(),
+  dialect: Type.Union([Type.Literal('sqlite'), Type.Literal('postgres')]),
+})
+export type DashboardStorageStats = Static<typeof DashboardStorageStatsSchema>
 
-export interface DashboardActivityStats {
-  rows: DashboardActivityEntry[]
-}
-
-// ---------------------------------------------------------------------------
-// Type guards — used at the JSON boundary so widgets can trust the
-// payload by the time they receive a non-null value.
-// ---------------------------------------------------------------------------
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function isPagesStats(v: unknown): v is DashboardPagesStats {
-  if (!isObject(v)) return false
-  return (
-    typeof v.total === 'number' &&
-    typeof v.published === 'number' &&
-    typeof v.drafts === 'number' &&
-    typeof v.scheduled === 'number' &&
-    typeof v.deltaPublishedThisWeek === 'number'
-  )
-}
-
-function isPostsStats(v: unknown): v is DashboardPostsStats {
-  if (!isObject(v)) return false
-  return (
-    typeof v.total === 'number' &&
-    typeof v.categories === 'number' &&
-    typeof v.scheduled === 'number' &&
-    Array.isArray(v.daily28)
-  )
-}
-
-function isMediaStats(v: unknown): v is DashboardMediaStats {
-  if (!isObject(v)) return false
-  return (
-    typeof v.count === 'number' &&
-    typeof v.totalBytes === 'number' &&
-    Array.isArray(v.latestThumbs)
-  )
-}
-
-function isPluginsStats(v: unknown): v is DashboardPluginsStats {
-  if (!isObject(v)) return false
-  return (
-    typeof v.total === 'number' &&
-    typeof v.active === 'number' &&
-    typeof v.disabled === 'number' &&
-    typeof v.errored === 'number' &&
-    Array.isArray(v.rows)
-  )
-}
-
-function isPublishLineupStats(v: unknown): v is DashboardPublishLineupStats {
-  if (!isObject(v)) return false
-  return Array.isArray(v.rows)
-}
-
-function isStorageStats(v: unknown): v is DashboardStorageStats {
-  if (!isObject(v)) return false
-  return (
-    typeof v.imageBytes === 'number' &&
-    typeof v.videoBytes === 'number' &&
-    typeof v.documentBytes === 'number' &&
-    typeof v.pluginBytes === 'number' &&
-    typeof v.databaseBytes === 'number' &&
-    typeof v.totalBytes === 'number' &&
-    (v.dialect === 'sqlite' || v.dialect === 'postgres')
-  )
-}
-
-function isActivityStats(v: unknown): v is DashboardActivityStats {
-  if (!isObject(v)) return false
-  return Array.isArray(v.rows)
-}
+const DashboardActivityStatsSchema = looseObject({
+  rows: Type.Array(DashboardActivityEntrySchema),
+})
+export type DashboardActivityStats = Static<typeof DashboardActivityStatsSchema>
 
 // ---------------------------------------------------------------------------
 // Generic fetch hook factory
 // ---------------------------------------------------------------------------
 
 /**
- * Generic `useEffect`-based fetcher with cancellation + type-guarded
- * boundary parsing. Each per-domain hook below is a one-liner over this.
+ * Generic `useEffect`-based fetcher with cancellation + TypeBox boundary
+ * validation. Each per-domain hook below is a one-liner over this. On any
+ * failure the hook stays `null` and the widget keeps its skeleton.
  */
-function useDashboardEndpoint<T>(
-  endpoint: string,
-  isValid: (value: unknown) => value is T,
-): T | null {
-  const [data, setData] = useState<T | null>(null)
+function useDashboardEndpoint<S extends TSchema>(endpoint: string, schema: S): Static<S> | null {
+  const [data, setData] = useState<Static<S> | null>(null)
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const res = await fetch(`/admin/api/cms/dashboard/${endpoint}`, {
-          credentials: 'same-origin',
-          headers: { Accept: 'application/json' },
-        })
-        if (!res.ok) {
-          console.warn(`[dashboard] /${endpoint} returned`, res.status)
-          return
-        }
-        const body: unknown = await res.json()
-        if (cancelled) return
-        if (isValid(body)) setData(body)
-        else console.warn(`[dashboard] /${endpoint} returned unexpected shape`)
+        const body = await apiRequest(`/admin/api/cms/dashboard/${endpoint}`, { schema })
+        if (!cancelled) setData(body)
       } catch (err) {
-        console.error(`[dashboard] failed to load /${endpoint}:`, err)
+        if (isAbortError(err)) return
+        console.warn(`[dashboard] /${endpoint} failed:`, err)
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [endpoint, isValid])
+  }, [endpoint, schema])
   return data
 }
 
@@ -271,22 +217,22 @@ function useDashboardEndpoint<T>(
 
 /** Pages widget. Two cheap counts on `data_rows` for the system pages table. */
 export function usePagesStats(): DashboardPagesStats | null {
-  return useDashboardEndpoint('pages', isPagesStats)
+  return useDashboardEndpoint('pages', DashboardPagesStatsSchema)
 }
 
 /** Posts widget. One query per postType table + a 28-day histogram. */
 export function usePostsStats(): DashboardPostsStats | null {
-  return useDashboardEndpoint('posts', isPostsStats)
+  return useDashboardEndpoint('posts', DashboardPostsStatsSchema)
 }
 
 /** Media widget. Totals + 16 most-recent image thumbnails. */
 export function useMediaStats(): DashboardMediaStats | null {
-  return useDashboardEndpoint('media', isMediaStats)
+  return useDashboardEndpoint('media', DashboardMediaStatsSchema)
 }
 
 /** Plugins widget. One scan of `installed_plugins`. */
 export function usePluginsStats(): DashboardPluginsStats | null {
-  return useDashboardEndpoint('plugins', isPluginsStats)
+  return useDashboardEndpoint('plugins', DashboardPluginsStatsSchema)
 }
 
 /**
@@ -295,15 +241,15 @@ export function usePluginsStats(): DashboardPluginsStats | null {
  * + a dialect-aware database size query.
  */
 export function useStorageStats(): DashboardStorageStats | null {
-  return useDashboardEndpoint('storage', isStorageStats)
+  return useDashboardEndpoint('storage', DashboardStorageStatsSchema)
 }
 
 /** Publish Lineup widget. Three small queries against `data_rows`. */
 export function usePublishLineupStats(): DashboardPublishLineupStats | null {
-  return useDashboardEndpoint('publish-lineup', isPublishLineupStats)
+  return useDashboardEndpoint('publish-lineup', DashboardPublishLineupStatsSchema)
 }
 
 /** Activity widget. The heaviest endpoint — a 50-row `audit_events` scan. */
 export function useRecentActivityStats(): DashboardActivityStats | null {
-  return useDashboardEndpoint('activity', isActivityStats)
+  return useDashboardEndpoint('activity', DashboardActivityStatsSchema)
 }
