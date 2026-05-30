@@ -92,10 +92,10 @@ export function useContentWorkspace({
     return () => { cancelled = true }
   }, [shouldLoadAuthors])
 
-  const updateSelectedEntry = useCallback((entry: DataRow) => {
+  const updateSelectedEntry = (entry: DataRow) => {
     setSelectedEntry(entry)
     setEntries((current) => updateRowList(current, entry))
-  }, [])
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -220,13 +220,13 @@ export function useContentWorkspace({
     history.replaceState({}, '', '/admin/content')
   }, [entries, entriesLoading, selectEntry])
 
-  const selectCollection = useCallback((tableId: string) => {
+  const selectCollection = (tableId: string) => {
     if (tableId === selectedCollectionId) return
     setEntriesLoading(true)
     setSelectedCollectionId(tableId)
-  }, [selectedCollectionId])
+  }
 
-  const createUntitledEntry = useCallback(async () => {
+  const createUntitledEntry = async () => {
     if (!selectedCollection) return null
     const nextSlug = entries.length === 0 ? 'untitled' : `untitled-${entries.length + 1}`
     const row = await createCmsDataRow(selectedCollection.id, {
@@ -245,9 +245,9 @@ export function useContentWorkspace({
     setEntries((current) => updateRowList(current, row))
     selectEntry(draftRow)
     return draftRow
-  }, [entries.length, selectEntry, selectedCollection])
+  }
 
-  const duplicateEntry = useCallback(async (entry: DataRow) => {
+  const duplicateEntry = async (entry: DataRow) => {
     setError(null)
     const existingSlugs = new Set(entries.map((candidate) => candidate.slug))
     const baseSlug = `${entry.slug}-copy`
@@ -268,9 +268,9 @@ export function useContentWorkspace({
     setEntries((current) => updateRowList(current, duplicated))
     selectEntry(duplicated)
     return duplicated
-  }, [entries, selectEntry])
+  }
 
-  const createCollection = useCallback(async (input: CreateDataTableInput) => {
+  const createCollection = async (input: CreateDataTableInput) => {
     setError(null)
     setEntriesLoading(true)
     // Always create post-type tables from the Content page.
@@ -280,9 +280,9 @@ export function useContentWorkspace({
     setSelectedCollectionId(collection.id)
     selectEntry(null)
     return collection
-  }, [selectEntry])
+  }
 
-  const updateCollection = useCallback(async (
+  const updateCollection = async (
     tableId: string,
     input: UpdateDataTableInput,
   ) => {
@@ -292,9 +292,9 @@ export function useContentWorkspace({
       candidate.id === collection.id ? collection : candidate
     ))
     return collection
-  }, [])
+  }
 
-  const deleteCollection = useCallback(async (tableId: string) => {
+  const deleteCollection = async (tableId: string) => {
     setError(null)
     await deleteCmsDataTable(tableId)
 
@@ -310,9 +310,9 @@ export function useContentWorkspace({
       setEntriesLoading(Boolean(nextSelectedCollectionId))
       selectEntry(null)
     }
-  }, [collections, selectEntry, selectedCollectionId])
+  }
 
-  const renameEntry = useCallback(async (
+  const renameEntry = async (
     row: DataRow,
     input: { title: string; slug: string },
   ) => {
@@ -331,9 +331,9 @@ export function useContentWorkspace({
     setEntries((current) => updateRowList(current, updatedRow))
     if (selectedEntry?.id === row.id) selectEntry(updatedRow)
     return updatedRow
-  }, [selectEntry, selectedEntry?.id])
+  }
 
-  const deleteEntry = useCallback(async (entry: DataRow) => {
+  const deleteEntry = async (entry: DataRow) => {
     setError(null)
     await deleteCmsDataRow(entry.id)
 
@@ -347,17 +347,17 @@ export function useContentWorkspace({
       selectEntry(nextSelectedEntry)
     }
     return nextSelectedEntry
-  }, [entries, selectEntry, selectedEntry])
+  }
 
-  const publishEntry = useCallback(async (entry: DataRow) => {
+  const publishEntry = async (entry: DataRow) => {
     setError(null)
     const updatedRow = await publishCmsDataRow(entry.id)
     setEntries((current) => updateRowList(current, updatedRow))
     if (selectedEntry?.id === entry.id) selectEntry(updatedRow)
     return updatedRow
-  }, [selectEntry, selectedEntry?.id])
+  }
 
-  const updateEntryStatus = useCallback(async (
+  const updateEntryStatus = async (
     entry: DataRow,
     // Narrowed to match the `/status` endpoint's accepted statuses —
     // 'scheduled' goes through the dedicated schedule dialog with a
@@ -369,9 +369,9 @@ export function useContentWorkspace({
     setEntries((current) => updateRowList(current, updatedRow))
     if (selectedEntry?.id === entry.id) selectEntry(updatedRow)
     return updatedRow
-  }, [selectEntry, selectedEntry?.id])
+  }
 
-  const updateEntryAuthor = useCallback(async (
+  const updateEntryAuthor = async (
     entry: DataRow,
     authorUserId: string,
   ) => {
@@ -381,9 +381,9 @@ export function useContentWorkspace({
     setEntries((current) => updateRowList(current, updatedRow))
     if (selectedEntry?.id === entry.id) selectEntry(updatedRow)
     return updatedRow
-  }, [selectEntry, selectedEntry?.id])
+  }
 
-  const moveEntryToCollection = useCallback(async (
+  const moveEntryToCollection = async (
     entry: DataRow,
     tableId: string,
   ) => {
@@ -401,9 +401,9 @@ export function useContentWorkspace({
     }
     if (selectedEntry?.id === entry.id) selectEntry(updatedRow)
     return updatedRow
-  }, [selectEntry, selectedCollectionId, selectedEntry?.id])
+  }
 
-  const moveSelectedEntryToCollection = useCallback(async (tableId: string) => {
+  const moveSelectedEntryToCollection = async (tableId: string) => {
     if (!selectedEntry || selectedEntry.tableId === tableId) return selectedEntry
     setError(null)
     setEntriesLoading(true)
@@ -412,7 +412,7 @@ export function useContentWorkspace({
     setEntries([entry])
     selectEntry(entry)
     return entry
-  }, [selectEntry, selectedEntry])
+  }
 
   return {
     collections,

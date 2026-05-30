@@ -4,7 +4,7 @@
  * The shim converts the ESM-shaped bundle Bun emits into a
  * `globalThis.__module_pack = …` assignment that the bootstrap can read
  * inside QuickJS. Both export forms below have been seen in real plugin
- * bundles (`acme.three-kit`, `acme.ui-kit`) and must work.
+ * bundles (module-pack plugins such as `acme.forms`) and must work.
  */
 import { describe, expect, it } from 'bun:test'
 import { createModulePackVm } from '../../../server/plugins/modulePackVm'

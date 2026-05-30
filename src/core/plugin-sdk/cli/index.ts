@@ -73,9 +73,9 @@ Options for \`dev\`:
 Examples:
   pb-plugin init acme.confetti
   pb-plugin init acme.seo --kind content-editor
-  pb-plugin lint examples/plugins/showcase
-  pb-plugin build examples/plugins/showcase
-  pb-plugin dev examples/plugins/ui-kit
+  pb-plugin lint examples/plugins/forms-builder
+  pb-plugin build examples/plugins/forms-builder
+  pb-plugin dev examples/plugins/forms-builder
   pb-plugin dev --uploads ../page-builder/uploads
 `)
 }

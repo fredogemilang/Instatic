@@ -16,7 +16,7 @@
  * dumb: each one renders what this hook exposes and calls a method on the
  * returned object to mutate. No prop-drilling tangles.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createCmsMediaFolder,
   deleteCmsMediaAsset,
@@ -194,16 +194,16 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
   const [tag, setTag] = useState('')
   const [sort, setSort] = useState<MediaSort>('newest')
 
-  const folderById = useMemo(() => {
-    const map = new Map<string, CmsMediaFolder>()
-    for (const folder of folders) map.set(folder.id, folder)
-    return map
-  }, [folders])
+  const folderById = new Map<string, CmsMediaFolder>()
+  for (const folder of folders) folderById.set(folder.id, folder)
 
-  const folderTree = useMemo(() => buildFolderTree(folders), [folders])
+  const folderTree = buildFolderTree(folders)
 
   // Selecting Trash flips the asset query into `?trash=1` mode. Anything else
   // — All / a real folder id / a smart folder — loads the active set.
+  // Kept memoized: `refresh` is referenced in a useEffect dependency array
+  // below, so it must keep a stable identity to satisfy exhaustive-deps
+  // (the static lint rule can't see the React Compiler's runtime memoization).
   const loadAssets = useCallback(async (selection: FolderSelection): Promise<CmsMediaAsset[]> => {
     return listCmsMediaAssets({ trash: selection === FOLDER_TRASH })
   }, [])
@@ -234,23 +234,23 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
   }, [refresh])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const setFolderSelection = useCallback((selection: FolderSelection) => {
+  const setFolderSelection = (selection: FolderSelection) => {
     // Clear the inspector AND multi-selection when switching folder context —
     // the previous selection's asset may no longer be visible in the new view.
     setSelectedAssetIdState(null)
     setSelectedAssetIds(new Set())
     setFolderSelectionState(selection)
-  }, [])
+  }
 
   // Setting the primary asset implicitly collapses the multi-selection to that
   // single item. Use `toggleAssetInSelection` / `selectRange` to keep both in
   // sync when the user shift/cmd-clicks.
-  const setSelectedAssetId = useCallback((id: string | null) => {
+  const setSelectedAssetId = (id: string | null) => {
     setSelectedAssetIdState(id)
     setSelectedAssetIds(id ? new Set([id]) : new Set())
-  }, [])
+  }
 
-  const toggleAssetInSelection = useCallback((id: string) => {
+  const toggleAssetInSelection = (id: string) => {
     setSelectedAssetIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -258,42 +258,40 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       return next
     })
     setSelectedAssetIdState(id)
-  }, [])
+  }
 
-  const addToSelection = useCallback((ids: string[]) => {
+  const addToSelection = (ids: string[]) => {
     setSelectedAssetIds((prev) => {
       const next = new Set(prev)
       for (const id of ids) next.add(id)
       return next
     })
     if (ids.length > 0) setSelectedAssetIdState(ids[ids.length - 1])
-  }, [])
+  }
 
-  const clearSelection = useCallback(() => {
+  const clearSelection = () => {
     setSelectedAssetIdState(null)
     setSelectedAssetIds(new Set())
-  }, [])
+  }
 
-  const visibleAssets = useMemo(() => {
-    // Smart folders don't filter by folder id — they are filters in their own
-    // right, applied AFTER the standard filter pass so things like the type
-    // chip + the search box still work inside a smart-folder view.
-    const isSmart = isSmartFolderId(folderSelection)
-    const filterFolder: MediaFilters['folderId'] =
-      isSmart || folderSelection === FOLDER_ALL || folderSelection === FOLDER_TRASH
-        ? undefined
-        : folderSelection
-    const base = filterMediaAssets(assets, {
-      folderId: filterFolder,
-      type: filterType,
-      q: query,
-      tag,
-      sort,
-    })
-    if (!isSmart) return base
-    const predicate = smartFolderPredicate(folderSelection)
-    return base.filter(predicate)
-  }, [assets, folderSelection, filterType, query, tag, sort])
+  // Smart folders don't filter by folder id — they are filters in their own
+  // right, applied AFTER the standard filter pass so things like the type
+  // chip + the search box still work inside a smart-folder view.
+  const isSmartFolder = isSmartFolderId(folderSelection)
+  const filterFolder: MediaFilters['folderId'] =
+    isSmartFolder || folderSelection === FOLDER_ALL || folderSelection === FOLDER_TRASH
+      ? undefined
+      : folderSelection
+  const filteredAssets = filterMediaAssets(assets, {
+    folderId: filterFolder,
+    type: filterType,
+    q: query,
+    tag,
+    sort,
+  })
+  const visibleAssets = isSmartFolder
+    ? filteredAssets.filter(smartFolderPredicate(folderSelection))
+    : filteredAssets
 
   // Mirror the latest computed list into a ref so `selectRange` can read the
   // current canvas order without re-deriving the filter in the callback. The
@@ -303,21 +301,18 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
     visibleAssetsRef.current = visibleAssets
   }, [visibleAssets])
 
-  const tagPalette = useMemo(() => collectMediaTags(assets), [assets])
+  const tagPalette = collectMediaTags(assets)
 
-  const selectedAsset = useMemo(() => {
-    if (!selectedAssetId) return null
-    return assets.find((asset) => asset.id === selectedAssetId) ?? null
-  }, [assets, selectedAssetId])
+  const selectedAsset = selectedAssetId
+    ? assets.find((asset) => asset.id === selectedAssetId) ?? null
+    : null
 
-  const selectedAssets = useMemo(() => (
-    assets.filter((asset) => selectedAssetIds.has(asset.id))
-  ), [assets, selectedAssetIds])
+  const selectedAssets = assets.filter((asset) => selectedAssetIds.has(asset.id))
 
   // Range select — shift-click between two anchors in the visible canvas
   // order, so the user-visible range matches what they actually see.
   const visibleAssetsRef = useRef<CmsMediaAsset[]>([])
-  const selectRange = useCallback((anchorId: string, targetId: string) => {
+  const selectRange = (anchorId: string, targetId: string) => {
     const list = visibleAssetsRef.current
     const anchorIdx = list.findIndex((a: CmsMediaAsset) => a.id === anchorId)
     const targetIdx = list.findIndex((a: CmsMediaAsset) => a.id === targetId)
@@ -339,17 +334,17 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       return next
     })
     setSelectedAssetIdState(targetId)
-  }, [])
+  }
 
   // ── Mutation helpers ───────────────────────────────────────────────────────
   // Each mutation updates the local cache optimistically (when safe) so the UI
   // feels instant; on server reject we surface the error and reload to recover.
 
-  const replaceAsset = useCallback((next: CmsMediaAsset) => {
+  const replaceAsset = (next: CmsMediaAsset) => {
     setAssets((current) => current.map((asset) => asset.id === next.id ? next : asset))
-  }, [])
+  }
 
-  const removeAsset = useCallback((assetId: string) => {
+  const removeAsset = (assetId: string) => {
     setAssets((current) => current.filter((asset) => asset.id !== assetId))
     setSelectedAssetIdState((current) => current === assetId ? null : current)
     setSelectedAssetIds((current) => {
@@ -358,7 +353,7 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       next.delete(assetId)
       return next
     })
-  }, [])
+  }
 
   // Splice an uploaded asset into the workspace cache when the queue
   // reports success. Folder assignment (if any) happens inside the queue.
@@ -366,17 +361,17 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
   // (`ImageEditor` / `useCmsMediaAssetByPath`) picks up the new asset
   // immediately — otherwise an open Site editor would keep rendering a
   // raw `<img src>` until manual reload.
-  const onUploaded = useCallback((asset: CmsMediaAsset) => {
+  const onUploaded = (asset: CmsMediaAsset) => {
     setAssets((current) => [asset, ...current.filter((existing) => existing.id !== asset.id)])
     refreshCmsMediaAssetCache()
-  }, [])
+  }
 
   const uploadQueue = useUploadQueue({
     normalize: normalizeCmsMediaAsset,
     onUploaded,
   })
 
-  const uploadFiles = useCallback(async (files: File[]) => {
+  const uploadFiles = async (files: File[]) => {
     if (files.length === 0) return
     setError(null)
     const targetFolder =
@@ -387,9 +382,9 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
         ? folderSelection
         : null
     uploadQueue.enqueue(files, targetFolder)
-  }, [folderSelection, uploadQueue])
+  }
 
-  const renameAsset = useCallback(async (assetId: string, filename: string) => {
+  const renameAsset = async (assetId: string, filename: string) => {
     setError(null)
     try {
       const next = await renameCmsMediaAsset(assetId, filename)
@@ -399,9 +394,9 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       setError(errorMessage(err, 'Could not rename asset'))
       return null
     }
-  }, [replaceAsset])
+  }
 
-  const updateAsset = useCallback(async (assetId: string, input: UpdateCmsMediaAssetInput) => {
+  const updateAsset = async (assetId: string, input: UpdateCmsMediaAssetInput) => {
     setError(null)
     try {
       const next = await updateCmsMediaAsset(assetId, input)
@@ -415,9 +410,9 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       setError(errorMessage(err, 'Could not update asset'))
       return null
     }
-  }, [replaceAsset])
+  }
 
-  const replaceAssetFile = useCallback(async (assetId: string, file: File) => {
+  const replaceAssetFile = async (assetId: string, file: File) => {
     setError(null)
     try {
       const next = await replaceCmsMediaAssetFile(assetId, file)
@@ -431,9 +426,9 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       setError(errorMessage(err, 'Could not replace file'))
       return null
     }
-  }, [replaceAsset])
+  }
 
-  const trashAsset = useCallback(async (assetId: string) => {
+  const trashAsset = async (assetId: string) => {
     setError(null)
     try {
       // Soft-delete moves the asset out of the active list view; the response
@@ -445,9 +440,9 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
     } catch (err) {
       setError(errorMessage(err, 'Could not move asset to trash'))
     }
-  }, [removeAsset])
+  }
 
-  const restoreAsset = useCallback(async (assetId: string) => {
+  const restoreAsset = async (assetId: string) => {
     setError(null)
     try {
       await restoreCmsMediaAsset(assetId)
@@ -459,9 +454,9 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       setError(errorMessage(err, 'Could not restore asset'))
       return null
     }
-  }, [removeAsset])
+  }
 
-  const purgeAsset = useCallback(async (assetId: string) => {
+  const purgeAsset = async (assetId: string) => {
     setError(null)
     try {
       await purgeCmsMediaAsset(assetId)
@@ -469,9 +464,9 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
     } catch (err) {
       setError(errorMessage(err, 'Could not delete asset permanently'))
     }
-  }, [removeAsset])
+  }
 
-  const setAssetFolders = useCallback(async (
+  const setAssetFolders = async (
     assetId: string,
     input: { add?: string[]; remove?: string[] },
   ) => {
@@ -484,11 +479,11 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       setError(errorMessage(err, 'Could not update folders'))
       return null
     }
-  }, [replaceAsset])
+  }
 
   // ── Folder mutations ───────────────────────────────────────────────────────
 
-  const createFolder = useCallback(async (name: string, parentId: string | null) => {
+  const createFolder = async (name: string, parentId: string | null) => {
     setError(null)
     try {
       const folder = await createCmsMediaFolder({ name, parentId })
@@ -498,13 +493,13 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       setError(errorMessage(err, 'Could not create folder'))
       return null
     }
-  }, [])
+  }
 
-  const replaceFolder = useCallback((next: CmsMediaFolder) => {
+  const replaceFolder = (next: CmsMediaFolder) => {
     setFolders((current) => current.map((folder) => folder.id === next.id ? next : folder))
-  }, [])
+  }
 
-  const renameFolder = useCallback(async (folderId: string, name: string) => {
+  const renameFolder = async (folderId: string, name: string) => {
     setError(null)
     try {
       const next = await updateCmsMediaFolder(folderId, { name })
@@ -514,9 +509,9 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       setError(errorMessage(err, 'Could not rename folder'))
       return null
     }
-  }, [replaceFolder])
+  }
 
-  const moveFolder = useCallback(async (folderId: string, parentId: string | null) => {
+  const moveFolder = async (folderId: string, parentId: string | null) => {
     setError(null)
     try {
       const next = await updateCmsMediaFolder(folderId, { parentId })
@@ -526,9 +521,9 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
       setError(errorMessage(err, 'Could not move folder'))
       return null
     }
-  }, [replaceFolder])
+  }
 
-  const deleteFolder = useCallback(async (folderId: string) => {
+  const deleteFolder = async (folderId: string) => {
     setError(null)
     try {
       await deleteCmsMediaFolder(folderId)
@@ -540,7 +535,7 @@ export function useMediaWorkspace(): UseMediaWorkspaceResult {
     } catch (err) {
       setError(errorMessage(err, 'Could not delete folder'))
     }
-  }, [refresh, folderSelection])
+  }
 
   return {
     loading,

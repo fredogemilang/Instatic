@@ -15,7 +15,7 @@
  * @see Guideline #258 — Inline Confirmation UI Pattern
  * @see Contribution #512 — Phase E+ Site Panel UX Spec §4
  */
-import { useState, useRef, useCallback, useId, useMemo } from 'react'
+import { useState, useRef, useId } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
@@ -86,35 +86,20 @@ export function DepsSection() {
   const cancelRef = useRef<HTMLButtonElement>(null)
 
   // ── Filtered deps ────────────────────────────────────────────────────────
-  const filterDeps = useCallback(
-    (deps: Record<string, string>) => {
-      if (!searchQuery.trim()) return Object.entries(deps)
-      const q = searchQuery.toLowerCase()
-      return Object.entries(deps).filter(([name]) => name.toLowerCase().includes(q))
-    },
-    [searchQuery],
-  )
+  const filterDeps = (deps: Record<string, string>) => {
+    if (!searchQuery.trim()) return Object.entries(deps)
+    const q = searchQuery.toLowerCase()
+    return Object.entries(deps).filter(([name]) => name.toLowerCase().includes(q))
+  }
 
-  const filteredDeps = useMemo(
-    () => filterDeps(packageJson.dependencies),
-    [filterDeps, packageJson.dependencies],
+  const filteredDeps = filterDeps(packageJson.dependencies)
+  const filteredDevDeps = filterDeps(packageJson.devDependencies)
+  const dependencyUsage = combineDependencyUsage(
+    getSiteModuleDependencyUsage(site, registry),
+    analyzeRuntimeScriptImports(site?.files ?? [], packageJson).usage,
   )
-  const filteredDevDeps = useMemo(
-    () => filterDeps(packageJson.devDependencies),
-    [filterDeps, packageJson.devDependencies],
-  )
-  const dependencyUsage = useMemo(
-    () => combineDependencyUsage(
-      getSiteModuleDependencyUsage(site, registry),
-      analyzeRuntimeScriptImports(site?.files ?? [], packageJson).usage,
-    ),
-    [packageJson, site],
-  )
-  const runtimeIssues = useMemo(
-    () => summarizeRuntimeDependencyIssues(
-      analyzeRuntimeScriptImports(site?.files ?? [], packageJson).diagnostics,
-    ),
-    [packageJson, site],
+  const runtimeIssues = summarizeRuntimeDependencyIssues(
+    analyzeRuntimeScriptImports(site?.files ?? [], packageJson).diagnostics,
   )
 
   const totalFiltered = filteredDeps.length + filteredDevDeps.length
@@ -123,10 +108,7 @@ export function DepsSection() {
     Object.keys(packageJson.devDependencies).length
 
   const lockedPackages = siteRuntime.dependencyLock.packages
-  const lockStatus = useMemo(
-    () => evaluateDependencyLockStatus(packageJson, lockedPackages),
-    [packageJson, lockedPackages],
-  )
+  const lockStatus = evaluateDependencyLockStatus(packageJson, lockedPackages)
 
   // The slice's `resolved` status hangs around until the next attempt — when
   // the lock has fallen out of sync since (user added another package after
@@ -145,7 +127,7 @@ export function DepsSection() {
   })()
 
   // ── Add package handler ──────────────────────────────────────────────────
-  const handleAddPackage = useCallback(() => {
+  const handleAddPackage = () => {
     const name = addName.trim()
     if (!name) {
       setAddError('Package name is required')
@@ -160,57 +142,48 @@ export function DepsSection() {
     setAddName('')
     setAddError(null)
     // TODO(Phase G): ask the site bridge to install this in the user site.
-  }, [addName, addDev, setDependency])
+  }
 
-  const handleRuntimeIssueAction = useCallback(
-    (issue: RuntimeDependencyIssue) => {
-      if (issue.action === 'add') {
-        setDependency(issue.packageName, '*', false)
-        return
-      }
+  const handleRuntimeIssueAction = (issue: RuntimeDependencyIssue) => {
+    if (issue.action === 'add') {
+      setDependency(issue.packageName, '*', false)
+      return
+    }
 
-      if (issue.action === 'move-to-runtime') {
-        const version = packageJson.devDependencies[issue.packageName] ?? '*'
-        setDependency(issue.packageName, version, false)
-      }
-    },
-    [packageJson.devDependencies, setDependency],
-  )
+    if (issue.action === 'move-to-runtime') {
+      const version = packageJson.devDependencies[issue.packageName] ?? '*'
+      setDependency(issue.packageName, version, false)
+    }
+  }
 
   // ── Remove confirmation (Guideline #258) ────────────────────────────────
-  const requestRemove = useCallback(
-    (name: string, dev: boolean) => {
-      setRemoveConfirm({ name, dev })
-      // Focus moves to Cancel button on reveal (Guideline #258)
-      requestAnimationFrame(() => cancelRef.current?.focus())
-    },
-    [],
-  )
+  const requestRemove = (name: string, dev: boolean) => {
+    setRemoveConfirm({ name, dev })
+    // Focus moves to Cancel button on reveal (Guideline #258)
+    requestAnimationFrame(() => cancelRef.current?.focus())
+  }
 
-  const confirmRemove = useCallback(() => {
+  const confirmRemove = () => {
     if (removeConfirm) {
       removeDependency(removeConfirm.name)
       setRemoveConfirm(null)
       // TODO(Phase G): ask the site bridge to remove this from the user site.
     }
-  }, [removeConfirm, removeDependency])
+  }
 
-  const cancelRemove = useCallback(() => {
+  const cancelRemove = () => {
     setRemoveConfirm(null)
-  }, [])
+  }
 
-  const handleRemoveKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        cancelRemove()
-      }
-    },
-    [cancelRemove],
-  )
+  const handleRemoveKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      cancelRemove()
+    }
+  }
 
   // ── Add input validation on change ───────────────────────────────────────
-  const handleAddNameChange = useCallback((value: string) => {
+  const handleAddNameChange = (value: string) => {
     setAddName(value)
     if (!value.trim()) {
       setAddError(null)
@@ -221,16 +194,16 @@ export function DepsSection() {
     } else {
       setAddError(null)
     }
-  }, [])
+  }
 
   const runtimeDependencyCount = Object.keys(packageJson.dependencies).length
 
-  const handleResolveDependencies = useCallback(() => {
+  const handleResolveDependencies = () => {
     // The auto-resolve hook handles the common case (dep added/removed →
     // background resolve). This button is the manual escape hatch: surface
     // when an auto-resolve errored, or let the user re-run on demand.
     resolveDependencyLock().catch(() => {/* slice stores the error */})
-  }, [resolveDependencyLock])
+  }
 
   return (
     <div

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { DragCancelEvent, DragEndEvent, DragMoveEvent, DragStartEvent } from '@dnd-kit/core'
 import type { Page } from '@core/page-tree'
 import { registry } from '@core/module-engine/registry'
@@ -227,7 +227,7 @@ export function useDomPanelDnd({
     setInvalidOverId(null)
   }, [clearAutoExpand, setResolvedTarget, stopAutoScroll])
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
+  const handleDragStart = (event: DragStartEvent) => {
     const draggedId = String(event.active.id)
     const node = page?.nodes[draggedId]
     if (!node) return
@@ -256,9 +256,9 @@ export function useDomPanelDnd({
       moduleId: node.moduleId,
       count: draggedIds.length,
     })
-  }, [measureRows, page])
+  }
 
-  const handleDragMove = useCallback((event: DragMoveEvent) => {
+  const handleDragMove = (event: DragMoveEvent) => {
     const draggedId = String(event.active.id)
     const point = getDragPoint(event, startPointRef.current)
     if (!point) return
@@ -266,26 +266,26 @@ export function useDomPanelDnd({
     latestPointerRef.current = point
     resolveTargetAtPoint(draggedId, point)
     updateAutoScroll(point)
-  }, [resolveTargetAtPoint, updateAutoScroll])
+  }
 
-  const handleDragEnd = useCallback((_event: DragEndEvent): DomDropTarget | null => {
+  const handleDragEnd = (_event: DragEndEvent): DomDropTarget | null => {
     const finalTarget = latestTargetRef.current
     resetDragState()
     return finalTarget
-  }, [resetDragState])
+  }
 
-  const handleDragCancel = useCallback((_event: DragCancelEvent) => {
+  const handleDragCancel = (_event: DragCancelEvent) => {
     resetDragState()
-  }, [resetDragState])
+  }
 
   useEffect(() => resetDragState, [resetDragState])
 
-  const contextValue = useMemo<DomPanelDndContextValue>(() => ({
+  const contextValue: DomPanelDndContextValue = {
     activeId,
     target,
     invalidOverId,
     registerRow,
-  }), [activeId, invalidOverId, registerRow, target])
+  }
 
   return {
     contextValue,
