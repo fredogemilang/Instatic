@@ -21,6 +21,7 @@ import { compareVariants } from '@core/fonts/variants'
 import { deleteCmsFontFamily } from '@core/persistence/cmsFonts'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { AddGoogleFontDialog } from './AddGoogleFontDialog'
+import { AddCustomFontDialog } from './AddCustomFontDialog'
 import styles from './FontsSection.module.css'
 
 const EMPTY_FONTS: FontEntry[] = []
@@ -31,6 +32,7 @@ export function FontsSection() {
   const removeFont = useEditorStore((s) => s.removeFont)
 
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [customDialogOpen, setCustomDialogOpen] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const installedFamiliesLower = new Set(fonts.map((f) => f.family.toLowerCase()))
@@ -62,14 +64,24 @@ export function FontsSection() {
           compact
           title="No fonts installed yet."
           action={
-            <Button
-              variant="secondary"
-              size="sm"
-              type="button"
-              onClick={() => setDialogOpen(true)}
-            >
-              Add Google font
-            </Button>
+            <div className={styles.addRow}>
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={() => setDialogOpen(true)}
+              >
+                Add Google font
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={() => setCustomDialogOpen(true)}
+              >
+                Upload custom font
+              </Button>
+            </div>
           }
         />
       ) : (
@@ -93,6 +105,14 @@ export function FontsSection() {
             >
               Add Google font
             </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => setCustomDialogOpen(true)}
+            >
+              Upload custom font
+            </Button>
           </div>
         </>
       )}
@@ -108,6 +128,17 @@ export function FontsSection() {
           onInstalled={(entry) => {
             addFont(entry)
             setDialogOpen(false)
+          }}
+        />
+      )}
+
+      {customDialogOpen && (
+        <AddCustomFontDialog
+          installedFamilies={installedFamiliesLower}
+          onCancel={() => setCustomDialogOpen(false)}
+          onInstalled={(entry) => {
+            addFont(entry)
+            setCustomDialogOpen(false)
           }}
         />
       )}

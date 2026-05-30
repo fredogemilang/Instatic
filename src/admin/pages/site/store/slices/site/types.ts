@@ -27,9 +27,10 @@ import type {
   FrameworkSpacingGroup,
   FrameworkTypographyClassGenerator,
   FrameworkTypographyGroup,
+  ConditionDef,
 } from '@core/page-tree'
 import type { ImportFragment } from '@core/htmlImport'
-import type { NewStyleRule } from '@core/siteImport'
+import type { NewStyleRule, ImportFontFamily } from '@core/siteImport'
 import type { FrameworkChangeImpact } from '@core/framework/changeImpact'
 import type { EditorStore } from '@site/store/types'
 
@@ -71,6 +72,20 @@ export interface SuperImportHelpers {
    * Throws if `ruleId` is not found.
    */
   overwriteStyleRule(ruleId: string, rule: NewStyleRule): void
+
+  /**
+   * Merge reusable conditions into the site-level `site.conditions` registry,
+   * deduped by id. Imported rules reference these by id via their
+   * `contextStyles` keys.
+   */
+  addConditions(conditions: ConditionDef[]): void
+
+  /**
+   * Add custom font families (from imported `@font-face` blocks) to
+   * `site.settings.fonts`. Each file's `src` is already a final media URL.
+   * @returns The committed `{ id, family }` for each added font.
+   */
+  addFonts(fonts: ImportFontFamily[]): { id: string; family: string }[]
 }
 
 // ---------------------------------------------------------------------------

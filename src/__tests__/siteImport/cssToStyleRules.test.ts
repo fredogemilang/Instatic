@@ -18,6 +18,7 @@
 
 import { describe, it, expect } from 'bun:test'
 import { cssToStyleRules } from '@core/siteImport'
+import { conditionId } from '@core/page-tree'
 
 // ---------------------------------------------------------------------------
 // Selector classification
@@ -95,15 +96,15 @@ describe('cssToStyleRules — selector classification', () => {
 // @media policy — matched breakpoint
 // ---------------------------------------------------------------------------
 
-describe('cssToStyleRules — @media → breakpointStyles (matched)', () => {
-  it('base + matched @media → 1 rule, base styles + breakpointStyles', () => {
+describe('cssToStyleRules — @media → contextStyles (matched)', () => {
+  it('base + matched @media → 1 rule, base styles + contextStyles', () => {
     const css = '.foo { color: red }\n@media (max-width: 768px) { .foo { color: blue } }'
     const { rules, warnings } = cssToStyleRules(css, {
       breakpoints: [{ id: 'tablet', width: 768 }],
     })
     expect(rules).toHaveLength(1)
     expect(rules[0].styles).toMatchObject({ color: 'red' })
-    expect(rules[0].breakpointStyles.tablet).toMatchObject({ color: 'blue' })
+    expect(rules[0].contextStyles.tablet).toMatchObject({ color: 'blue' })
     expect(warnings).toHaveLength(0)
   })
 
@@ -114,7 +115,7 @@ describe('cssToStyleRules — @media → breakpointStyles (matched)', () => {
       mediaTolerance: 15,
     })
     expect(rules).toHaveLength(1)
-    expect(rules[0].breakpointStyles.tablet).toMatchObject({ color: 'blue' })
+    expect(rules[0].contextStyles.tablet).toMatchObject({ color: 'blue' })
     expect(warnings).toHaveLength(0)
   })
 
@@ -125,7 +126,7 @@ describe('cssToStyleRules — @media → breakpointStyles (matched)', () => {
     })
     expect(rules).toHaveLength(1)
     expect(rules[0].styles).toEqual({})
-    expect(rules[0].breakpointStyles.mobile).toMatchObject({ color: 'blue' })
+    expect(rules[0].contextStyles.mobile).toMatchObject({ color: 'blue' })
   })
 })
 
@@ -133,34 +134,33 @@ describe('cssToStyleRules — @media → breakpointStyles (matched)', () => {
 // @media policy — unmatched (no breakpoint match)
 // ---------------------------------------------------------------------------
 
-describe('cssToStyleRules — unmatched @media → faithful conditional layer', () => {
-  it('unmatched @media stores a conditional layer, no warning, base untouched', () => {
+describe('cssToStyleRules — unmatched @media → faithful condition context', () => {
+  it('unmatched @media stores a condition override + registry entry, no warning, base untouched', () => {
     const css = '.foo { color: red }\n@media (max-width: 768px) { .foo { color: blue } }'
-    const { rules, warnings } = cssToStyleRules(css, {
+    const { rules, warnings, conditions } = cssToStyleRules(css, {
       breakpoints: [{ id: 'desktop', width: 1200 }],
     })
     expect(rules).toHaveLength(1)
     // Base stays exactly as authored — the @media override no longer leaks in.
     expect(rules[0].styles).toMatchObject({ color: 'red' })
     expect(rules[0].styles).not.toHaveProperty('__media')
-    // The override lives in a conditional layer keyed on the verbatim query.
-    expect(rules[0].conditionalLayers).toHaveLength(1)
-    const layer = rules[0].conditionalLayers![0]
-    expect(layer.condition).toMatchObject({ kind: 'media', query: '(max-width: 768px)' })
-    expect(layer.styles).toMatchObject({ color: 'blue' })
+    // The override lives in contextStyles keyed by the deterministic condition id.
+    const cid = conditionId({ kind: 'media', query: '(max-width: 768px)' })
+    expect(rules[0].contextStyles[cid]).toMatchObject({ color: 'blue' })
+    // The reusable condition is registered.
+    expect(conditions.map((c) => c.condition)).toContainEqual({ kind: 'media', query: '(max-width: 768px)' })
     // No lossy "unmatched-media-query" warning anymore.
     expect(warnings.filter((w) => w.kind === 'unmatched-media-query')).toHaveLength(0)
   })
 
-  it('a non-width media feature (orientation) round-trips as a media layer', () => {
+  it('a non-width media feature (orientation) round-trips as a media condition', () => {
     const css = '@media (orientation: landscape) { .foo { color: red } }'
-    const { rules, warnings } = cssToStyleRules(css, { breakpoints: [] })
+    const { rules, warnings, conditions } = cssToStyleRules(css, { breakpoints: [] })
     expect(rules).toHaveLength(1)
     expect(rules[0].styles).toEqual({}) // nothing folded into base
-    expect(rules[0].conditionalLayers![0].condition).toMatchObject({
-      kind: 'media',
-      query: '(orientation: landscape)',
-    })
+    const cid = conditionId({ kind: 'media', query: '(orientation: landscape)' })
+    expect(rules[0].contextStyles[cid]).toMatchObject({ color: 'red' })
+    expect(conditions.map((c) => c.condition)).toContainEqual({ kind: 'media', query: '(orientation: landscape)' })
     expect(warnings.filter((w) => w.kind === 'unmatched-media-query')).toHaveLength(0)
   })
 })
@@ -204,15 +204,19 @@ describe('cssToStyleRules — dropped @-rules', () => {
     expect(rules).toHaveLength(0)
   })
 
-  it('@supports → conditional layer (no longer a dropped at-rule)', () => {
-    const { rules, warnings } = cssToStyleRules(
+  it('@supports → condition context (no longer a dropped at-rule)', () => {
+    const { rules, warnings, conditions } = cssToStyleRules(
       '@supports (display: grid) { .foo { display: grid } }',
     )
     expect(rules).toHaveLength(1)
     // The verbatim conditionText may or may not include surrounding parens
     // depending on the CSS engine; the publisher normalises at emit time.
-    expect(rules[0].conditionalLayers![0].condition.kind).toBe('supports')
-    expect(rules[0].conditionalLayers![0].styles).toMatchObject({ display: 'grid' })
+    expect(conditions).toHaveLength(1)
+    expect(conditions[0].condition.kind).toBe('supports')
+    // Exactly one context bag, holding the @supports override styles.
+    const bags = Object.values(rules[0].contextStyles)
+    expect(bags).toHaveLength(1)
+    expect(bags[0]).toMatchObject({ display: 'grid' })
     expect(warnings.filter((w) => w.kind === 'dropped-at-rule')).toHaveLength(0)
   })
 })
@@ -266,7 +270,7 @@ describe('cssToStyleRules — url(...) collection', () => {
     expect(assetRefs[0].ruleIndex).toBe(0)
     expect(assetRefs[0].rawUrl).toBe('assets/bg.png')
     expect(assetRefs[0].property).toBe('backgroundImage')
-    expect(assetRefs[0].breakpointId).toBeUndefined()
+    expect(assetRefs[0].contextId).toBeUndefined()
   })
 
   it('multiple urls in one declaration → 2 assetRefs on same rule', () => {
@@ -285,13 +289,13 @@ describe('cssToStyleRules — url(...) collection', () => {
     expect(assetRefs[1].ruleIndex).toBe(0)
   })
 
-  it('url in matched @media breakpointStyles → assetRef with breakpointId', () => {
+  it('url in matched @media contextStyles → assetRef with contextId = breakpoint id', () => {
     const css = '@media (max-width: 768px) { .foo { background-image: url("mobile.png") } }'
     const { assetRefs } = cssToStyleRules(css, {
       breakpoints: [{ id: 'tablet', width: 768 }],
     })
     expect(assetRefs).toHaveLength(1)
-    expect(assetRefs[0].breakpointId).toBe('tablet')
+    expect(assetRefs[0].contextId).toBe('tablet')
     expect(assetRefs[0].rawUrl).toBe('mobile.png')
   })
 })
@@ -625,27 +629,27 @@ describe('cssToStyleRules — custom @media as conditional layers (no warnings)'
       '@media (max-width: 860px) { .b { color: blue } }',
       '@media (max-width: 860px) { .c { font-size: 14px } }',
     ].join('\n')
-    const { rules, warnings } = cssToStyleRules(css, { breakpoints: [] })
+    const { rules, warnings, conditions } = cssToStyleRules(css, { breakpoints: [] })
     expect(warnings.filter((w) => w.kind === 'unmatched-media-query')).toHaveLength(0)
-    // One rule per selector, each with a single media conditional layer.
+    // One shared registry entry for the common query; one rule per selector,
+    // each carrying an override under that one condition id.
+    expect(conditions).toHaveLength(1)
+    const cid = conditionId({ kind: 'media', query: '(max-width: 860px)' })
     expect(rules).toHaveLength(3)
     for (const r of rules) {
-      expect(r.conditionalLayers).toHaveLength(1)
-      expect(r.conditionalLayers![0].condition).toMatchObject({
-        kind: 'media',
-        query: '(max-width: 860px)',
-      })
+      expect(Object.keys(r.contextStyles)).toEqual([cid])
     }
   })
 
-  it('the same selector under the same query merges into one layer', () => {
+  it('the same selector under the same query merges into one context bag', () => {
     const css = [
       '@media (max-width: 860px) { .a { color: red } }',
       '@media (max-width: 860px) { .a { font-size: 14px } }',
     ].join('\n')
     const { rules } = cssToStyleRules(css, { breakpoints: [] })
     const a = rules.find((r) => r.selector === '.a')!
-    expect(a.conditionalLayers).toHaveLength(1)
-    expect(a.conditionalLayers![0].styles).toMatchObject({ color: 'red', fontSize: '14px' })
+    const cid = conditionId({ kind: 'media', query: '(max-width: 860px)' })
+    expect(Object.keys(a.contextStyles)).toEqual([cid])
+    expect(a.contextStyles[cid]).toMatchObject({ color: 'red', fontSize: '14px' })
   })
 })

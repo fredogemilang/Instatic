@@ -52,6 +52,12 @@ export function DoneStep({ result, droppedJs, droppedAtRules, onClose }: DoneSte
             <strong>{result.assets.length}</strong>{' '}
             {result.assets.length === 1 ? 'asset' : 'assets'} uploaded
           </p>
+          {result.fonts.length > 0 && (
+            <p className={styles.countLine}>
+              <strong>{result.fonts.length}</strong>{' '}
+              {result.fonts.length === 1 ? 'font' : 'fonts'} imported
+            </p>
+          )}
           {(droppedJs > 0 || droppedAtRules > 0) && (
             <p className={styles.droppedLine}>
               Dropped: {droppedJs > 0 ? `${droppedJs} scripts` : ''}{droppedJs > 0 && droppedAtRules > 0 ? ', ' : ''}{droppedAtRules > 0 ? `${droppedAtRules} @-rules` : ''}

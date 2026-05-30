@@ -12,7 +12,7 @@
  * After normalisation:
  *   - URL-shaped props in node fragments are replaced with their FileMap key
  *     (e.g. `"./images/hero.png"` → `"images/hero.png"`).
- *   - CSS `url('...')` expressions inside styles and breakpointStyles are
+ *   - CSS `url('...')` expressions inside styles and contextStyles are
  *     rewritten to hold the FileMap key as the URL payload.
  *   - External URLs (`http://`, `https://`, `//`, `data:`, `mailto:`, `tel:`,
  *     `#fragment`) are left unchanged.
@@ -23,12 +23,16 @@
 
 import type { PageNode } from '@core/page-tree'
 import type { ImportFragment } from '@core/htmlImport'
+import type { FontFileFormat } from '@core/fonts/schemas'
 import type {
   FileMap,
   ImportWarning,
   PagePlan,
   AssetRef,
   NewStyleRule,
+  ParsedFontFace,
+  ImportFontFamily,
+  ImportFontFile,
 } from './types'
 import { guessMimeType } from './mimeTypes'
 
@@ -49,6 +53,8 @@ export interface CssFileResult {
   rules: NewStyleRule[]
   /** Asset URL references found in the rules. */
   assetRefs: AssetRef[]
+  /** `@font-face` blocks captured for this file (raw urls). */
+  fontFaces?: ParsedFontFace[]
 }
 
 export interface AssetPlanResult {
@@ -56,9 +62,32 @@ export interface AssetPlanResult {
   normalizedPagePlans: PagePlan[]
   /** Flat list of all style rules (from all CSS files) with url() values normalised. */
   normalizedStyleRules: NewStyleRule[]
+  /**
+   * Custom font families resolved from `@font-face` blocks. Each file's `src`
+   * is a FileMap key (rewritten to a media URL later by `applyAssetRewrites`).
+   */
+  fonts: ImportFontFamily[]
   /** Deduplicated asset list for upload, keyed by FileMap path. */
   assets: { sourcePath: string; mimeType: string; bytes: Uint8Array }[]
   warnings: ImportWarning[]
+}
+
+/** Format preference when an `@font-face` lists several fallback files. */
+const FONT_FORMAT_RANK: Record<FontFileFormat, number> = {
+  woff2: 0,
+  woff: 1,
+  ttf: 2,
+  otf: 3,
+}
+
+/** Map a FileMap key's extension to a font format, or null if not a font. */
+function fontFormatForPath(path: string): FontFileFormat | null {
+  const lower = path.split('?')[0].toLowerCase()
+  if (lower.endsWith('.woff2')) return 'woff2'
+  if (lower.endsWith('.woff')) return 'woff'
+  if (lower.endsWith('.ttf')) return 'ttf'
+  if (lower.endsWith('.otf')) return 'otf'
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +128,9 @@ export function buildAssetPlan(
     normalizedStyleRules.push(...normalized)
   }
 
+  // --- Resolve @font-face blocks into custom font families ---
+  const fonts = buildFontFamilies(cssFileResults, fileMap, assetMap, warnings)
+
   // --- Sweep up unreferenced binary/media files ---
   //
   // Anything the user bundled that classifies as image / font / binary lands
@@ -116,7 +148,78 @@ export function buildAssetPlan(
 
   const assets = Array.from(assetMap.values())
 
-  return { normalizedPagePlans, normalizedStyleRules, assets, warnings }
+  return { normalizedPagePlans, normalizedStyleRules, fonts, assets, warnings }
+}
+
+// ---------------------------------------------------------------------------
+// @font-face → custom font families
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve every captured `@font-face` into a custom font family.
+ *
+ * For each face we pick the best self-hostable `src` (preferring woff2 → woff →
+ * ttf → otf among the files present in the FileMap) and emit one `ImportFontFile`
+ * whose `src` is the FileMap key (rewritten to a media URL downstream). A face
+ * whose every src is external / missing yields an `external-font` warning and is
+ * skipped. Faces are grouped by family (case-insensitive), so multiple weights
+ * of the same family collapse into one entry.
+ */
+function buildFontFamilies(
+  cssFileResults: CssFileResult[],
+  fileMap: FileMap,
+  assetMap: Map<string, { sourcePath: string; mimeType: string; bytes: Uint8Array }>,
+  warnings: ImportWarning[],
+): ImportFontFamily[] {
+  // family-lowercase → { display family, files, seen (variant) }
+  const byFamily = new Map<string, { family: string; files: ImportFontFile[]; seenVariants: Set<string> }>()
+
+  for (const { cssPath, fontFaces } of cssFileResults) {
+    if (!fontFaces || fontFaces.length === 0) continue
+
+    for (const face of fontFaces) {
+      // Pick the best resolvable src among the face's fallback urls.
+      let best: { src: string; format: FontFileFormat } | null = null
+      for (const rawUrl of face.srcUrls) {
+        const fileMapKey = resolveAndRecord(rawUrl, cssPath, fileMap, assetMap)
+        if (!fileMapKey) continue
+        const format = fontFormatForPath(fileMapKey)
+        if (!format) continue
+        if (!best || FONT_FORMAT_RANK[format] < FONT_FORMAT_RANK[best.format]) {
+          best = { src: fileMapKey, format }
+        }
+      }
+
+      if (!best) {
+        warnings.push({
+          kind: 'external-font',
+          message: `@font-face "${face.family}" (${face.variant}) has no bundled font file — skipped. Re-add it via Typography → Upload custom font.`,
+          selector: face.family,
+        })
+        continue
+      }
+
+      const key = face.family.toLowerCase()
+      let group = byFamily.get(key)
+      if (!group) {
+        group = { family: face.family, files: [], seenVariants: new Set() }
+        byFamily.set(key, group)
+      }
+      // De-dup identical variants within a family (later wins, like CSS cascade).
+      if (group.seenVariants.has(face.variant)) {
+        group.files = group.files.filter((f) => f.variant !== face.variant)
+      }
+      group.seenVariants.add(face.variant)
+      group.files.push({
+        variant: face.variant,
+        format: best.format,
+        src: best.src,
+        ...(face.unicodeRange ? { unicodeRange: face.unicodeRange } : {}),
+      })
+    }
+  }
+
+  return Array.from(byFamily.values()).map((g) => ({ family: g.family, files: g.files }))
 }
 
 // ---------------------------------------------------------------------------
@@ -215,38 +318,28 @@ function normalizeRules(
     if (!refs || refs.length === 0) return rule
 
     const newStyles = { ...rule.styles } as Record<string, unknown>
-    const newBpStyles: Record<string, Record<string, unknown>> = {}
-    for (const [bpId, bpStyles] of Object.entries(rule.breakpointStyles)) {
-      newBpStyles[bpId] = { ...(bpStyles as Record<string, unknown>) }
+    // Clone every per-context override bag so url() rewrites don't mutate the
+    // source plan. Both width breakpoints and custom conditions live here.
+    const newContextStyles: Record<string, Record<string, unknown>> = {}
+    for (const [contextId, bag] of Object.entries(rule.contextStyles ?? {})) {
+      newContextStyles[contextId] = { ...(bag as Record<string, unknown>) }
     }
-    // Clone conditional layers so url() rewrites don't mutate the source plan.
-    const newLayers = rule.conditionalLayers?.map((l) => ({
-      ...l,
-      styles: { ...(l.styles as Record<string, unknown>) },
-    }))
 
     for (const ref of refs) {
       const fileMapKey = resolveAndRecord(ref.rawUrl, cssFilePath, fileMap, assetMap)
       if (fileMapKey === null) continue // external or not in FileMap
 
-      if (ref.layerId !== undefined) {
-        // url() inside a conditional layer (@media / @container / @supports).
-        const layer = newLayers?.find((l) => l.id === ref.layerId)
-        const val = layer?.styles[ref.property]
-        if (layer && typeof val === 'string') {
-          layer.styles[ref.property] = replaceRawUrlInValue(val, ref.rawUrl, fileMapKey)
-        }
-      } else if (ref.breakpointId === undefined) {
+      if (ref.contextId === undefined) {
         const val = newStyles[ref.property]
         if (typeof val === 'string') {
           newStyles[ref.property] = replaceRawUrlInValue(val, ref.rawUrl, fileMapKey)
         }
       } else {
-        const bpStyles = newBpStyles[ref.breakpointId]
-        if (bpStyles) {
-          const val = bpStyles[ref.property]
+        const bag = newContextStyles[ref.contextId]
+        if (bag) {
+          const val = bag[ref.property]
           if (typeof val === 'string') {
-            bpStyles[ref.property] = replaceRawUrlInValue(val, ref.rawUrl, fileMapKey)
+            bag[ref.property] = replaceRawUrlInValue(val, ref.rawUrl, fileMapKey)
           }
         }
       }
@@ -254,9 +347,8 @@ function normalizeRules(
 
     return {
       ...rule,
-      ...(newLayers !== undefined ? { conditionalLayers: newLayers } : {}),
       styles: newStyles,
-      breakpointStyles: newBpStyles,
+      contextStyles: newContextStyles,
     }
   })
 

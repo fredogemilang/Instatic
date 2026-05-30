@@ -15,7 +15,8 @@
  * @see src/admin/...   — Phase 3 adapter implementation (TBD)
  */
 
-import type { NewStyleRule } from './types'
+import type { NewStyleRule, ImportFontFamily } from './types'
+import type { ConditionDef } from '@core/page-tree'
 import type { ImportFragment } from '@core/htmlImport'
 
 // ---------------------------------------------------------------------------
@@ -109,4 +110,20 @@ export interface SiteImportTransaction {
    * imported rule's values.
    */
   overwriteStyleRule(ruleId: string, rule: NewStyleRule): void
+
+  /**
+   * Merge reusable conditions into the site-level `site.conditions` registry,
+   * deduped by id. Imported rules reference these via their `contextStyles`
+   * keys, so they must be committed alongside the rules.
+   */
+  addConditions(conditions: ConditionDef[]): void
+
+  /**
+   * Add custom font families (from imported `@font-face` blocks) to
+   * `site.settings.fonts`. Each file's `src` is already a final media URL.
+   *
+   * @returns The committed `{ id, family }` for each added font, for the
+   *          import summary.
+   */
+  addFonts(fonts: ImportFontFamily[]): { id: string; family: string }[]
 }

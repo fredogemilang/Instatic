@@ -513,3 +513,76 @@ export async function uninstallFontFamily(
   if (!slug) return
   await rm(join(uploadsDir, 'fonts', slug), { recursive: true, force: true })
 }
+
+// ---------------------------------------------------------------------------
+// Custom fonts (uploaded via the media library)
+// ---------------------------------------------------------------------------
+
+/** Font container MIME → our canonical `FontFileFormat`. */
+const FONT_FORMAT_FOR_MIME: Record<string, FontFileFormat> = {
+  'font/woff2': 'woff2',
+  'font/woff': 'woff',
+  'font/ttf': 'ttf',
+  'font/otf': 'otf',
+}
+
+/** Resolve a media asset's MIME to a font format, or null if it isn't a font. */
+export function fontFormatForMime(mimeType: string): FontFileFormat | null {
+  return FONT_FORMAT_FOR_MIME[mimeType] ?? null
+}
+
+/**
+ * One resolved custom-font file — the media asset has already been looked up by
+ * the handler so the `path` (public URL) and `format` (from the sniffed MIME)
+ * are server-trusted, and the requested `variant` validated.
+ */
+export interface ResolvedCustomFontFile {
+  variant: string
+  format: FontFileFormat
+  /** Public URL of the uploaded media asset (e.g. `/uploads/media/abc.woff2`). */
+  path: string
+  /** The backing media asset id — kept on the FontFile so the entry survives
+   *  storage migration and external URLs are trusted at the CSS boundary. */
+  mediaAssetId: string
+}
+
+/**
+ * Assemble a `FontEntry` (`source: 'custom'`) from resolved media-backed files.
+ *
+ * Pure + synchronous — the handler does the async media lookups + validation,
+ * then hands fully-resolved files here so this stays testable without a DB.
+ * Variants are deduped + sorted canonically; `subset` is fixed to `'latin'`
+ * since custom uploads aren't sliced by subset.
+ */
+export function assembleCustomFontEntry(input: {
+  family: string
+  files: readonly ResolvedCustomFontFile[]
+}): FontEntry {
+  const family = input.family.trim()
+  if (!family) throw new FontInstallError('Missing font family')
+  if (input.files.length === 0) {
+    throw new FontInstallError('A custom font needs at least one uploaded file')
+  }
+
+  const files: FontFile[] = input.files.map((f) => ({
+    variant: f.variant,
+    subset: 'latin',
+    path: f.path,
+    format: f.format,
+    mediaAssetId: f.mediaAssetId,
+  }))
+
+  const variants = Array.from(new Set(files.map((f) => f.variant))).sort(compareVariants)
+
+  const now = Date.now()
+  return {
+    id: nanoid(),
+    source: 'custom',
+    family,
+    variants,
+    subsets: ['latin'],
+    files,
+    createdAt: now,
+    updatedAt: now,
+  }
+}

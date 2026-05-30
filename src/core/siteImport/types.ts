@@ -5,8 +5,9 @@
  * @see src/__tests__/architecture/siteImport-headless.test.ts
  */
 
-import type { StyleRule } from '@core/page-tree'
+import type { StyleRule, ConditionDef } from '@core/page-tree'
 import type { ImportFragment } from '@core/htmlImport'
+import type { FontFileFormat } from '@core/fonts/schemas'
 
 // ---------------------------------------------------------------------------
 // NewStyleRule — a StyleRule ready to insert (sans identity fields)
@@ -59,6 +60,10 @@ export type NewStyleRule = Omit<StyleRule, 'id' | 'createdAt' | 'updatedAt'>
  *   referenced in the source HTML/CSS by its original FileMap path so the
  *   import doesn't degrade pages or rules. Surface the warning in the
  *   wizard's Done step so the user can re-upload manually.
+ * - `external-font`: an `@font-face` whose every `src` is an external URL
+ *   (or `local(...)` only) — nothing to upload, so the face is skipped rather
+ *   than imported. The user can re-add the font by hand. Self-hosted faces
+ *   (a bundled `.woff2`/`.woff`/`.ttf`/`.otf`) ARE imported as custom fonts.
  */
 export type ImportWarningKind =
   | 'dropped-at-rule'
@@ -70,6 +75,7 @@ export type ImportWarningKind =
   | 'duplicate-class'
   | 'missing-stylesheet'
   | 'asset-upload-failed'
+  | 'external-font'
 
 export interface ImportWarning {
   kind: ImportWarningKind
@@ -102,7 +108,7 @@ export interface ImportWarning {
  * site breakpoints by width (±mediaTolerance).
  */
 export interface BreakpointHint {
-  /** Breakpoint identifier, matching the key used in `StyleRule.breakpointStyles`. */
+  /** Breakpoint identifier, matching a context key used in `StyleRule.contextStyles`. */
   id: string
   /** The width threshold in CSS pixels (e.g. 768 for a tablet breakpoint). */
   width: number
@@ -127,16 +133,12 @@ export interface AssetRef {
   /** Zero-based index into `CssToStyleRulesResult.rules`. */
   ruleIndex: number
   /**
-   * The breakpoint ID this declaration lives in, or `undefined` for the rule's
-   * base `styles` object.
+   * The editing-context id this declaration lives in (a width breakpoint id or
+   * a custom-condition id — both keys into `StyleRule.contextStyles`), or
+   * `undefined` for the rule's base `styles` object. When set, the rewriters
+   * target that context's override bag rather than base.
    */
-  breakpointId?: string
-  /**
-   * The conditional layer id this declaration lives in (custom @media /
-   * @container / @supports), or `undefined` for base / breakpoint styles.
-   * When set, the rewriters target that layer's `styles` rather than base.
-   */
-  layerId?: string
+  contextId?: string
   /** camelCase CSS property name (e.g. `backgroundImage`). */
   property: string
   /**
@@ -144,6 +146,43 @@ export interface AssetRef {
    * this is `assets/bg.png`.
    */
   rawUrl: string
+}
+
+// ---------------------------------------------------------------------------
+// @font-face import types
+// ---------------------------------------------------------------------------
+
+/**
+ * One `@font-face` block captured verbatim by the CSS parser, before asset
+ * resolution. `srcUrls` are the raw `url(...)` payloads (a single face may list
+ * several fallback formats); `variant` is the canonical weight/style derived
+ * from the `font-weight` + `font-style` descriptors.
+ */
+export interface ParsedFontFace {
+  family: string
+  /** Canonical variant tag — "400", "700italic", … */
+  variant: string
+  /** Raw `url(...)` payloads from the `src` descriptor, in source order. */
+  srcUrls: string[]
+  unicodeRange?: string
+}
+
+/**
+ * One resolved font file ready to become a `FontFile`. `src` holds a FileMap
+ * key before `applyAssetRewrites` runs, and the rewritten media URL after.
+ */
+export interface ImportFontFile {
+  variant: string
+  format: FontFileFormat
+  /** FileMap key (pre-rewrite) → media public URL (post-rewrite). */
+  src: string
+  unicodeRange?: string
+}
+
+/** A custom font family synthesized from imported `@font-face` blocks. */
+export interface ImportFontFamily {
+  family: string
+  files: ImportFontFile[]
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +304,18 @@ export interface RuleConflict {
 export interface ImportPlan {
   pages: PagePlan[]
   styleRules: NewStyleRule[]
+  /**
+   * Custom font families synthesized from imported `@font-face` blocks. Each
+   * file's `src` is a FileMap key here; `applyAssetRewrites` rewrites it to the
+   * uploaded media URL, then `commitImportPlan` assembles a `FontEntry`.
+   */
+  fonts: ImportFontFamily[]
+  /**
+   * Reusable site-level conditions referenced by `styleRules[].contextStyles`
+   * keys (custom @media / @container / @supports). Merged into `site.conditions`
+   * on commit.
+   */
+  conditions: ConditionDef[]
   /** Assets to upload, with their raw bytes. */
   assets: { sourcePath: string; mimeType: string; bytes: Uint8Array }[]
   conflicts: { pages: PageConflict[]; rules: RuleConflict[] }
@@ -289,6 +340,8 @@ export interface ImportPlan {
 export interface ImportResult {
   pages: { id: string; title: string; slug: string; source: string }[]
   styleRules: { id: string; selector: string; kind: 'class' | 'ambient' }[]
+  /** Custom fonts imported from `@font-face` blocks. */
+  fonts: { id: string; family: string }[]
   assets: { sourcePath: string; mediaUrl: string }[]
   /** Resolved conflicts (mirrors ImportPlan.conflicts with final actions). */
   conflicts: ImportPlan['conflicts']

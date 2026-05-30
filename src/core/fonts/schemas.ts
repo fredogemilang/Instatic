@@ -23,47 +23,116 @@ const FontSourceSchema = Type.Union([
 type FontSource = Static<typeof FontSourceSchema>
 
 // ---------------------------------------------------------------------------
-// FontFile
+// FontFileFormat
 // ---------------------------------------------------------------------------
 
-const FONT_PATH_PATTERN = /^\/uploads\/fonts\/[^"<>\\\s]+\.woff2$/
+/**
+ * Web-font container formats we can self-host + emit an `@font-face src` for.
+ * Google installs are always `woff2`; custom uploads (and imported `@font-face`
+ * sources) may be any of the four.
+ */
+const FontFileFormatSchema = Type.Union([
+  Type.Literal('woff2'),
+  Type.Literal('woff'),
+  Type.Literal('ttf'),
+  Type.Literal('otf'),
+])
 
-function isSafeFontPath(path: string): boolean {
-  return FONT_PATH_PATTERN.test(path) && !path.includes('..')
+export type FontFileFormat = Static<typeof FontFileFormatSchema>
+
+/** On-disk extension for each format — used for the path↔format consistency check. */
+const EXTENSION_FOR_FONT_FORMAT: Record<FontFileFormat, string> = {
+  woff2: '.woff2',
+  woff: '.woff',
+  ttf: '.ttf',
+  otf: '.otf',
 }
 
 /**
- * One downloaded font file.  The `path` must be under `/uploads/fonts/`, end
- * with `.woff2`, and contain no traversal sequences — mirrors `isSafeFontPath`
- * in `validate.ts` (lines ~557–563).
+ * Strict legacy check: a `.woff2` file under `/uploads/fonts/` with no traversal
+ * sequences. Retained as a named export for the bundle export/import schema,
+ * whose font parser only round-trips self-hosted Google (woff2) installs. New
+ * code paths use `isSafeFontSrc`, which also accepts media-backed custom fonts.
+ */
+const LEGACY_FONT_PATH_PATTERN = /^\/uploads\/fonts\/[^"<>\\\s]+\.woff2$/
+
+export function isSafeFontPath(path: string): boolean {
+  return LEGACY_FONT_PATH_PATTERN.test(path) && !path.includes('..')
+}
+
+// ---------------------------------------------------------------------------
+// FontFile
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a font `src` path before it's interpolated into a `<style>` block.
+ *
+ * Two accepted shapes:
+ *   - Self-hosted: a root-relative path under `/uploads/` (the Google installer
+ *     writes to `/uploads/fonts/<slug>/`, custom + imported uploads land in the
+ *     media library under `/uploads/media/`). Any of the four font extensions.
+ *   - Media-backed external: an `https://` URL — accepted ONLY when the file
+ *     carries a `mediaAssetId`, proving it came from our media pipeline on a
+ *     deployment whose storage adapter serves assets off an external host.
+ *     Arbitrary `https://` font URLs (no `mediaAssetId`) are rejected so a
+ *     corrupted site document can't make the publisher fetch a third-party CDN.
+ *
+ * Always rejects traversal sequences and characters that could break out of a
+ * CSS `url("...")` string or the surrounding `<style>` tag.
+ */
+function isSafeFontSrc(path: string, mediaAssetId?: string): boolean {
+  if (!path || path.includes('..')) return false
+  if (/["<>\\\s]/.test(path)) return false
+  if (path.startsWith('/uploads/')) return true
+  if (path.startsWith('https://')) return mediaAssetId != null && mediaAssetId.length > 0
+  return false
+}
+
+/**
+ * One font file backing an `@font-face` slice.
+ *
+ * `path` is the public URL the publisher emits inside `src: url("...")`. For
+ * Google installs and self-hosted custom uploads it's a `/uploads/...` path;
+ * for media-backed fonts on an external storage adapter it may be an `https://`
+ * URL (gated by `mediaAssetId`, see `isSafeFontSrc`).
  *
  * Google's CSS2 endpoint emits multiple `@font-face` blocks per (variant ×
- * subset) request, each restricted to a different `unicode-range` slice of the
- * subset (so browsers download only the slices they need at runtime). We
- * preserve every slice as its own `FontFile` and round-trip the original
- * `unicode-range` declaration; the publisher emits one `@font-face` per slice.
+ * subset) request, each restricted to a different `unicode-range` slice. We
+ * preserve every slice as its own `FontFile`. `unicodeRange` is optional;
+ * custom uploads and imported faces typically have none.
  *
- * `unicodeRange` is optional only because pre-slicing installs and
- * `source: 'custom'` uploads may not have one — when missing, the publisher
- * omits the `unicode-range:` declaration and the browser uses the file for
- * any character (legacy single-file behavior).
+ * `mediaAssetId` is set for media-backed custom / imported fonts (so the entry
+ * survives a storage-adapter migration and external URLs are trusted). Google
+ * installs leave it unset.
  */
 const FontFileSchema = Type.Object({
   variant: Type.String({ minLength: 1 }),
   subset: Type.String({ minLength: 1 }),
-  path: Type.String({ pattern: FONT_PATH_PATTERN.source }),
-  format: Type.Literal('woff2'),
+  path: Type.String({ minLength: 1 }),
+  format: FontFileFormatSchema,
   unicodeRange: Type.Optional(Type.String({ minLength: 1 })),
+  mediaAssetId: Type.Optional(Type.String({ minLength: 1 })),
 })
 
 export type FontFile = Static<typeof FontFileSchema>
 
 /**
+ * A self-hosted `/uploads/` path must carry the extension matching its declared
+ * `format` (the media pipeline picks a server-trusted extension from the sniffed
+ * MIME). External media URLs are exempt — a signed CDN URL may not end in `.woff2`.
+ */
+function fontPathMatchesFormat(file: FontFile): boolean {
+  if (!file.path.startsWith('/uploads/')) return true
+  const expected = EXTENSION_FOR_FONT_FORMAT[file.format]
+  const pathname = file.path.split('?')[0]
+  return pathname.toLowerCase().endsWith(expected)
+}
+
+/**
  * Allowed characters inside a `unicode-range:` value. The CSS spec accepts
- * `U+`, hex digits, dashes, commas, and whitespace. We intentionally forbid
- * anything that could break out of the declaration (`<`, `>`, `"`, `\\`,
- * `;`, `{`, `}`, etc.) — the value is round-tripped verbatim into a `<style>`
- * block so the same hardening rule applies as for paths and family names.
+ * `U+`, hex digits, dashes, commas, and whitespace. We forbid anything that
+ * could break out of the declaration — the value is round-tripped verbatim
+ * into a `<style>` block.
  */
 const UNICODE_RANGE_PATTERN = /^[\sUu+0-9A-Fa-f,-]+$/
 
@@ -71,16 +140,21 @@ function isSafeUnicodeRange(range: string): boolean {
   return UNICODE_RANGE_PATTERN.test(range) && range.length <= 2048
 }
 
-// Composite check used by callers that want pattern + path-traversal in one go.
+// Composite check used by callers that want schema + path-safety in one go.
 function checkFontFile(value: unknown): value is FontFile {
   if (!Value.Check(FontFileSchema, value)) return false
   const file = value as FontFile
-  if (!isSafeFontPath(file.path)) return false
+  if (!isSafeFontSrc(file.path, file.mediaAssetId)) return false
+  if (!fontPathMatchesFormat(file)) return false
   if (file.unicodeRange != null && !isSafeUnicodeRange(file.unicodeRange)) {
     return false
   }
   return true
 }
+
+/** Re-exported so the CSS emitter applies the same path-safety rule at the
+ *  `<style>` boundary that the schema applies at the storage boundary. */
+export { isSafeFontSrc }
 
 // ---------------------------------------------------------------------------
 // FontEntry
@@ -89,7 +163,6 @@ function checkFontFile(value: unknown): value is FontFile {
 /**
  * One font installed in the site library.
  * Invalid entries are silently dropped at the SiteFontsSettings level.
- * Mirrors `validateFontEntry` in validate.ts (lines ~575–603).
  */
 const FontEntrySchema = Type.Object({
   id: Type.String({ minLength: 1 }),
@@ -146,10 +219,7 @@ function parseFontEntry(raw: unknown): FontEntry | null {
 // SiteFontsSettings
 // ---------------------------------------------------------------------------
 
-/**
- * Library of installed fonts for a site.
- * Mirrors `validateSiteFontsSettings` in validate.ts (lines ~605–612).
- */
+/** Library of installed fonts for a site. */
 export const SiteFontsSettingsSchema = Type.Object({
   items: Type.Array(FontEntrySchema),
 })

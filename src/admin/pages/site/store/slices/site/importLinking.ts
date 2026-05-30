@@ -61,7 +61,7 @@ export function linkImportedClassNames(
         selector: classKindSelector(name),
         order: maxOrder + 1,
         styles: {},
-        breakpointStyles: {},
+        contextStyles: {},
         createdAt: now,
         updatedAt: now,
       }

@@ -22,7 +22,7 @@
  *   entire import in one step.
  */
 
-import type { SiteDocument } from '@core/page-tree'
+import type { SiteDocument, ConditionDef } from '@core/page-tree'
 import { cssToStyleRules } from './cssToStyleRules'
 import { classifyFiles } from './classifyFiles'
 import { makeHtmlPagePlan } from './htmlPagePlan'
@@ -93,6 +93,8 @@ export function buildImportPlan({ fileMap, currentSite, options }: BuildImportPl
   // 4. Parse CSS files linked from ≥1 page; record unused CSS
   const unusedCss: string[] = []
   const cssFileResults: CssFileResult[] = []
+  // Reusable conditions discovered across all CSS files, deduped by id.
+  const conditionsById = new Map<string, ConditionDef>()
 
   for (const f of classified) {
     if (f.role !== 'css') continue
@@ -101,23 +103,26 @@ export function buildImportPlan({ fileMap, currentSite, options }: BuildImportPl
       continue
     }
     const cssSource = decodeUtf8(f.bytes)
-    const { rules, warnings: cssWarnings, assetRefs } = cssToStyleRules(cssSource, {
+    const { rules, warnings: cssWarnings, assetRefs, conditions: cssConditions, fontFaces } = cssToStyleRules(cssSource, {
       breakpoints: breakpointHints,
       mediaTolerance,
     })
     warnings.push(...cssWarnings)
+    for (const def of cssConditions) {
+      if (!conditionsById.has(def.id)) conditionsById.set(def.id, def)
+    }
 
     // Collect dropped at-rules from CSS warnings for the summary
     for (const w of cssWarnings) {
       if (w.kind === 'dropped-at-rule' && w.source) droppedAtRules.push(w.source)
     }
 
-    cssFileResults.push({ cssPath: f.path, rules, assetRefs })
+    cssFileResults.push({ cssPath: f.path, rules, assetRefs, fontFaces })
   }
 
   // 5. Build asset plan — normalises URLs in node props and CSS values,
-  //    collects deduplicated asset entries for upload
-  const { normalizedPagePlans, normalizedStyleRules, assets, warnings: assetWarnings } =
+  //    resolves @font-face blocks into custom fonts, collects assets to upload
+  const { normalizedPagePlans, normalizedStyleRules, fonts, assets, warnings: assetWarnings } =
     buildAssetPlan(rawPagePlans, cssFileResults, fileMap)
   warnings.push(...assetWarnings)
 
@@ -127,6 +132,8 @@ export function buildImportPlan({ fileMap, currentSite, options }: BuildImportPl
   return {
     pages: normalizedPagePlans,
     styleRules: normalizedStyleRules,
+    fonts,
+    conditions: [...conditionsById.values()],
     assets,
     conflicts,
     warnings,
@@ -207,6 +214,7 @@ export async function commitImportPlan(
   // ── Step C: Commit pages + style rules (single atomic transaction) ─────────
   const resultPages: ImportResult['pages'] = []
   const resultRules: ImportResult['styleRules'] = []
+  const resultFonts: ImportResult['fonts'] = []
 
   // Build conflict resolution lookup maps (source → resolution)
   const pageConflictsBySource = new Map<string, PageConflict>(
@@ -216,7 +224,26 @@ export async function commitImportPlan(
     rewrittenPlan.conflicts.rules.map((c) => [c.desiredName, c]),
   )
 
+  const resultFonts: ImportResult['fonts'] = []
+
   await adapter.commit((tx) => {
+    // Merge reusable conditions first so rule contextStyles keys resolve.
+    if ((rewrittenPlan.conditions ?? []).length > 0) {
+      tx.addConditions(rewrittenPlan.conditions)
+    }
+
+    // Custom fonts: only commit files whose src actually became a media URL
+    // (a failed upload leaves a FileMap key). A family with no usable files is
+    // dropped rather than producing a broken @font-face.
+    const commitableFonts = rewrittenPlan.fonts
+      .map((font) => ({
+        ...font,
+        files: font.files.filter((f) => isMediaUrl(f.src)),
+      }))
+      .filter((font) => font.files.length > 0)
+    if (commitableFonts.length > 0) {
+      resultFonts.push(...tx.addFonts(commitableFonts))
+    }
     // Commit style rules first so pages that auto-create class links can
     // reference newly-imported rules.
     for (const rule of rewrittenPlan.styleRules) {
@@ -279,6 +306,7 @@ export async function commitImportPlan(
   return {
     pages: resultPages,
     styleRules: resultRules,
+    fonts: resultFonts,
     assets: resultAssets,
     conflicts: plan.conflicts,
     // Carry forward the plan-level warnings (CSS parser / asset planner /
@@ -301,4 +329,13 @@ export { applyConflictResolutions } from './conflicts'
 /** Decode UTF-8 bytes to a string. */
 function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+}
+
+/**
+ * A font file `src` that was successfully rewritten to a media URL — either a
+ * self-hosted `/uploads/` path or an absolute `https://` URL. A leftover FileMap
+ * key (e.g. `fonts/Inter.woff2`) is neither, so the file is dropped.
+ */
+function isMediaUrl(src: string): boolean {
+  return src.startsWith('/uploads/') || src.startsWith('https://')
 }

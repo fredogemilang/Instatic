@@ -19,7 +19,7 @@
 
 import type { PageNode } from '@core/page-tree'
 import type { ImportFragment } from '@core/htmlImport'
-import type { ImportPlan, NewStyleRule } from './types'
+import type { ImportPlan, NewStyleRule, ImportFontFamily } from './types'
 
 // ---------------------------------------------------------------------------
 // Props that may carry normalised FileMap keys in page nodes
@@ -51,6 +51,26 @@ export function applyAssetRewrites(
       nodeFragment: rewriteFragment(p.nodeFragment, rewriteMap),
     })),
     styleRules: plan.styleRules.map((r) => rewriteRule(r, rewriteMap)),
+    fonts: plan.fonts.map((f) => rewriteFontFamily(f, rewriteMap)),
+  }
+}
+
+/**
+ * Rewrite each font file's `src` (a FileMap key) to its uploaded media URL.
+ * A file whose `src` didn't upload keeps its FileMap key — `commitImportPlan`
+ * drops files that still hold a non-URL src so a failed upload never produces a
+ * broken `@font-face`.
+ */
+function rewriteFontFamily(
+  font: ImportFontFamily,
+  rewriteMap: Record<string, string>,
+): ImportFontFamily {
+  return {
+    ...font,
+    files: font.files.map((file) => {
+      const url = rewriteMap[file.src]
+      return url ? { ...file, src: url } : file
+    }),
   }
 }
 
@@ -120,27 +140,21 @@ function rewriteRule(rule: NewStyleRule, rewriteMap: Record<string, string>): Ne
     rewriteMap,
   )
 
-  const newBpStyles: Record<string, Record<string, unknown>> = {}
-  for (const [bpId, bpStyles] of Object.entries(rule.breakpointStyles)) {
-    newBpStyles[bpId] = rewriteStylesBag(
-      bpStyles as Record<string, unknown>,
+  // Every per-context override (width breakpoints AND custom conditions) lives
+  // in one map now and can carry url() backgrounds — rewrite each bag to the
+  // uploaded media URLs just like base styles.
+  const newContextStyles: Record<string, Record<string, unknown>> = {}
+  for (const [contextId, bag] of Object.entries(rule.contextStyles ?? {})) {
+    newContextStyles[contextId] = rewriteStylesBag(
+      bag as Record<string, unknown>,
       rewriteMap,
     )
   }
 
-  // Conditional layers (custom @media / @container / @supports) can carry
-  // url() backgrounds too — rewrite their styles to the uploaded media URLs
-  // just like base + breakpoint styles.
-  const newLayers = rule.conditionalLayers?.map((layer) => ({
-    ...layer,
-    styles: rewriteStylesBag(layer.styles as Record<string, unknown>, rewriteMap),
-  }))
-
   return {
     ...rule,
     styles: newStyles,
-    breakpointStyles: newBpStyles,
-    ...(newLayers !== undefined ? { conditionalLayers: newLayers } : {}),
+    contextStyles: newContextStyles,
   }
 }
 

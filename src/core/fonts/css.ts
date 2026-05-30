@@ -12,8 +12,22 @@
  * `/uploads/fonts/...` that are written to disk at install time.
  */
 
-import type { FontEntry, SiteFontsSettings } from './schemas'
+import type { FontEntry, FontFile, FontFileFormat, SiteFontsSettings } from './schemas'
+import { isSafeFontSrc } from './schemas'
 import { parseVariant } from './variants'
+
+/**
+ * CSS `format(...)` token for each container format. The CSS keyword differs
+ * from the file extension for the legacy outline formats (`ttf` →
+ * `"truetype"`, `otf` → `"opentype"`), so this mapping is the single source of
+ * truth for the emitted token.
+ */
+const CSS_FORMAT_TOKEN: Record<FontFileFormat, string> = {
+  woff2: 'woff2',
+  woff: 'woff',
+  ttf: 'truetype',
+  otf: 'opentype',
+}
 
 /**
  * Strip characters that could break out of a CSS string literal OR a parent
@@ -68,6 +82,7 @@ function fontFaceRule(
   family: string,
   variant: string,
   urlPath: string,
+  format: FontFileFormat,
   unicodeRange?: string,
 ): string | null {
   const parsed = parseVariant(variant)
@@ -78,7 +93,7 @@ function fontFaceRule(
     `  font-style: ${parsed.italic ? 'italic' : 'normal'};`,
     `  font-weight: ${parsed.weight};`,
     `  font-display: swap;`,
-    `  src: url("${escapeCssUrl(urlPath)}") format("woff2");`,
+    `  src: url("${escapeCssUrl(urlPath)}") format("${CSS_FORMAT_TOKEN[format]}");`,
   ]
   if (unicodeRange) {
     const safe = escapeCssUnicodeRange(unicodeRange)
@@ -102,11 +117,13 @@ export function generateSiteFontsCss(
   for (const entry of fonts.items) {
     if (!entry || !entry.family || !entry.files) continue
     for (const file of entry.files) {
-      if (!file || file.format !== 'woff2') continue
-      // Only emit files served from our own /uploads/fonts/ namespace —
-      // never emit raw third-party URLs (see file's no-CDN guarantee).
-      if (!file.path.startsWith('/uploads/fonts/')) continue
-      const rule = fontFaceRule(entry.family, file.variant, file.path, file.unicodeRange)
+      if (!file) continue
+      // Re-apply the storage-boundary path check at the CSS boundary so a
+      // corrupted site document can't leak an untrusted URL into published
+      // HTML. Self-hosted /uploads/ paths and media-backed entries pass;
+      // arbitrary third-party URLs are skipped (no-CDN guarantee).
+      if (!isSafeFontSrc(file.path, file.mediaAssetId)) continue
+      const rule = fontFaceRule(entry.family, file.variant, file.path, file.format, file.unicodeRange)
       if (rule) blocks.push(rule)
     }
   }
@@ -180,5 +197,5 @@ export function generateFontsCss(fonts: SiteFontsSettings | null | undefined): s
  */
 export function fontFaceCount(entry: FontEntry): number {
   if (!entry?.files) return 0
-  return entry.files.filter((f) => f && f.format === 'woff2').length
+  return entry.files.filter((f): f is FontFile => f != null).length
 }

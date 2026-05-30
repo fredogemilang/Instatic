@@ -8,12 +8,16 @@
  *   "selected: 42 KB" hint before the user clicks Install.
  * - `installCmsGoogleFont` posts the user's chosen variants/subsets and returns
  *   a fully-shaped `FontEntry` to merge into `site.settings.fonts`.
- * - `deleteCmsFontFamily` removes the on-disk woff2 files for a family slug.
+ * - `registerCustomFont` posts uploaded media-asset ids + variants and returns
+ *   a `FontEntry` (`source: 'custom'`) to merge into `site.settings.fonts`.
+ * - `deleteCmsFontFamily` removes the on-disk woff2 files for a Google family
+ *   slug. Custom fonts reference shared media assets, so removing one is a
+ *   metadata-only edit — no server call.
  */
 
 import { parseJsonResponse } from '@core/utils/jsonValidate'
 import type { FontEntry } from '@core/fonts/schemas'
-import { responseErrorMessage } from './httpErrors'
+import { responseErrorMessage } from '@core/http'
 import {
   type CmsFontEstimateDto,
   CmsFontEntryEnvelopeSchema,
@@ -91,6 +95,35 @@ export async function installCmsGoogleFont(
   // envelope schema treats the inner shape as `unknown` to avoid duplicating
   // FontEntry's structure here. validateSite() will catch any drift the next
   // time the site is saved.
+  return payload.font as FontEntry
+}
+
+export interface RegisterCustomFontRequest {
+  family: string
+  files: { mediaAssetId: string; variant: string }[]
+}
+
+/**
+ * Register a custom font from already-uploaded media assets. The binaries are
+ * uploaded separately through the media route; this posts the asset ids +
+ * chosen variants and returns a fully-shaped `FontEntry` to merge into
+ * `site.settings.fonts` via the `addFont` action.
+ */
+export async function registerCustomFont(
+  request: RegisterCustomFontRequest,
+  fetchImpl: FetchLike = defaultFetch,
+  basePath = '/admin/api/cms',
+): Promise<FontEntry> {
+  const res = await fetchImpl(`${basePath}/fonts/custom`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!res.ok) {
+    throw new Error(await responseErrorMessage(res, `Custom font registration failed with ${res.status}`))
+  }
+  const payload = await parseJsonResponse(res, CmsFontEntryEnvelopeSchema)
   return payload.font as FontEntry
 }
 

@@ -8,15 +8,13 @@
  * ## @media policy
  *
  * Matched @media (within ±mediaTolerance of a known breakpoint width):
- *   inner declarations are folded into `breakpointStyles[matchedBreakpointId]`.
+ *   inner declarations are folded into `contextStyles[matchedBreakpointId]`.
  *
- * Unmatched @media (no breakpoint close enough):
- *   inner declarations are folded into the base `styles`, filling in only
- *   properties NOT already present in the base rule (base-takes-precedence
- *   semantics). One `unmatched-media-query` warning is emitted per unique
- *   condition text across all @media blocks in the file. Real-world CSS
- *   (e.g. Tailwind v4) can emit the same condition dozens of times — once per
- *   utility class — so we deduplicate to avoid warning floods.
+ * Unmatched @media / every @container / every @supports:
+ *   inner declarations are stored as a faithful per-context override keyed by a
+ *   deterministic condition id (`contextStyles[<conditionId>]`), and the
+ *   condition is recorded in the returned `conditions` registry. No "unmatched"
+ *   folding into base styles, no lossy condition drop.
  *
  * ## asset-reference warnings
  *
@@ -40,8 +38,16 @@
  */
 
 import { isEmittableProperty } from '@core/publisher/classCss'
-import type { StyleRuleKind } from '@core/page-tree'
-import type { ImportWarning, BreakpointHint, AssetRef, NewStyleRule } from './types'
+import type { StyleRuleKind, Condition, ConditionDef } from '@core/page-tree'
+import { conditionId, makeConditionDef } from '@core/page-tree'
+import { formatVariant } from '@core/fonts/variants'
+import type {
+  ImportWarning,
+  BreakpointHint,
+  AssetRef,
+  NewStyleRule,
+  ParsedFontFace,
+} from './types'
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -65,6 +71,19 @@ export interface CssToStyleRulesResult {
   rules: NewStyleRule[]
   warnings: ImportWarning[]
   assetRefs: AssetRef[]
+  /**
+   * Reusable site-level conditions discovered in the source (custom @media /
+   * @container / @supports). Each rule's overrides under one of these reference
+   * it by id via `contextStyles[<conditionId>]`; the caller merges these into
+   * `site.conditions`.
+   */
+  conditions: ConditionDef[]
+  /**
+   * `@font-face` blocks captured for import. The asset planner resolves each
+   * `srcUrls` entry to a FileMap key + media upload, then `applyImport`
+   * assembles a custom `FontEntry`. Raw url payloads here — not yet resolved.
+   */
+  fontFaces: ParsedFontFace[]
 }
 
 // ---------------------------------------------------------------------------
@@ -234,19 +253,17 @@ function parseDeclarations(
 function collectAssetRefsFromDecls(
   decls: Record<string, unknown>,
   ruleIndex: number,
-  breakpointId: string | undefined,
+  contextId: string | undefined,
   assetRefs: AssetRef[],
-  layerId?: string,
 ): void {
   for (const [property, value] of Object.entries(decls)) {
     if (typeof value !== 'string') continue
     for (const rawUrl of extractUrlPayloads(value)) {
       assetRefs.push({
         ruleIndex,
-        breakpointId,
+        ...(contextId !== undefined ? { contextId } : {}),
         property,
         rawUrl,
-        ...(layerId !== undefined ? { layerId } : {}),
       })
     }
   }
@@ -292,6 +309,9 @@ export function cssToStyleRules(
   const rules: NewStyleRule[] = []
   const warnings: ImportWarning[] = []
   const assetRefs: AssetRef[] = []
+  const fontFaces: ParsedFontFace[] = []
+  // Reusable conditions discovered in the source, deduped by id.
+  const conditionsById = new Map<string, ConditionDef>()
 
   // ── Acquire the CSS engine ──────────────────────────────────────────────
   const SheetCtor = getSheetConstructor()
@@ -301,7 +321,7 @@ export function cssToStyleRules(
       message: 'CSSStyleSheet is not available in this environment',
       source: truncate(cssText),
     })
-    return { rules, warnings, assetRefs }
+    return { rules, warnings, assetRefs, conditions: [], fontFaces }
   }
 
   // ── Sheet-level parse ───────────────────────────────────────────────────
@@ -316,7 +336,7 @@ export function cssToStyleRules(
       message: `CSS parse error: ${message}`,
       source: truncate(cssText),
     })
-    return { rules, warnings, assetRefs }
+    return { rules, warnings, assetRefs, conditions: [], fontFaces }
   }
 
   // ── Rule-processing state ───────────────────────────────────────────────
@@ -338,6 +358,8 @@ export function cssToStyleRules(
         rules,
         warnings,
         assetRefs,
+        fontFaces,
+        conditionsById,
         breakpoints,
         mediaTolerance,
         selectorToLastIndex,
@@ -353,7 +375,7 @@ export function cssToStyleRules(
     }
   }
 
-  return { rules, warnings, assetRefs }
+  return { rules, warnings, assetRefs, conditions: [...conditionsById.values()], fontFaces }
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +387,8 @@ function processTopLevelRule(
   rules: NewStyleRule[],
   warnings: ImportWarning[],
   assetRefs: AssetRef[],
+  fontFaces: ParsedFontFace[],
+  conditionsById: Map<string, ConditionDef>,
   breakpoints: BreakpointHint[],
   mediaTolerance: number,
   selectorToLastIndex: Map<string, number>,
@@ -388,6 +412,7 @@ function processTopLevelRule(
         rules,
         warnings,
         assetRefs,
+        conditionsById,
         breakpoints,
         mediaTolerance,
         selectorToLastIndex,
@@ -396,7 +421,7 @@ function processTopLevelRule(
       return
 
     case SUPPORTS_RULE_TYPE: {
-      // @supports (feature query) → conditional layer, stored verbatim.
+      // @supports (feature query) → custom-condition override, stored verbatim.
       const supportsRule = rule as CSSConditionRule
       const query = supportsRule.conditionText ?? ''
       processConditionInner(
@@ -404,6 +429,7 @@ function processTopLevelRule(
         rules,
         warnings,
         assetRefs,
+        conditionsById,
         selectorToLastIndex,
         seenClassSelectors,
         { kind: 'supports', query },
@@ -412,19 +438,14 @@ function processTopLevelRule(
     }
 
     case FONT_FACE_RULE_TYPE:
-      // @font-face can't be modelled as a StyleRule (no selector — it's a
-      // declarative side-effect at the stylesheet level). The rule itself is
-      // dropped, but we still scrape its `src: url(...)` so the font files
-      // make it to the media library — otherwise an importer would upload
-      // images, then silently lose every font in the bundle. Re-wiring the
-      // imported font into @font-face is a Phase 4 follow-up (storing
-      // @font-face as a first-class site asset).
-      collectFontFaceUrls(rule as CSSFontFaceRule, assetRefs, rules.length)
-      warnings.push({
-        kind: 'dropped-at-rule',
-        message: `${atRuleName(rule.type)} rule is not supported by the import engine (font files were still uploaded)`,
-        source: truncate(rule.cssText),
-      })
+      // @font-face isn't a StyleRule (no selector — it's a stylesheet-level
+      // declarative side-effect), so it's captured into `fontFaces` instead.
+      // We still scrape its `src: url(...)` as assetRefs so the binaries upload
+      // to the media library; `applyImport` then assembles a custom FontEntry
+      // from the captured face + uploaded files. No `dropped-at-rule` warning —
+      // self-hosted faces are imported, not dropped. Faces whose every src is
+      // external surface an `external-font` warning later (in applyImport).
+      collectFontFace(rule as CSSFontFaceRule, assetRefs, rules.length, fontFaces)
       return
 
     default: {
@@ -447,6 +468,7 @@ function processTopLevelRule(
             rules,
             warnings,
             assetRefs,
+            conditionsById,
             selectorToLastIndex,
             seenClassSelectors,
             { kind: 'container', query, ...(name ? { name } : {}) },
@@ -469,29 +491,85 @@ function processTopLevelRule(
 }
 
 /**
- * Scan an `@font-face` rule's declarations for `url(...)` payloads and emit
- * them as assetRefs so the wizard uploads the font binaries. The synthetic
- * ruleIndex is `rules.length` at the time of capture — the resulting
- * assetRef won't bind to any importable style rule, but the asset planner
- * only uses `ruleIndex` to dedupe; the file still ends up in plan.assets.
+ * Strip surrounding quotes from a parsed `font-family` descriptor value.
+ * `"Acme Sans"` → `Acme Sans`; `Acme Sans` → `Acme Sans`.
  */
-function collectFontFaceUrls(
+function unquoteFamily(value: string): string {
+  const trimmed = value.trim()
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim()
+  }
+  return trimmed
+}
+
+/**
+ * Map an `@font-face` `font-weight` + `font-style` descriptor pair to a
+ * canonical variant tag ("400", "700italic", …).
+ *
+ * `font-weight` may be a keyword (`normal`/`bold`), a number, or a variable-font
+ * range (`100 900`) — we take the first numeric token, defaulting to 400.
+ * `font-style` counts as italic when it's `italic` or `oblique`.
+ */
+function fontFaceVariant(decl: CSSStyleDeclaration): string {
+  const weightRaw = (decl.getPropertyValue('font-weight') || '').trim().toLowerCase()
+  const styleRaw = (decl.getPropertyValue('font-style') || '').trim().toLowerCase()
+
+  let weight = 400
+  if (weightRaw === 'bold') weight = 700
+  else if (weightRaw === 'normal' || weightRaw === '') weight = 400
+  else {
+    const firstNumber = weightRaw.match(/\d{2,3}/)
+    if (firstNumber) weight = Number(firstNumber[0])
+  }
+
+  const italic = styleRaw.startsWith('italic') || styleRaw.startsWith('oblique')
+  return formatVariant({ weight, italic })
+}
+
+/**
+ * Capture one `@font-face` block:
+ *   - record every `src: url(...)` payload as an assetRef so the binaries
+ *     upload to the media library (synthetic ruleIndex, same as before), and
+ *   - push a `ParsedFontFace` (family + variant + raw urls + unicode-range)
+ *     so `applyImport` can assemble a custom FontEntry once URLs are rewritten.
+ *
+ * A face with no `font-family` or no `url()` src (e.g. `local(...)`-only) is
+ * skipped — there's nothing self-hostable to import.
+ */
+function collectFontFace(
   rule: CSSFontFaceRule,
   assetRefs: AssetRef[],
   syntheticRuleIndex: number,
+  fontFaces: ParsedFontFace[],
 ): void {
-  // @font-face only carries `src: url(...) format(...), url(...) format(...);`
-  // for our purposes. Read the property and pull every url() payload out.
   const decl = rule.style
   if (!decl) return
   const srcValue = decl.getPropertyValue('src')
   if (!srcValue) return
+
+  // Upload every referenced binary (existing behavior) so even an unmodellable
+  // face leaves its files in the media library.
   collectAssetRefsFromDecls(
     { src: srcValue } as unknown as Record<string, string>,
     syntheticRuleIndex,
     undefined,
     assetRefs,
   )
+
+  const family = unquoteFamily(decl.getPropertyValue('font-family') || '')
+  const srcUrls = extractUrlPayloads(srcValue)
+  if (!family || srcUrls.length === 0) return
+
+  const unicodeRange = (decl.getPropertyValue('unicode-range') || '').trim()
+  fontFaces.push({
+    family,
+    variant: fontFaceVariant(decl),
+    srcUrls,
+    ...(unicodeRange ? { unicodeRange } : {}),
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -535,7 +613,7 @@ function processBaseStyleRule(
     selector,
     order: idx,
     styles: decls,
-    breakpointStyles: {},
+    contextStyles: {},
   })
   selectorToLastIndex.set(selector, idx)
   collectAssetRefsFromDecls(decls, idx, undefined, assetRefs)
@@ -550,6 +628,7 @@ function processMediaRule(
   rules: NewStyleRule[],
   warnings: ImportWarning[],
   assetRefs: AssetRef[],
+  conditionsById: Map<string, ConditionDef>,
   breakpoints: BreakpointHint[],
   mediaTolerance: number,
   selectorToLastIndex: Map<string, number>,
@@ -564,19 +643,20 @@ function processMediaRule(
   const matched = matchBreakpoint(conditionText, breakpoints, mediaTolerance)
 
   if (matched !== null) {
-    // Matched breakpoint: merge inner rules into breakpointStyles[matched.id]
+    // Matched breakpoint: merge inner rules into contextStyles[matched.id].
     processConditionInner(
       mediaRule,
       rules,
       warnings,
       assetRefs,
+      conditionsById,
       selectorToLastIndex,
       seenClassSelectors,
       { kind: 'breakpoint', breakpointId: matched.id },
     )
   } else {
-    // Unmatched @media: store the inner declarations as a faithful conditional
-    // layer keyed on the verbatim media query — NOT folded into base styles
+    // Unmatched @media: store the inner declarations as a faithful per-context
+    // override keyed on the verbatim media query — NOT folded into base styles
     // (which was lossy: it dropped the condition and let the override leak to
     // all viewports). The query round-trips and re-emits as `@media <query>`.
     processConditionInner(
@@ -584,6 +664,7 @@ function processMediaRule(
       rules,
       warnings,
       assetRefs,
+      conditionsById,
       selectorToLastIndex,
       seenClassSelectors,
       { kind: 'media', query: conditionText },
@@ -593,36 +674,20 @@ function processMediaRule(
 
 /**
  * Process the inner CSSStyleRules of a conditional @-block (@media /
- * @container / @supports), writing each inner rule's declarations to the
- * target condition on the matching StyleRule.
- *
- * Target:
- *   - `{ kind: 'breakpoint', breakpointId }` → `breakpointStyles[id]`
- *      (the first-class width-breakpoint model).
- *   - any other condition → a `conditionalLayers` entry keyed by the condition.
+ * @container / @supports), writing each inner rule's declarations to one
+ * editing context on the matching StyleRule. Both kinds land in the unified
+ * `contextStyles` map:
+ *   - `{ kind: 'breakpoint', breakpointId }` → `contextStyles[breakpointId]`.
+ *   - any custom condition → `contextStyles[conditionId(condition)]`, and the
+ *     condition is registered in `conditionsById` (the reusable registry).
  */
 type ConditionTarget =
   | { kind: 'breakpoint'; breakpointId: string }
-  | StyleConditionForImport
+  | Condition
 
-/**
- * Subset of StyleCondition the importer produces. Mirrors the page-tree
- * StyleCondition union but kept local so the headless siteImport module
- * doesn't depend on its exact import path beyond the type. (NewStyleRule
- * already carries the full conditionalLayers shape via Omit<StyleRule, …>.)
- */
-type StyleConditionForImport =
-  | { kind: 'media'; query: string }
-  | { kind: 'container'; query: string; name?: string }
-  | { kind: 'supports'; query: string }
-
-function conditionLayerId(target: ConditionTarget): string {
-  switch (target.kind) {
-    case 'breakpoint': return `bp:${target.breakpointId}`
-    case 'media': return `media:${target.query}`
-    case 'container': return `container:${target.name ?? ''}:${target.query}`
-    case 'supports': return `supports:${target.query}`
-  }
+/** Resolve the `contextStyles` key for a target. */
+function targetContextId(target: ConditionTarget): string {
+  return target.kind === 'breakpoint' ? target.breakpointId : conditionId(target)
 }
 
 function processConditionInner(
@@ -630,10 +695,17 @@ function processConditionInner(
   rules: NewStyleRule[],
   warnings: ImportWarning[],
   assetRefs: AssetRef[],
+  conditionsById: Map<string, ConditionDef>,
   selectorToLastIndex: Map<string, number>,
   seenClassSelectors: Set<string>,
   target: ConditionTarget,
 ): void {
+  const contextId = targetContextId(target)
+  // Register the reusable condition definition for custom conditions.
+  if (target.kind !== 'breakpoint' && !conditionsById.has(contextId)) {
+    conditionsById.set(contextId, makeConditionDef(target))
+  }
+
   for (let i = 0; i < block.cssRules.length; i++) {
     const inner = block.cssRules[i]
     // Only process style rules inside the @-block (skip nested @-rules)
@@ -656,36 +728,14 @@ function processConditionInner(
         selector,
         order: idx,
         styles: {},
-        breakpointStyles: {},
+        contextStyles: {},
       })
       selectorToLastIndex.set(selector, idx)
       if (classified.kind === 'class') seenClassSelectors.add(selector)
     }
 
-    if (target.kind === 'breakpoint') {
-      const bpId = target.breakpointId
-      const existing = (rules[idx].breakpointStyles[bpId] ?? {}) as Record<string, unknown>
-      rules[idx].breakpointStyles[bpId] = { ...existing, ...decls }
-      collectAssetRefsFromDecls(decls, idx, bpId, assetRefs)
-    } else {
-      // Conditional layer: find-or-create the layer with this condition id,
-      // then merge declarations. assetRefs use the base ruleIndex (the
-      // normaliser uploads the file regardless of which layer references it).
-      const rule = rules[idx]
-      if (!rule.conditionalLayers) rule.conditionalLayers = []
-      const layerId = conditionLayerId(target)
-      let layer = rule.conditionalLayers.find((l) => l.id === layerId)
-      if (!layer) {
-        layer = {
-          id: layerId,
-          condition: target,
-          styles: {},
-          order: rule.conditionalLayers.length,
-        }
-        rule.conditionalLayers.push(layer)
-      }
-      Object.assign(layer.styles as Record<string, unknown>, decls)
-      collectAssetRefsFromDecls(decls, idx, undefined, assetRefs, layer.id)
-    }
+    const existing = (rules[idx].contextStyles[contextId] ?? {}) as Record<string, unknown>
+    rules[idx].contextStyles[contextId] = { ...existing, ...decls }
+    collectAssetRefsFromDecls(decls, idx, contextId, assetRefs)
   }
 }

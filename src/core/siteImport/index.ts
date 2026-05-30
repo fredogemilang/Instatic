@@ -69,6 +69,10 @@ export type {
   RuleConflict,
   ImportPlan,
   ImportResult,
+  // @font-face import
+  ParsedFontFace,
+  ImportFontFile,
+  ImportFontFamily,
 } from './types'
 
 // ── Error classes (callers need instanceof checks) ────────────────────────────
