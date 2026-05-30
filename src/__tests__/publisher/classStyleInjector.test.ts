@@ -58,11 +58,25 @@ describe('bagToCSS', () => {
     expect(css).toContain('border-top-left-radius: 4px;')
   })
 
-  it('drops properties NOT in the allowlist', () => {
-    // Synthetic key — the invariant we're asserting (unallowlisted props are
-    // dropped) must hold regardless of which CSS properties are currently
-    // in ALLOWED_PROPS, so the test doesn't drift each time the set expands.
-    const css = bagToCSS({ definitelyNotAllowed: '"hack"' } as never)
+  it('emits an uncurated but valid CSS property (permissive model)', () => {
+    // Phase 1a: the publisher no longer gates on a curated allowlist — any
+    // valid CSS property name is emittable, with the value sanitiser as the
+    // security boundary. `flex-grow` was never allowlisted; it must emit now.
+    const css = bagToCSS({ flexGrow: '2' } as never)
+    expect(css).toContain('flex-grow: 2;')
+  })
+
+  it('drops a security-denied property name (behavior)', () => {
+    // The tiny denylist (behavior / -moz-binding) is the only name-level
+    // block remaining. Its value would also be caught by the value sanitiser,
+    // but the name gate drops it outright regardless.
+    const css = bagToCSS({ behavior: "url('xss.htc')" } as never)
+    expect(css).toBe('')
+  })
+
+  it('drops a syntactically invalid property name', () => {
+    // Not a valid CSS identifier → never emitted.
+    const css = bagToCSS({ 'has spaces': 'x', '1leading-digit': 'y' } as never)
     expect(css).toBe('')
   })
 
@@ -264,6 +278,46 @@ describe('bagToCSS', () => {
 // generateClassCSS
 // ---------------------------------------------------------------------------
 
+describe('generateClassCSS — conditional layers (Part 2a)', () => {
+  it('emits @media / @container / @supports layers, then width-breakpoint @media', () => {
+    const rule = {
+      ...makeClass('foo', { color: 'red' }, { mobile: { color: 'green' } }),
+      conditionalLayers: [
+        { id: 'm1', condition: { kind: 'media' as const, query: '(orientation: landscape)' }, styles: { color: 'blue' }, order: 0 },
+        { id: 'c1', condition: { kind: 'container' as const, name: 'sidebar', query: 'min-width: 400px' }, styles: { display: 'grid' }, order: 1 },
+        { id: 's1', condition: { kind: 'supports' as const, query: '(display: grid)' }, styles: { gap: '8px' }, order: 2 },
+      ],
+    }
+    const css = generateClassCSS({ foo: rule }, [{ id: 'mobile', width: 375 }])
+
+    expect(css).toContain('@media (orientation: landscape) {')
+    expect(css).toContain('@container sidebar (min-width: 400px) {')
+    expect(css).toContain('@supports (display: grid) {')
+    expect(css).toContain('@media (max-width: 375px) {')
+
+    // Cascade order: base → conditional layers → breakpoint @media.
+    const base = css.indexOf('.foo {')
+    const landscape = css.indexOf('@media (orientation: landscape)')
+    const container = css.indexOf('@container')
+    const breakpoint = css.indexOf('@media (max-width: 375px)')
+    expect(base).toBeLessThan(landscape)
+    expect(landscape).toBeLessThan(container)
+    expect(container).toBeLessThan(breakpoint)
+  })
+
+  it('does not double-wrap a supports query that already has parens', () => {
+    const rule = {
+      ...makeClass('foo', {}),
+      conditionalLayers: [
+        { id: 's1', condition: { kind: 'supports' as const, query: '(display: grid)' }, styles: { gap: '8px' }, order: 0 },
+      ],
+    }
+    const css = generateClassCSS({ foo: rule }, [])
+    expect(css).toContain('@supports (display: grid) {')
+    expect(css).not.toContain('((display: grid))')
+  })
+})
+
 describe('generateClassCSS', () => {
   it('generates a rule from the user-facing class name', () => {
     const classes = { abc: makeClass('abc', { color: '#fff', fontSize: '16px' }) }
@@ -355,12 +409,13 @@ describe('generateClassCSS', () => {
     expect(css).toBe('')
   })
 
-  it('does not include allowlist-blocked properties in output', () => {
-    // Synthetic key — same rationale as the bagToCSS allowlist test above.
-    const classes = { bad: makeClass('bad', { definitelyNotAllowed: '"injected"' } as never) }
+  it('does not include security-denied property names in output', () => {
+    // Permissive model: only the security denylist (behavior / -moz-binding)
+    // is name-blocked at the publisher. A denied prop must never appear.
+    const classes = { bad: makeClass('bad', { behavior: "url('xss.htc')" } as never) }
     const css = generateClassCSS(classes, BREAKPOINTS)
-    expect(css).not.toContain('definitely-not-allowed')
-    expect(css).not.toContain('injected')
+    expect(css).not.toContain('behavior')
+    expect(css).not.toContain('xss.htc')
   })
 
   it('sanitises javascript: values in class styles', () => {

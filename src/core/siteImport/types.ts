@@ -35,8 +35,13 @@ export type NewStyleRule = Omit<StyleRule, 'id' | 'createdAt' | 'updatedAt'>
  *   folded into the base styles so nothing is silently lost.
  * - `invalid-rule`: a rule that the CSS engine rejected (typically a sheet-
  *   level parse error that causes `replaceSync` to throw).
- * - `unknown-property`: a CSS declaration whose camelCase key is not in the
- *   publisher's ALLOWED_PROPS set. The declaration is dropped from the rule.
+ * - `unknown-property`: legacy — retained for back-compat with any persisted
+ *   warnings. The Phase 1a permissive property model no longer emits this; a
+ *   declaration is only dropped when its NAME is denied (see
+ *   `blocked-property`), not when it's merely uncurated.
+ * - `blocked-property`: a CSS declaration whose property name is on the
+ *   security denylist (`behavior`, `-moz-binding`, …). Rare. The declaration
+ *   is dropped from the rule.
  * - `asset-reference`: informational — a `url(...)` payload was found in a
  *   declaration value. Assets are collected in `assetRefs` (not warnings) by
  *   the Phase 1 parser; this kind is reserved for Phase 2's use.
@@ -48,15 +53,23 @@ export type NewStyleRule = Omit<StyleRule, 'id' | 'createdAt' | 'updatedAt'>
  * - `missing-stylesheet`: a `<link rel="stylesheet">` href referenced in an
  *   HTML file was not found in the FileMap. The page is still imported; the
  *   missing CSS is noted but not fatal.
+ * - `asset-upload-failed`: an individual asset upload was rejected by the
+ *   media library (e.g. unsupported MIME, oversized file, server error).
+ *   The remaining assets continue to upload; the failed file is left
+ *   referenced in the source HTML/CSS by its original FileMap path so the
+ *   import doesn't degrade pages or rules. Surface the warning in the
+ *   wizard's Done step so the user can re-upload manually.
  */
 export type ImportWarningKind =
   | 'dropped-at-rule'
   | 'unmatched-media-query'
   | 'invalid-rule'
   | 'unknown-property'
+  | 'blocked-property'
   | 'asset-reference'
   | 'duplicate-class'
   | 'missing-stylesheet'
+  | 'asset-upload-failed'
 
 export interface ImportWarning {
   kind: ImportWarningKind

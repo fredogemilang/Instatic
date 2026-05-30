@@ -40,6 +40,46 @@ import {
 import { escapeCssIdentifier as escapeCssIdent } from './cssIdentifier'
 
 // ---------------------------------------------------------------------------
+// Conditional style layers — arbitrary @media / @container / @supports
+// ---------------------------------------------------------------------------
+
+/**
+ * The condition a conditional style layer applies under. Discriminated by
+ * `kind`:
+ *   - `breakpoint`: references a site width breakpoint by id (publisher emits
+ *     `@media (max-width: N)`). NOTE: today's breakpoint variation lives in
+ *     `breakpointStyles`, not here — this kind exists so a future migration
+ *     could unify them without a schema change.
+ *   - `media`:     any media query, stored verbatim (`(max-width: 860px)`,
+ *                  `(orientation: landscape)`, `print`). Emits `@media <query>`.
+ *   - `container`: a container query with an optional container name.
+ *                  Emits `@container [name] (<query>)`.
+ *   - `supports`:  a feature query. Emits `@supports (<query>)`.
+ */
+export const StyleConditionSchema = Type.Union([
+  Type.Object({ kind: Type.Literal('breakpoint'), breakpointId: Type.String() }),
+  Type.Object({ kind: Type.Literal('media'), query: Type.String() }),
+  Type.Object({
+    kind: Type.Literal('container'),
+    query: Type.String(),
+    name: Type.Optional(Type.String()),
+  }),
+  Type.Object({ kind: Type.Literal('supports'), query: Type.String() }),
+])
+export type StyleCondition = Static<typeof StyleConditionSchema>
+
+export const ConditionalStyleLayerSchema = Type.Object({
+  /** Stable id — keys the editor tab and survives diffing / reordering. */
+  id: Type.String(),
+  condition: StyleConditionSchema,
+  /** Declarations for this condition — same persistence shape as `styles`. */
+  styles: withFallback(Type.Record(Type.String(), Type.Unknown()), {} as Record<string, unknown>),
+  /** Cascade position among a rule's conditional layers (ascending). */
+  order: withFallback(Type.Number(), 0),
+})
+export type ConditionalStyleLayer = Static<typeof ConditionalStyleLayerSchema>
+
+// ---------------------------------------------------------------------------
 // StyleRuleSchema
 // ---------------------------------------------------------------------------
 
@@ -97,6 +137,19 @@ export const StyleRuleSchema = Type.Object({
     Type.Record(Type.String(), Type.Record(Type.String(), Type.Unknown())),
     {} as Record<string, Record<string, unknown>>,
   ),
+  /**
+   * Arbitrary conditional style layers (CSS fidelity plan — Part 2a).
+   *
+   * `breakpointStyles` above is the first-class WIDTH-breakpoint model (driven
+   * by the responsive toolbar). `conditionalLayers` is the escape hatch for
+   * everything else: a custom `@media` query that doesn't match a breakpoint,
+   * a `@container` query, or an `@supports` condition. Each layer wraps a bag
+   * of declarations under one condition; the publisher emits
+   * `@<kind> <query> { <selector> { … } }`.
+   *
+   * Optional + tolerant: legacy shells without it parse to `[]`.
+   */
+  conditionalLayers: Type.Optional(Type.Array(ConditionalStyleLayerSchema)),
   /** Optional search/filter tags. Invalid items silently dropped — handled in parseStyleRule. */
   tags: Type.Optional(Type.Array(Type.String())),
   /** Metadata for framework-generated classes. Undefined if invalid — handled in parseStyleRule. */
@@ -118,6 +171,53 @@ export function classKindSelector(name: string): string {
 // ---------------------------------------------------------------------------
 // Tolerant parsing
 // ---------------------------------------------------------------------------
+
+/**
+ * Parse a single conditional style layer, dropping it (return null) when the
+ * shape is unusable (missing id or an unrecognised condition). Tolerant of a
+ * missing `styles` / `order` (filled with defaults).
+ */
+function parseConditionalLayer(raw: unknown): ConditionalStyleLayer | null {
+  const r = asPlainObject(raw)
+  if (!r) return null
+  if (typeof r.id !== 'string') return null
+
+  const c = asPlainObject(r.condition)
+  if (!c) return null
+  let condition: StyleCondition | null = null
+  if (c.kind === 'breakpoint' && typeof c.breakpointId === 'string') {
+    condition = { kind: 'breakpoint', breakpointId: c.breakpointId }
+  } else if (c.kind === 'media' && typeof c.query === 'string') {
+    condition = { kind: 'media', query: c.query }
+  } else if (c.kind === 'container' && typeof c.query === 'string') {
+    condition = {
+      kind: 'container',
+      query: c.query,
+      ...(typeof c.name === 'string' ? { name: c.name } : {}),
+    }
+  } else if (c.kind === 'supports' && typeof c.query === 'string') {
+    condition = { kind: 'supports', query: c.query }
+  }
+  if (!condition) return null
+
+  return {
+    id: r.id,
+    condition,
+    styles: parseStylesBag(r.styles),
+    order: typeof r.order === 'number' && Number.isFinite(r.order) ? r.order : 0,
+  }
+}
+
+/** Parse the optional conditionalLayers array, dropping invalid entries. */
+function parseConditionalLayers(raw: unknown): ConditionalStyleLayer[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const layers: ConditionalStyleLayer[] = []
+  for (const entry of raw) {
+    const parsed = parseConditionalLayer(entry)
+    if (parsed) layers.push(parsed)
+  }
+  return layers.length > 0 ? layers : undefined
+}
 
 /** Parse a StyleRule scope (currently only `{ type: 'node', nodeId, role: 'module-style' }`). */
 function parseStyleRuleScope(raw: unknown): StyleRule['scope'] {
@@ -145,6 +245,7 @@ export function parseStyleRule(raw: unknown): StyleRule | null {
 
   const scope = parseStyleRuleScope(r.scope)
   const tags = parseStringArrayField(r.tags)
+  const conditionalLayers = parseConditionalLayers(r.conditionalLayers)
   const generated = Value.Check(GeneratedClassMetadataSchema, r.generated)
     ? (r.generated as StyleRule['generated'])
     : undefined
@@ -166,6 +267,7 @@ export function parseStyleRule(raw: unknown): StyleRule | null {
     ...(scope !== undefined ? { scope } : {}),
     styles: parseStylesBag(r.styles),
     breakpointStyles: parseBreakpointStylesBag(r.breakpointStyles),
+    ...(conditionalLayers !== undefined ? { conditionalLayers } : {}),
     ...(tags !== undefined ? { tags } : {}),
     ...(generated !== undefined ? { generated } : {}),
     createdAt: parseTimestamp(r.createdAt),

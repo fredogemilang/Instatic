@@ -133,38 +133,35 @@ describe('cssToStyleRules — @media → breakpointStyles (matched)', () => {
 // @media policy — unmatched (no breakpoint match)
 // ---------------------------------------------------------------------------
 
-describe('cssToStyleRules — @media unmatched → fold into base + warning', () => {
-  it('unmatched @media folds inner declarations into base styles + emits warning', () => {
+describe('cssToStyleRules — unmatched @media → faithful conditional layer', () => {
+  it('unmatched @media stores a conditional layer, no warning, base untouched', () => {
     const css = '.foo { color: red }\n@media (max-width: 768px) { .foo { color: blue } }'
     const { rules, warnings } = cssToStyleRules(css, {
       breakpoints: [{ id: 'desktop', width: 1200 }],
     })
     expect(rules).toHaveLength(1)
-    // Base color='red' is preserved (base-takes-precedence on fold)
+    // Base stays exactly as authored — the @media override no longer leaks in.
     expect(rules[0].styles).toMatchObject({ color: 'red' })
-    // Warning is emitted
-    expect(warnings).toHaveLength(1)
-    expect(warnings[0].kind).toBe('unmatched-media-query')
-    expect(warnings[0].message).toContain('max-width')
+    expect(rules[0].styles).not.toHaveProperty('__media')
+    // The override lives in a conditional layer keyed on the verbatim query.
+    expect(rules[0].conditionalLayers).toHaveLength(1)
+    const layer = rules[0].conditionalLayers![0]
+    expect(layer.condition).toMatchObject({ kind: 'media', query: '(max-width: 768px)' })
+    expect(layer.styles).toMatchObject({ color: 'blue' })
+    // No lossy "unmatched-media-query" warning anymore.
+    expect(warnings.filter((w) => w.kind === 'unmatched-media-query')).toHaveLength(0)
   })
 
-  it('unmatched @media adds NEW properties into base styles', () => {
-    // The @media has a property not in the base — it should be added
-    const css = '.foo { color: red }\n@media (max-width: 768px) { .foo { font-size: 14px } }'
-    const { rules } = cssToStyleRules(css, {
-      breakpoints: [{ id: 'desktop', width: 1200 }],
-    })
-    expect(rules[0].styles).toMatchObject({ color: 'red', fontSize: '14px' })
-  })
-
-  it('unmatched @media with no breakpoints emits warning', () => {
-    const css = '@media (max-width: 768px) { .foo { color: red } }'
+  it('a non-width media feature (orientation) round-trips as a media layer', () => {
+    const css = '@media (orientation: landscape) { .foo { color: red } }'
     const { rules, warnings } = cssToStyleRules(css, { breakpoints: [] })
-    expect(warnings).toHaveLength(1)
-    expect(warnings[0].kind).toBe('unmatched-media-query')
-    // The rule is still created with the folded base style
     expect(rules).toHaveLength(1)
-    expect(rules[0].styles).toMatchObject({ color: 'red' })
+    expect(rules[0].styles).toEqual({}) // nothing folded into base
+    expect(rules[0].conditionalLayers![0].condition).toMatchObject({
+      kind: 'media',
+      query: '(orientation: landscape)',
+    })
+    expect(warnings.filter((w) => w.kind === 'unmatched-media-query')).toHaveLength(0)
   })
 })
 
@@ -182,15 +179,19 @@ describe('cssToStyleRules — dropped @-rules', () => {
     expect(warnings[0].kind).toBe('dropped-at-rule')
   })
 
-  it('@font-face → no rule, 1 dropped-at-rule warning (url inside is NOT in assetRefs)', () => {
+  it('@font-face → no rule, dropped-at-rule warning, but font url IS captured as assetRef', () => {
     const { rules, warnings, assetRefs } = cssToStyleRules(
       "@font-face { font-family: 'Foo'; src: url('foo.woff') }",
     )
     expect(rules).toHaveLength(0)
     expect(warnings).toHaveLength(1)
     expect(warnings[0].kind).toBe('dropped-at-rule')
-    // url() inside a dropped @font-face must NOT appear in assetRefs
-    expect(assetRefs).toHaveLength(0)
+    // The @font-face rule itself can't be modelled as a StyleRule, but we
+    // still want the font binary uploaded so the user keeps the asset and
+    // can re-wire it manually. The assetRef carries the file path; the
+    // asset planner picks it up via the orphan-ref branch in normalizeRules.
+    expect(assetRefs).toHaveLength(1)
+    expect(assetRefs[0].rawUrl).toBe('foo.woff')
   })
 
   it('@import → no rule, 1 dropped-at-rule warning (when surfaced by the engine)', () => {
@@ -203,13 +204,16 @@ describe('cssToStyleRules — dropped @-rules', () => {
     expect(rules).toHaveLength(0)
   })
 
-  it('@supports → no rule, 1 dropped-at-rule warning', () => {
+  it('@supports → conditional layer (no longer a dropped at-rule)', () => {
     const { rules, warnings } = cssToStyleRules(
       '@supports (display: grid) { .foo { display: grid } }',
     )
-    expect(rules).toHaveLength(0)
-    expect(warnings).toHaveLength(1)
-    expect(warnings[0].kind).toBe('dropped-at-rule')
+    expect(rules).toHaveLength(1)
+    // The verbatim conditionText may or may not include surrounding parens
+    // depending on the CSS engine; the publisher normalises at emit time.
+    expect(rules[0].conditionalLayers![0].condition.kind).toBe('supports')
+    expect(rules[0].conditionalLayers![0].styles).toMatchObject({ display: 'grid' })
+    expect(warnings.filter((w) => w.kind === 'dropped-at-rule')).toHaveLength(0)
   })
 })
 
@@ -217,18 +221,34 @@ describe('cssToStyleRules — dropped @-rules', () => {
 // Property allowlist filtering
 // ---------------------------------------------------------------------------
 
-describe('cssToStyleRules — property allowlist', () => {
-  it('unknown properties are dropped with an unknown-property warning', () => {
-    const { rules, warnings } = cssToStyleRules('.foo { color: red; some-unknown-prop: 1 }')
+describe('cssToStyleRules — permissive property model (Phase 1a)', () => {
+  it('an uncurated but valid CSS property is KEPT, no warning', () => {
+    // `flex-grow` was never in the old allowlist; under the permissive model
+    // any valid CSS identifier round-trips with no unknown/blocked warning.
+    const { rules, warnings } = cssToStyleRules('.foo { color: red; flex-grow: 2 }')
     expect(rules).toHaveLength(1)
-    // Only known property survives
-    expect(Object.keys(rules[0].styles)).toEqual(['color'])
+    expect(rules[0].styles).toMatchObject({ color: 'red', flexGrow: '2' })
+    expect(warnings.filter((w) => w.kind === 'unknown-property' || w.kind === 'blocked-property')).toHaveLength(0)
+  })
+
+  it('a CSS custom property (--var) round-trips', () => {
+    const { rules, warnings } = cssToStyleRules('.foo { --brand: #2563eb }')
+    expect(rules[0].styles).toHaveProperty('--brand')
+    expect(warnings.filter((w) => w.kind === 'blocked-property')).toHaveLength(0)
+  })
+
+  it('a denied property (behavior) is dropped with a blocked-property warning', () => {
+    // The CSS engine may or may not surface `behavior` (it is non-standard).
+    // When it does, it must be dropped via the security denylist, never kept.
+    const { rules, warnings } = cssToStyleRules(
+      ".foo { color: red; behavior: url('xss.htc') }",
+    )
+    expect(rules[0].styles).not.toHaveProperty('behavior')
     expect(rules[0].styles).toMatchObject({ color: 'red' })
-    // One warning for the unknown prop
-    expect(warnings).toHaveLength(1)
-    expect(warnings[0].kind).toBe('unknown-property')
-    expect(warnings[0].property).toContain('some')
-    expect(warnings[0].selector).toBe('.foo')
+    // If the engine surfaced `behavior`, exactly one blocked-property warning fired.
+    const blocked = warnings.filter((w) => w.kind === 'blocked-property')
+    expect(blocked.length).toBeLessThanOrEqual(1)
+    for (const w of blocked) expect(w.property).toBe('behavior')
   })
 })
 
@@ -445,11 +465,15 @@ describe('cssToStyleRules — integration', () => {
     expect(ruleNames.has('title')).toBe(true)
   })
 
-  it('rule with only unknown properties → 1 rule with empty styles + warnings', () => {
+  it('uncurated but valid properties are KEPT under the permissive model', () => {
+    // `totally-made-up` / `also-fake` are valid CSS identifiers — the
+    // permissive model keeps them verbatim and emits no warning. (Whether the
+    // browser's CSS engine surfaces an unknown property in cssText is engine-
+    // dependent; we assert no spurious unknown/blocked warning, and that any
+    // surfaced property round-trips camelCased.)
     const { rules, warnings } = cssToStyleRules('.foo { totally-made-up: 1; also-fake: 2 }')
     expect(rules).toHaveLength(1)
-    expect(Object.keys(rules[0].styles)).toHaveLength(0)
-    expect(warnings.filter((w) => w.kind === 'unknown-property')).toHaveLength(2)
+    expect(warnings.filter((w) => w.kind === 'unknown-property' || w.kind === 'blocked-property')).toHaveLength(0)
   })
 })
 
@@ -549,41 +573,79 @@ describe('cssToStyleRules — ALLOWED_PROPS expansion: textWrapStyle', () => {
   })
 })
 
+describe('cssToStyleRules — ALLOWED_PROPS expansion: border longhands', () => {
+  it('`border: 1px solid #ccc` shorthand → browser unrolls to per-side longhands, none dropped', () => {
+    // The browser CSS engine unrolls the `border` shorthand into the 12
+    // per-side longhands (border-{side}-{width|style|color}). All 12 are now
+    // allowlisted, so the importer must not emit any unknown-property warning
+    // and the per-side keys must survive into the rule's styles.
+    const { rules, warnings } = cssToStyleRules('.foo { border: 1px solid #ccc }')
+    const borderUnknowns = warnings.filter(
+      (w) => w.kind === 'unknown-property' && /^border/.test(w.property ?? ''),
+    )
+    expect(borderUnknowns).toHaveLength(0)
+    expect(rules).toHaveLength(1)
+    // At minimum the width + style + color of the top side survive.
+    expect(rules[0].styles).toHaveProperty('borderTopWidth')
+    expect(rules[0].styles).toHaveProperty('borderTopStyle')
+    expect(rules[0].styles).toHaveProperty('borderTopColor')
+  })
+
+  it('explicit per-side longhand → key present, no warning', () => {
+    const { rules, warnings } = cssToStyleRules('.foo { border-bottom-width: 2px }')
+    expect(
+      warnings.filter((w) => w.kind === 'unknown-property' && w.property === 'borderBottomWidth'),
+    ).toHaveLength(0)
+    expect(rules[0].styles).toHaveProperty('borderBottomWidth')
+  })
+})
+
+describe('cssToStyleRules — ALLOWED_PROPS expansion: appearance', () => {
+  it('appearance: none → no unknown-property warning, key present', () => {
+    const { rules, warnings } = cssToStyleRules('.foo { appearance: none }')
+    expect(
+      warnings.filter((w) => w.kind === 'unknown-property' && w.property === 'appearance'),
+    ).toHaveLength(0)
+    expect(rules[0].styles).toHaveProperty('appearance')
+  })
+})
+
 // ---------------------------------------------------------------------------
 // @media deduplication — unmatched-media-query warning fires once per unique
 // condition text, not once per @media block occurrence.
 // ---------------------------------------------------------------------------
 
-describe('cssToStyleRules — unmatched-media-query warning deduplication', () => {
-  it('5 @media blocks with the same condition → exactly 1 unmatched-media-query warning', () => {
-    // Tailwind v4 emits one @media block per utility class, so a single
-    // breakpoint condition can appear dozens of times in the output.
+describe('cssToStyleRules — custom @media as conditional layers (no warnings)', () => {
+  it('5 @media blocks with the same condition → one shared media layer per selector, no warnings', () => {
+    // Tailwind v4 emits one @media block per utility class. Each becomes a
+    // conditional layer on its own selector's rule, all keyed on the same
+    // verbatim query. No "unmatched-media-query" warning flood anymore.
     const css = [
       '@media (max-width: 860px) { .a { color: red } }',
       '@media (max-width: 860px) { .b { color: blue } }',
       '@media (max-width: 860px) { .c { font-size: 14px } }',
-      '@media (max-width: 860px) { .d { margin-top: 0px } }',
-      '@media (max-width: 860px) { .e { padding-top: 0px } }',
     ].join('\n')
-    const { warnings } = cssToStyleRules(css, { breakpoints: [] })
-    const unmatchedWarnings = warnings.filter((w) => w.kind === 'unmatched-media-query')
-    expect(unmatchedWarnings).toHaveLength(1)
-    expect(unmatchedWarnings[0].message).toContain('max-width')
+    const { rules, warnings } = cssToStyleRules(css, { breakpoints: [] })
+    expect(warnings.filter((w) => w.kind === 'unmatched-media-query')).toHaveLength(0)
+    // One rule per selector, each with a single media conditional layer.
+    expect(rules).toHaveLength(3)
+    for (const r of rules) {
+      expect(r.conditionalLayers).toHaveLength(1)
+      expect(r.conditionalLayers![0].condition).toMatchObject({
+        kind: 'media',
+        query: '(max-width: 860px)',
+      })
+    }
   })
 
-  it('two different unmatched conditions → 2 unmatched-media-query warnings', () => {
+  it('the same selector under the same query merges into one layer', () => {
     const css = [
       '@media (max-width: 860px) { .a { color: red } }',
-      '@media (max-width: 480px) { .b { color: blue } }',
+      '@media (max-width: 860px) { .a { font-size: 14px } }',
     ].join('\n')
-    const { warnings } = cssToStyleRules(css, { breakpoints: [] })
-    const unmatchedWarnings = warnings.filter((w) => w.kind === 'unmatched-media-query')
-    expect(unmatchedWarnings).toHaveLength(2)
-  })
-
-  it('deduplication does not suppress unknown-property warnings (regression)', () => {
-    const { warnings } = cssToStyleRules('.foo { not-a-real-property: 1 }')
-    expect(warnings.filter((w) => w.kind === 'unknown-property')).toHaveLength(1)
-    expect(warnings[0].property).toContain('notA')
+    const { rules } = cssToStyleRules(css, { breakpoints: [] })
+    const a = rules.find((r) => r.selector === '.a')!
+    expect(a.conditionalLayers).toHaveLength(1)
+    expect(a.conditionalLayers![0].styles).toMatchObject({ color: 'red', fontSize: '14px' })
   })
 })

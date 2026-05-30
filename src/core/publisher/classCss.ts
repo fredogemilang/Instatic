@@ -1,4 +1,4 @@
-import type { StyleRule } from '@core/page-tree'
+import type { StyleRule, StyleCondition } from '@core/page-tree'
 import { styleRuleSelector } from '@core/page-tree/classNames'
 import { sanitiseCssValue } from './utils'
 
@@ -11,41 +11,53 @@ function toKebab(camel: string): string {
 }
 
 /**
- * Allowlist of camelCase CSS property names that the publisher supports.
- * Exported so the CSS importer can filter imported declarations to the same set.
+ * Permissive property model (Phase 1a — CSS fidelity plan).
+ *
+ * The publisher used to gate emitted declarations against a hand-maintained
+ * allowlist of ~110 camelCase property names. That was whack-a-mole: every
+ * real-site import surfaced another batch of dropped-but-perfectly-valid
+ * properties (`flex-grow`, `grid-auto-flow`, `list-style-type`, …).
+ *
+ * The allowlist was never the security boundary — `sanitiseCssValue` is. It
+ * blocks the actual injection vectors at the *value* level (`expression()`,
+ * `javascript:`, `behavior:`, `-moz-binding`, `data:text`, `{`/`}`, `</`). A
+ * property *name* cannot break out of a declaration or inject script. So the
+ * name gate is now permissive: any syntactically-valid CSS property name is
+ * emittable, except a tiny denylist of genuinely dead / dangerous names.
+ *
+ * `--custom-properties` and vendor-prefixed names (`-webkit-…`) pass too.
+ *
+ * @see docs/plans/2026-05-30-css-fidelity-and-at-rules.md (Part 1)
  */
-export const ALLOWED_PROPS = new Set<string>([
-  'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing',
-  'lineHeight', 'textAlign', 'textDecoration', 'textTransform', 'color', 'textShadow',
-  'display', 'flexDirection', 'flexWrap', 'alignItems', 'justifyContent',
-  'justifyItems', 'alignSelf', 'justifySelf', 'flex', 'gap', 'rowGap', 'columnGap',
-  'gridTemplateColumns', 'gridTemplateRows', 'gridColumn', 'gridRow',
-  'width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight',
-  'aspectRatio', 'boxSizing',
-  // Spacing — per-side only. The shorthand `padding`/`margin` keys are not
-  // stored; `bagToCSS` collapses the 4 sides into the CSS shorthand at
-  // emission time (see `tryCollapseSides` below).
-  'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
-  'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-  'position', 'top', 'right', 'bottom', 'left', 'zIndex',
-  'backgroundColor', 'background', 'backgroundImage', 'backgroundSize',
-  'backgroundPosition', 'backgroundRepeat', 'objectFit', 'objectPosition',
-  'opacity', 'overflow', 'overflowX', 'overflowY',
-  'border', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft',
-  'borderColor',
-  'borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius',
-  'borderBottomLeftRadius', 'borderBottomRightRadius',
-  'outline', 'outlineOffset',
-  'boxShadow', 'filter', 'backdropFilter', 'transform', 'transformOrigin',
-  'transition', 'animation',
-  'cursor', 'pointerEvents', 'userSelect', 'scrollBehavior',
-  'fill',
-  'isolation',
-  'backgroundPositionX', 'backgroundPositionY', 'backgroundAttachment',
-  'backgroundOrigin', 'backgroundClip',
-  'content',
-  'textWrapMode', 'textWrapStyle',
+
+/**
+ * Genuinely dead / dangerous property NAMES. Their *values* are already
+ * sanitised, but these properties have historically been script / behaviour
+ * vectors (IE `behavior`, Mozilla XBL `-moz-binding`), so we drop them outright
+ * regardless of value. Lowercased for comparison.
+ */
+export const DENIED_PROPS = new Set<string>([
+  'behavior',
+  '-moz-binding',
+  '-ms-behavior',
 ])
+
+/**
+ * A syntactically valid CSS property name. `-{0,2}` allows an optional leading
+ * `-` (vendor prefix, e.g. `-webkit-...`) or `--` (custom property), then a
+ * letter, then letters / digits / hyphens. Zero dashes covers the camelCase
+ * keys our editor writes (`fontSize`) AND plain kebab-case keys (`flex-grow`).
+ */
+const VALID_PROPERTY_RE = /^-{0,2}[a-zA-Z][a-zA-Z0-9-]*$/
+
+/**
+ * Whether a property may be emitted into published CSS. Permissive: valid CSS
+ * identifier AND not in the denylist. Exported so the importer applies exactly
+ * the same gate (no second source of truth).
+ */
+export function isEmittableProperty(prop: string): boolean {
+  return VALID_PROPERTY_RE.test(prop) && !DENIED_PROPS.has(prop.toLowerCase())
+}
 
 // ---------------------------------------------------------------------------
 // Side-shorthand collapse — `paddingTop/Right/Bottom/Left` → `padding: T R B L`
@@ -125,7 +137,7 @@ export function bagToCSS(bag: Record<string, unknown>): string {
   const collapsedPrefixes = new Set<SideShorthandPrefix>()
 
   for (const [prop, value] of Object.entries(bag)) {
-    if (!ALLOWED_PROPS.has(prop)) continue
+    if (!isEmittableProperty(prop)) continue
     if (value === undefined || value === null || value === '') continue
 
     const sidePrefix = SIDE_PROP_TO_PREFIX.get(prop)
@@ -183,9 +195,28 @@ export function generateClassCSS(
   })
 
   for (const cls of orderedClasses) {
+    const selector = styleRuleSelector(cls)
     const baseDecls = bagToCSS(cls.styles)
     if (baseDecls) {
-      blocks.push(`${styleRuleSelector(cls)} {\n${baseDecls}\n}`)
+      blocks.push(`${selector} {\n${baseDecls}\n}`)
+    }
+
+    // Conditional layers (custom @media / @container / @supports) emit AFTER
+    // base but BEFORE the width-breakpoint @media blocks, so explicit width
+    // breakpoints keep winning at their widths (cascade precedence Q-A:
+    // base → conditional layers → breakpoint @media). Ordered by each
+    // layer's `order` so source order from the importer is preserved.
+    const layers = (cls.conditionalLayers ?? []).slice().sort((a, b) => {
+      const ao = typeof a.order === 'number' ? a.order : 0
+      const bo = typeof b.order === 'number' ? b.order : 0
+      return ao - bo
+    })
+    for (const layer of layers) {
+      const decls = bagToCSS(layer.styles)
+      if (!decls) continue
+      const prelude = conditionPrelude(layer.condition, widthById)
+      if (!prelude) continue
+      blocks.push(`${prelude} {\n  ${selector} {\n${decls}\n  }\n}`)
     }
 
     const bpEntries = Object.entries(cls.breakpointStyles)
@@ -200,9 +231,49 @@ export function generateClassCSS(
     for (const { bpStyles, width } of bpEntries) {
       const decls = bagToCSS(bpStyles)
       if (!decls) continue
-      blocks.push(`@media (max-width: ${width}px) {\n  ${styleRuleSelector(cls)} {\n${decls}\n  }\n}`)
+      blocks.push(`@media (max-width: ${width}px) {\n  ${selector} {\n${decls}\n  }\n}`)
     }
   }
 
   return blocks.join('\n\n')
+}
+
+/**
+ * Build the `@<kind> <query>` prelude for a conditional layer's condition.
+ * Returns null when a `breakpoint`-kind condition references an unknown
+ * breakpoint id (nothing sensible to emit). The query text is the author's /
+ * importer's verbatim string; it has already been through the browser's CSS
+ * parser at import time, so we trust its syntax here.
+ */
+export function conditionPrelude(
+  condition: StyleCondition,
+  widthById: Map<string, number>,
+): string | null {
+  switch (condition.kind) {
+    case 'breakpoint': {
+      const width = widthById.get(condition.breakpointId)
+      return width === undefined ? null : `@media (max-width: ${width}px)`
+    }
+    case 'media':
+      return `@media ${condition.query}`
+    case 'container':
+      return condition.name
+        ? `@container ${condition.name} ${wrapParens(condition.query)}`
+        : `@container ${wrapParens(condition.query)}`
+    case 'supports':
+      return `@supports ${wrapParens(condition.query)}`
+    default:
+      return null
+  }
+}
+
+/**
+ * Wrap a condition query in parens unless it already is. CSSOM's
+ * `conditionText` sometimes includes the surrounding parens (`(display: grid)`)
+ * and sometimes not (`display: grid`), depending on the engine — normalise so
+ * we never double-wrap (`@supports ((display: grid))`).
+ */
+function wrapParens(query: string): string {
+  const q = query.trim()
+  return q.startsWith('(') ? q : `(${q})`
 }

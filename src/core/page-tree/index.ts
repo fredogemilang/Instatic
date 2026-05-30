@@ -12,7 +12,7 @@
 // and types (via Static<typeof X>).
 export { PageNodeSchema } from './pageNode'
 export { PageSchema } from './page'
-export { StyleRuleSchema, StyleRuleKindSchema, classKindSelector } from './styleRule'
+export { StyleRuleSchema, StyleRuleKindSchema, classKindSelector, StyleConditionSchema, ConditionalStyleLayerSchema } from './styleRule'
 export { SiteShellSchema } from './siteDocument'
 
 // Types — derived from schemas. Schemas are the source of truth.
@@ -22,7 +22,7 @@ export type { PageTemplateConfig } from './pageTemplate'
 export type { PageNode } from './pageNode'
 export type { Page } from './page'
 export type { CSSPropertyBag } from './cssPropertyBag'
-export type { StyleRule, StyleRuleKind } from './styleRule'
+export type { StyleRule, StyleRuleKind, StyleCondition, ConditionalStyleLayer } from './styleRule'
 export type { SiteSettings } from './siteSettings'
 export type { SiteShell, SiteDocument } from './siteDocument'
 

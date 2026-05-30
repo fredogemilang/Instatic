@@ -1,4 +1,4 @@
-import { bagToCSS } from '@core/publisher/classCss'
+import { bagToCSS, conditionPrelude } from '@core/publisher/classCss'
 import { PUBLISHER_RESET_CSS } from '@core/publisher/reset'
 import { generateFrameworkRootCss } from '@core/framework/generate'
 import { generateFontsCss } from '@core/fonts/css'
@@ -66,6 +66,23 @@ export function generateCanvasClassCSS(
       if (!decls) continue
       if (!breakpoints.some((breakpoint) => breakpoint.id === bpId)) continue
       blocks.push(`[data-breakpoint-id="${escapeCssAttribute(bpId)}"] ${styleRuleSelector(cls)} {\n${decls}\n}`)
+    }
+
+    // Conditional layers (custom @media / @container / @supports) emit as REAL
+    // @-rule wrappers — unlike width breakpoints (which are simulated via the
+    // [data-breakpoint-id] frame attribute), these are evaluated by the canvas
+    // frame's own engine against its actual viewport / container / support, so
+    // the canvas matches the published output. A `breakpoint`-kind condition
+    // is skipped here (those ride the data-breakpoint-id scoping above).
+    const layerWidthById = new Map(breakpoints.map((bp) => [bp.id, bp.width]))
+    const layers = (cls.conditionalLayers ?? []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    for (const layer of layers) {
+      if (layer.condition.kind === 'breakpoint') continue
+      const decls = bagToCSS(layer.styles)
+      if (!decls) continue
+      const prelude = conditionPrelude(layer.condition, layerWidthById)
+      if (!prelude) continue
+      blocks.push(`${prelude} {\n  ${styleRuleSelector(cls)} {\n${decls}\n  }\n}`)
     }
   }
 

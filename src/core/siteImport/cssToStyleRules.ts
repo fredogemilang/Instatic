@@ -39,7 +39,7 @@
  * order is kept as the FIRST occurrence.
  */
 
-import { ALLOWED_PROPS } from '@core/publisher/classCss'
+import { isEmittableProperty } from '@core/publisher/classCss'
 import type { StyleRuleKind } from '@core/page-tree'
 import type { ImportWarning, BreakpointHint, AssetRef, NewStyleRule } from './types'
 
@@ -100,8 +100,14 @@ function truncate(text: string, maxLen = 120): string {
 /**
  * Convert a kebab-case CSS property name to camelCase.
  * "background-color" → "backgroundColor", "z-index" → "zIndex"
+ *
+ * CSS custom properties (`--brand`) are case-sensitive and must be stored
+ * verbatim — camelCasing `--brand` into `-Brand` would change the property and
+ * break the cascade. They're returned unchanged. (Vendor-prefixed names like
+ * `-webkit-foo` DO camelCase to `WebkitFoo`, matching the DOM style API.)
  */
 function kebabToCamel(prop: string): string {
+  if (prop.startsWith('--')) return prop
   return prop.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
 }
 
@@ -183,9 +189,14 @@ function extractUrlPayloads(value: string): string[] {
 }
 
 /**
- * Parse all declarations from a CSSStyleDeclaration into a camelCase
- * Record, filtering to ALLOWED_PROPS. Returns both the allowed declarations
- * and one 'unknown-property' warning per dropped property.
+ * Parse all declarations from a CSSStyleDeclaration into a camelCase Record.
+ *
+ * Phase 1a: the property gate is permissive — `isEmittableProperty` accepts
+ * any valid CSS property name except a tiny denylist. So a real-site import
+ * keeps every standard property (`flex-grow`, `grid-auto-flow`, …) instead of
+ * dropping it. The only declarations dropped here are the genuinely
+ * dead/dangerous denied names, surfaced as a (rare) `blocked-property`
+ * warning rather than the old flood of `unknown-property`.
  *
  * The brief specifies using `.length` + index access (not `for...of`) since
  * CSSStyleDeclaration doesn't enumerate properties via Symbol.iterator.
@@ -202,10 +213,10 @@ function parseDeclarations(
     if (!value) continue
 
     const camel = kebabToCamel(kebab)
-    if (!ALLOWED_PROPS.has(camel)) {
+    if (!isEmittableProperty(camel)) {
       warnings.push({
-        kind: 'unknown-property',
-        message: `Property "${camel}" (${kebab}) is not in the allowed property set and was dropped`,
+        kind: 'blocked-property',
+        message: `Property "${camel}" (${kebab}) is blocked for security and was dropped`,
         selector: selectorForWarning,
         property: camel,
       })
@@ -308,15 +319,8 @@ export function cssToStyleRules(
   //
   // seenClassSelectors: tracks class selectors seen in base rules so we can
   //   emit a duplicate-class warning on the second occurrence.
-  //
-  // warnedMediaConditions: tracks @media condition texts that have already had
-  //   an `unmatched-media-query` warning emitted. Real-world CSS (e.g. Tailwind
-  //   v4) can emit dozens of separate @media blocks for the same breakpoint
-  //   condition (one per utility class). We collapse all those into a single
-  //   warning per unique condition text.
   const selectorToLastIndex = new Map<string, number>()
   const seenClassSelectors = new Set<string>()
-  const warnedMediaConditions = new Set<string>()
 
   // ── Process each top-level rule ─────────────────────────────────────────
   for (let i = 0; i < sheet.cssRules.length; i++) {
@@ -331,7 +335,6 @@ export function cssToStyleRules(
         mediaTolerance,
         selectorToLastIndex,
         seenClassSelectors,
-        warnedMediaConditions,
       )
     } catch (_err) {
       // Per-rule resilience: if a rule throws unexpectedly, warn and continue.
@@ -359,7 +362,6 @@ function processTopLevelRule(
   mediaTolerance: number,
   selectorToLastIndex: Map<string, number>,
   seenClassSelectors: Set<string>,
-  warnedMediaConditions: Set<string>,
 ): void {
   switch (rule.type) {
     case STYLE_RULE_TYPE:
@@ -383,24 +385,103 @@ function processTopLevelRule(
         mediaTolerance,
         selectorToLastIndex,
         seenClassSelectors,
-        warnedMediaConditions,
       )
       return
 
-    default:
-      // Dropped at-rules: @keyframes, @font-face, @import, @supports, @page,
-      // @namespace, @layer, @container, and anything else.
-      //
-      // NOTE: @import rules are silently ignored by CSSStyleSheet.replaceSync()
-      // in most environments (cssRules will be empty for them), so this branch
-      // handles the uncommon case where the engine does surface them.
+    case SUPPORTS_RULE_TYPE: {
+      // @supports (feature query) → conditional layer, stored verbatim.
+      const supportsRule = rule as CSSConditionRule
+      const query = supportsRule.conditionText ?? ''
+      processConditionInner(
+        supportsRule,
+        rules,
+        warnings,
+        assetRefs,
+        selectorToLastIndex,
+        seenClassSelectors,
+        { kind: 'supports', query },
+      )
+      return
+    }
+
+    case FONT_FACE_RULE_TYPE:
+      // @font-face can't be modelled as a StyleRule (no selector — it's a
+      // declarative side-effect at the stylesheet level). The rule itself is
+      // dropped, but we still scrape its `src: url(...)` so the font files
+      // make it to the media library — otherwise an importer would upload
+      // images, then silently lose every font in the bundle. Re-wiring the
+      // imported font into @font-face is a Phase 4 follow-up (storing
+      // @font-face as a first-class site asset).
+      collectFontFaceUrls(rule as CSSFontFaceRule, assetRefs, rules.length)
+      warnings.push({
+        kind: 'dropped-at-rule',
+        message: `${atRuleName(rule.type)} rule is not supported by the import engine (font files were still uploaded)`,
+        source: truncate(rule.cssText),
+      })
+      return
+
+    default: {
+      // @container has no stable legacy `rule.type` (it's a newer CSSOM
+      // addition; browsers report 0). Detect it structurally: a grouping rule
+      // whose cssText starts with `@container`. Route it to a conditional
+      // layer keyed on the verbatim query (+ optional container name).
+      const groupingRule = rule as Partial<CSSGroupingRule> & { cssText?: string; containerName?: string; containerQuery?: string }
+      const cssText = groupingRule.cssText ?? ''
+      if (Array.isArray((groupingRule as CSSGroupingRule).cssRules ?? null) || /^@container\b/i.test(cssText)) {
+        const containerMatch = cssText.match(/^@container\s+([^({]+?)?\s*\(([^)]*)\)/i)
+        if (containerMatch && (groupingRule as CSSGroupingRule).cssRules) {
+          const name = (groupingRule.containerName || containerMatch[1] || '').trim()
+          const query = (groupingRule.containerQuery || containerMatch[2] || '').trim()
+          processConditionInner(
+            groupingRule as CSSGroupingRule,
+            rules,
+            warnings,
+            assetRefs,
+            selectorToLastIndex,
+            seenClassSelectors,
+            { kind: 'container', query, ...(name ? { name } : {}) },
+          )
+          return
+        }
+      }
+
+      // Genuinely unsupported at-rules: @keyframes, @import, @page,
+      // @namespace, @layer, and anything else. (@import is usually silently
+      // dropped by replaceSync; this handles the rare surfaced case.)
       warnings.push({
         kind: 'dropped-at-rule',
         message: `${atRuleName(rule.type)} rule is not supported by the import engine`,
         source: truncate(rule.cssText),
       })
       return
+    }
   }
+}
+
+/**
+ * Scan an `@font-face` rule's declarations for `url(...)` payloads and emit
+ * them as assetRefs so the wizard uploads the font binaries. The synthetic
+ * ruleIndex is `rules.length` at the time of capture — the resulting
+ * assetRef won't bind to any importable style rule, but the asset planner
+ * only uses `ruleIndex` to dedupe; the file still ends up in plan.assets.
+ */
+function collectFontFaceUrls(
+  rule: CSSFontFaceRule,
+  assetRefs: AssetRef[],
+  syntheticRuleIndex: number,
+): void {
+  // @font-face only carries `src: url(...) format(...), url(...) format(...);`
+  // for our purposes. Read the property and pull every url() payload out.
+  const decl = rule.style
+  if (!decl) return
+  const srcValue = decl.getPropertyValue('src')
+  if (!srcValue) return
+  collectAssetRefsFromDecls(
+    { src: srcValue } as unknown as Record<string, string>,
+    syntheticRuleIndex,
+    undefined,
+    assetRefs,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -463,7 +544,6 @@ function processMediaRule(
   mediaTolerance: number,
   selectorToLastIndex: Map<string, number>,
   seenClassSelectors: Set<string>,
-  warnedMediaConditions: Set<string>,
 ): void {
   // conditionText is on CSSConditionRule (parent of CSSMediaRule) per CSSOM spec.
   // Fallback to mediaText for environments that don't expose conditionText.
@@ -474,69 +554,79 @@ function processMediaRule(
   const matched = matchBreakpoint(conditionText, breakpoints, mediaTolerance)
 
   if (matched !== null) {
-    // Matched breakpoint: fold inner rules into breakpointStyles[matched.id]
-    processMediaRuleInner(
+    // Matched breakpoint: merge inner rules into breakpointStyles[matched.id]
+    processConditionInner(
       mediaRule,
       rules,
       warnings,
       assetRefs,
       selectorToLastIndex,
       seenClassSelectors,
-      matched.id,
-      /* unfold */ false,
+      { kind: 'breakpoint', breakpointId: matched.id },
     )
   } else {
-    // Unmatched @media: fold inner declarations into base styles
-    // (base-takes-precedence: only add properties NOT already in base styles).
-    // Emit at most one warning per unique condition text — real-world CSS
-    // (e.g. Tailwind v4) may repeat the same @media condition many times,
-    // once per selector, producing a warning flood.
-    if (!warnedMediaConditions.has(conditionText)) {
-      warnedMediaConditions.add(conditionText)
-      const matchedAgainst =
-        breakpoints.length > 0
-          ? ` (checked against ${breakpoints.map((b) => `${b.id}=${b.width}px`).join(', ')})`
-          : ''
-      warnings.push({
-        kind: 'unmatched-media-query',
-        message: `@media ${conditionText} could not be matched to any defined breakpoint${matchedAgainst}; inner declarations folded into base styles`,
-        source: truncate(mediaRule.cssText),
-      })
-    }
-    processMediaRuleInner(
+    // Unmatched @media: store the inner declarations as a faithful conditional
+    // layer keyed on the verbatim media query — NOT folded into base styles
+    // (which was lossy: it dropped the condition and let the override leak to
+    // all viewports). The query round-trips and re-emits as `@media <query>`.
+    processConditionInner(
       mediaRule,
       rules,
       warnings,
       assetRefs,
       selectorToLastIndex,
       seenClassSelectors,
-      null,
-      /* unfold */ true,
+      { kind: 'media', query: conditionText },
     )
   }
 }
 
 /**
- * Process the inner CSSStyleRules of a @media block.
+ * Process the inner CSSStyleRules of a conditional @-block (@media /
+ * @container / @supports), writing each inner rule's declarations to the
+ * target condition on the matching StyleRule.
  *
- * @param breakpointId - The matched breakpoint's id, or `null` when folding.
- * @param unfold       - When true, fold declarations into base styles
- *                       (base-takes-precedence merge). When false, write to
- *                       `breakpointStyles[breakpointId]`.
+ * Target:
+ *   - `{ kind: 'breakpoint', breakpointId }` → `breakpointStyles[id]`
+ *      (the first-class width-breakpoint model).
+ *   - any other condition → a `conditionalLayers` entry keyed by the condition.
  */
-function processMediaRuleInner(
-  mediaRule: CSSMediaRule,
+type ConditionTarget =
+  | { kind: 'breakpoint'; breakpointId: string }
+  | StyleConditionForImport
+
+/**
+ * Subset of StyleCondition the importer produces. Mirrors the page-tree
+ * StyleCondition union but kept local so the headless siteImport module
+ * doesn't depend on its exact import path beyond the type. (NewStyleRule
+ * already carries the full conditionalLayers shape via Omit<StyleRule, …>.)
+ */
+type StyleConditionForImport =
+  | { kind: 'media'; query: string }
+  | { kind: 'container'; query: string; name?: string }
+  | { kind: 'supports'; query: string }
+
+function conditionLayerId(target: ConditionTarget): string {
+  switch (target.kind) {
+    case 'breakpoint': return `bp:${target.breakpointId}`
+    case 'media': return `media:${target.query}`
+    case 'container': return `container:${target.name ?? ''}:${target.query}`
+    case 'supports': return `supports:${target.query}`
+  }
+}
+
+function processConditionInner(
+  block: CSSGroupingRule,
   rules: NewStyleRule[],
   warnings: ImportWarning[],
   assetRefs: AssetRef[],
   selectorToLastIndex: Map<string, number>,
   seenClassSelectors: Set<string>,
-  breakpointId: string | null,
-  unfold: boolean,
+  target: ConditionTarget,
 ): void {
-  for (let i = 0; i < mediaRule.cssRules.length; i++) {
-    const inner = mediaRule.cssRules[i]
-    // Only process style rules inside @media (skip nested @-rules)
+  for (let i = 0; i < block.cssRules.length; i++) {
+    const inner = block.cssRules[i]
+    // Only process style rules inside the @-block (skip nested @-rules)
     if (inner.type !== STYLE_RULE_TYPE) continue
 
     const innerStyle = inner as CSSStyleRule
@@ -548,7 +638,6 @@ function processMediaRuleInner(
     if (selectorToLastIndex.has(selector)) {
       idx = selectorToLastIndex.get(selector)!
     } else {
-      // No base rule exists — create one with empty base styles
       const classified = classifySelector(selector)
       idx = rules.length
       rules.push({
@@ -563,22 +652,30 @@ function processMediaRuleInner(
       if (classified.kind === 'class') seenClassSelectors.add(selector)
     }
 
-    if (unfold) {
-      // Unmatched @media: fold into base styles, base-takes-precedence.
-      // Only add declarations for properties not already set in base styles.
-      const baseStyles = rules[idx].styles as Record<string, unknown>
-      for (const [k, v] of Object.entries(decls)) {
-        if (!(k in baseStyles)) {
-          baseStyles[k] = v
-        }
-      }
-      collectAssetRefsFromDecls(decls, idx, undefined, assetRefs)
-    } else {
-      // Matched @media: merge into breakpointStyles[breakpointId]
-      const bpId = breakpointId as string
+    if (target.kind === 'breakpoint') {
+      const bpId = target.breakpointId
       const existing = (rules[idx].breakpointStyles[bpId] ?? {}) as Record<string, unknown>
       rules[idx].breakpointStyles[bpId] = { ...existing, ...decls }
       collectAssetRefsFromDecls(decls, idx, bpId, assetRefs)
+    } else {
+      // Conditional layer: find-or-create the layer with this condition id,
+      // then merge declarations. assetRefs use the base ruleIndex (the
+      // normaliser uploads the file regardless of which layer references it).
+      const rule = rules[idx]
+      if (!rule.conditionalLayers) rule.conditionalLayers = []
+      const layerId = conditionLayerId(target)
+      let layer = rule.conditionalLayers.find((l) => l.id === layerId)
+      if (!layer) {
+        layer = {
+          id: layerId,
+          condition: target,
+          styles: {},
+          order: rule.conditionalLayers.length,
+        }
+        rule.conditionalLayers.push(layer)
+      }
+      Object.assign(layer.styles as Record<string, unknown>, decls)
+      collectAssetRefsFromDecls(decls, idx, undefined, assetRefs)
     }
   }
 }
