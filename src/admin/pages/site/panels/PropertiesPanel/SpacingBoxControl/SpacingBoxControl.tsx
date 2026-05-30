@@ -41,9 +41,7 @@
  */
 
 import {
-  useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -164,23 +162,11 @@ export function SpacingBoxControl({
   const tokens = useSpacingTokens()
 
   // ── Per-box state ──────────────────────────────────────────────────────
-  const padding = useMemo(
-    () => computeBoxState(storedStyles, 'padding'),
-    [storedStyles],
-  )
-  const margin = useMemo(
-    () => computeBoxState(storedStyles, 'margin'),
-    [storedStyles],
-  )
+  const padding = computeBoxState(storedStyles, 'padding')
+  const margin = computeBoxState(storedStyles, 'margin')
 
-  const paddingFallback = useMemo(
-    () => computeBoxState(currentStyles, 'padding'),
-    [currentStyles],
-  )
-  const marginFallback = useMemo(
-    () => computeBoxState(currentStyles, 'margin'),
-    [currentStyles],
-  )
+  const paddingFallback = computeBoxState(currentStyles, 'padding')
+  const marginFallback = computeBoxState(currentStyles, 'margin')
 
   // ── Linked-mode toggles (UI state) ─────────────────────────────────────
   // Default to linked when the four effective sides are uniform (or empty).
@@ -202,47 +188,38 @@ export function SpacingBoxControl({
   const [focused, setFocused] = useState<{ box: Box; side: Side } | null>(null)
 
   // ── Apply value to a box ───────────────────────────────────────────────
-  const applyValue = useCallback(
-    (box: Box, side: Side | 'all', resolved: string | undefined) => {
-      const isLinked = box === 'padding' ? paddingLinked : marginLinked
-      const sidesToWrite: Side[] =
-        side === 'all' || isLinked ? [...SIDES] : [side]
+  const applyValue = (box: Box, side: Side | 'all', resolved: string | undefined) => {
+    const isLinked = box === 'padding' ? paddingLinked : marginLinked
+    const sidesToWrite: Side[] =
+      side === 'all' || isLinked ? [...SIDES] : [side]
 
-      for (const s of sidesToWrite) {
-        onChange(sideKey(box, s), resolved)
-      }
-    },
-    [paddingLinked, marginLinked, onChange],
-  )
+    for (const s of sidesToWrite) {
+      onChange(sideKey(box, s), resolved)
+    }
+  }
 
   // ── Clear a box ────────────────────────────────────────────────────────
-  const clearBox = useCallback(
-    (box: Box) => {
-      for (const s of SIDES) onRemove(sideKey(box, s))
-    },
-    [onRemove],
-  )
+  const clearBox = (box: Box) => {
+    for (const s of SIDES) onRemove(sideKey(box, s))
+  }
 
   // ── Preview value (transient, not history-tracked) ─────────────────────
-  const previewValue = useCallback(
-    (box: Box, side: Side, resolved: string | undefined) => {
-      if (!onPreview) return
-      const isLinked = box === 'padding' ? paddingLinked : marginLinked
-      const sidesToWrite: Side[] = isLinked ? [...SIDES] : [side]
-      const patch: Partial<CSSPropertyBag> = {}
-      for (const s of sidesToWrite) {
-        // Cast to never because CSSPropertyBag values are typed per-key;
-        // we trust the resolved value matches the property's expected type.
-        ;(patch as Record<string, unknown>)[sideKey(box, s)] = resolved
-      }
-      onPreview(patch)
-    },
-    [paddingLinked, marginLinked, onPreview],
-  )
+  const previewValue = (box: Box, side: Side, resolved: string | undefined) => {
+    if (!onPreview) return
+    const isLinked = box === 'padding' ? paddingLinked : marginLinked
+    const sidesToWrite: Side[] = isLinked ? [...SIDES] : [side]
+    const patch: Partial<CSSPropertyBag> = {}
+    for (const s of sidesToWrite) {
+      // Cast to never because CSSPropertyBag values are typed per-key;
+      // we trust the resolved value matches the property's expected type.
+      ;(patch as Record<string, unknown>)[sideKey(box, s)] = resolved
+    }
+    onPreview(patch)
+  }
 
-  const clearPreview = useCallback(() => {
+  const clearPreview = () => {
     onClearPreview?.()
-  }, [onClearPreview])
+  }
 
   return (
     <div className={styles.root}>
@@ -496,27 +473,23 @@ function SideInput({
   // Filter tokens by typed prefix for the autocomplete dropdown.
   // When there's no query, the "Suggested" section is hidden entirely —
   // returning [] here lets the "Tokens" section render the full scale.
-  const suggestions = useMemo(() => {
-    const q = draft.trim().toLowerCase()
-    if (!q) return []
-    return tokens
-      .filter(
-        (t) =>
-          t.step.toLowerCase().startsWith(q) ||
-          t.step.toLowerCase().includes(q),
-      )
-      .slice(0, 8)
-  }, [draft, tokens])
+  const suggestionQuery = draft.trim().toLowerCase()
+  const suggestions = suggestionQuery
+    ? tokens
+        .filter(
+          (t) =>
+            t.step.toLowerCase().startsWith(suggestionQuery) ||
+            t.step.toLowerCase().includes(suggestionQuery),
+        )
+        .slice(0, 8)
+    : []
 
-  const commit = useCallback(
-    (raw: string) => {
-      const resolved = resolveTokenValue(raw, tokens)
-      onClearPreview()
-      onCommit(resolved)
-      setIsEditing(false)
-    },
-    [tokens, onCommit, onClearPreview],
-  )
+  const commit = (raw: string) => {
+    const resolved = resolveTokenValue(raw, tokens)
+    onClearPreview()
+    onCommit(resolved)
+    setIsEditing(false)
+  }
 
   // Preview a hovered token's value on the canvas. Only the resolved value
   // is forwarded — the parent decides which sides the preview affects
@@ -527,14 +500,11 @@ function SideInput({
   // Note: this only gates HOVER previews — the as-you-type preview below
   // (`previewDraft`) is intentionally always on, since it reflects an
   // explicit edit the user is making.
-  const previewToken = useCallback(
-    (rawValue: string) => {
-      if (!hoverPreviewEnabled) return
-      const resolved = resolveTokenValue(rawValue, tokens)
-      onPreview(resolved)
-    },
-    [hoverPreviewEnabled, tokens, onPreview],
-  )
+  const previewToken = (rawValue: string) => {
+    if (!hoverPreviewEnabled) return
+    const resolved = resolveTokenValue(rawValue, tokens)
+    onPreview(resolved)
+  }
 
   // Defensive: if the preference is toggled off while a hover preview is
   // active (e.g. user flips the toggle in another tab), clear the canvas
@@ -550,14 +520,11 @@ function SideInput({
   // current draft is provably incomplete (e.g. `var(--spa`), we skip the
   // update and keep the last valid preview on screen instead of writing
   // garbage to the engine.
-  const previewDraft = useCallback(
-    (rawValue: string) => {
-      if (!isLivePreviewable(rawValue)) return
-      const resolved = resolveTokenValue(rawValue, tokens)
-      onPreview(resolved)
-    },
-    [tokens, onPreview],
-  )
+  const previewDraft = (rawValue: string) => {
+    if (!isLivePreviewable(rawValue)) return
+    const resolved = resolveTokenValue(rawValue, tokens)
+    onPreview(resolved)
+  }
 
   // Hide the dropdown when the user is typing a direct CSS value
   // (numbers, units, "auto", calc(...), etc.) — non-token typing should

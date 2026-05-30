@@ -11,7 +11,7 @@
  *   - CSS Modules + achromatic tokens only.
  */
 
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { cn } from '@ui/cn'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
@@ -76,110 +76,89 @@ export function RichTextEditor({
   }, [showLinkStrip])
 
   // ── Formatting state refresh ───────────────────────────────────────────────
-  const refreshFormattingState = useCallback(() => {
+  const refreshFormattingState = () => {
     setBoldActive(document.queryCommandState('bold'))
     setItalicActive(document.queryCommandState('italic'))
     setUnderlineActive(document.queryCommandState('underline'))
-  }, [])
+  }
 
   // ── Root blur — save only when focus leaves the whole component ────────────
-  const handleRootBlur = useCallback(
-    (e: React.FocusEvent<HTMLDivElement>) => {
-      // relatedTarget is the element receiving focus next.
-      // If it's still inside this component (e.g. link strip Input), don't save.
-      if (rootRef.current?.contains(e.relatedTarget as Node | null)) return
-      const el = editorRef.current
-      if (!el) return
-      const sanitized = sanitizeRichtext(el.innerHTML)
-      lastSetHtmlRef.current = sanitized
-      onChange(sanitized)
-    },
-    [onChange],
-  )
+  const handleRootBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    // relatedTarget is the element receiving focus next.
+    // If it's still inside this component (e.g. link strip Input), don't save.
+    if (rootRef.current?.contains(e.relatedTarget as Node | null)) return
+    const el = editorRef.current
+    if (!el) return
+    const sanitized = sanitizeRichtext(el.innerHTML)
+    lastSetHtmlRef.current = sanitized
+    onChange(sanitized)
+  }
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (disabled) return
-      const meta = e.metaKey || e.ctrlKey
-      if (meta && e.key === 'b') {
-        e.preventDefault()
-        document.execCommand('bold', false)
-        refreshFormattingState()
-      } else if (meta && e.key === 'i') {
-        e.preventDefault()
-        document.execCommand('italic', false)
-        refreshFormattingState()
-      } else if (meta && e.key === 'u') {
-        e.preventDefault()
-        document.execCommand('underline', false)
-        refreshFormattingState()
-      }
-    },
-    [disabled, refreshFormattingState],
-  )
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return
+    const meta = e.metaKey || e.ctrlKey
+    if (meta && e.key === 'b') {
+      e.preventDefault()
+      document.execCommand('bold', false)
+      refreshFormattingState()
+    } else if (meta && e.key === 'i') {
+      e.preventDefault()
+      document.execCommand('italic', false)
+      refreshFormattingState()
+    } else if (meta && e.key === 'u') {
+      e.preventDefault()
+      document.execCommand('underline', false)
+      refreshFormattingState()
+    }
+  }
 
   // ── Toolbar handlers ───────────────────────────────────────────────────────
   // All toolbar buttons use onMouseDown + e.preventDefault() to keep the
   // contentEditable focused (and thus its selection intact) while the button
   // is being pressed.
 
-  const handleBold = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      document.execCommand('bold', false)
-      refreshFormattingState()
-    },
-    [refreshFormattingState],
-  )
+  const handleBold = (e: React.MouseEvent) => {
+    e.preventDefault()
+    document.execCommand('bold', false)
+    refreshFormattingState()
+  }
 
-  const handleItalic = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      document.execCommand('italic', false)
-      refreshFormattingState()
-    },
-    [refreshFormattingState],
-  )
+  const handleItalic = (e: React.MouseEvent) => {
+    e.preventDefault()
+    document.execCommand('italic', false)
+    refreshFormattingState()
+  }
 
-  const handleUnderline = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      document.execCommand('underline', false)
-      refreshFormattingState()
-    },
-    [refreshFormattingState],
-  )
+  const handleUnderline = (e: React.MouseEvent) => {
+    e.preventDefault()
+    document.execCommand('underline', false)
+    refreshFormattingState()
+  }
 
-  const handleClearFormat = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      document.execCommand('removeFormat', false)
-      document.execCommand('unlink', false)
-      refreshFormattingState()
-    },
-    [refreshFormattingState],
-  )
+  const handleClearFormat = (e: React.MouseEvent) => {
+    e.preventDefault()
+    document.execCommand('removeFormat', false)
+    document.execCommand('unlink', false)
+    refreshFormattingState()
+  }
 
   // ── Link strip ─────────────────────────────────────────────────────────────
-  const handleLinkMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      // Capture the current selection before the strip opens and the Input
-      // takes focus (which would clear the editor's selection).
-      const selection = window.getSelection()
-      if (selection && selection.rangeCount > 0) {
-        savedRangeRef.current = selection.getRangeAt(0).cloneRange()
-      } else {
-        savedRangeRef.current = null
-      }
-      setShowLinkStrip(true)
-      setLinkUrl('')
-    },
-    [],
-  )
+  const handleLinkMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    // Capture the current selection before the strip opens and the Input
+    // takes focus (which would clear the editor's selection).
+    const selection = window.getSelection()
+    if (selection && selection.rangeCount > 0) {
+      savedRangeRef.current = selection.getRangeAt(0).cloneRange()
+    } else {
+      savedRangeRef.current = null
+    }
+    setShowLinkStrip(true)
+    setLinkUrl('')
+  }
 
-  const restoreEditorSelection = useCallback(() => {
+  const restoreEditorSelection = () => {
     editorRef.current?.focus()
     const range = savedRangeRef.current
     if (!range) return
@@ -188,9 +167,9 @@ export function RichTextEditor({
       selection.removeAllRanges()
       selection.addRange(range)
     }
-  }, [])
+  }
 
-  const handleLinkApply = useCallback(() => {
+  const handleLinkApply = () => {
     const url = linkUrl.trim()
     if (!url) {
       setShowLinkStrip(false)
@@ -243,27 +222,24 @@ export function RichTextEditor({
       lastSetHtmlRef.current = sanitized
       onChange(sanitized)
     }
-  }, [linkUrl, restoreEditorSelection, onChange])
+  }
 
-  const handleLinkCancel = useCallback(() => {
+  const handleLinkCancel = () => {
     setShowLinkStrip(false)
     setLinkUrl('')
     savedRangeRef.current = null
     editorRef.current?.focus()
-  }, [])
+  }
 
-  const handleLinkKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        handleLinkApply()
-      } else if (e.key === 'Escape') {
-        e.preventDefault()
-        handleLinkCancel()
-      }
-    },
-    [handleLinkApply, handleLinkCancel],
-  )
+  const handleLinkKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleLinkApply()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      handleLinkCancel()
+    }
+  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (

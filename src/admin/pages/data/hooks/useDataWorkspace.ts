@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   createCmsDataRow,
   createCmsDataTable,
@@ -152,15 +152,15 @@ export function useDataWorkspace(initialTableSlug?: string): DataWorkspace {
   // the already-selected table (selectedTableId stays the same) would wipe
   // rows without re-running the load-rows effect, leaving an empty grid that
   // only recovers when the user navigates away and back.
-  const selectTable = useCallback((tableId: string | null) => {
+  const selectTable = (tableId: string | null) => {
     setSelectedTableId(tableId)
     setSelectedRowId(null)
-  }, [])
+  }
 
   // loadTables / loadRows are only called from event-handler callbacks
   // (refreshTables / refreshRows), never from effects, so setState calls
   // before the first await are fine here.
-  const loadTables = useCallback(async () => {
+  const loadTables = async () => {
     try {
       const dataTables = await listCmsDataTables()
       setTables(dataTables)
@@ -179,16 +179,16 @@ export function useDataWorkspace(initialTableSlug?: string): DataWorkspace {
     } finally {
       setLoadingTables(false)
     }
-  }, [initialTableSlug])
+  }
 
   // Called from event handlers — synchronous setState before await is fine.
-  const refreshTables = useCallback(async () => {
+  const refreshTables = async () => {
     setLoadingTables(true)
     setTablesError(null)
     await loadTables()
-  }, [loadTables])
+  }
 
-  const createTable = useCallback(async (input: CreateDataTableInput): Promise<DataTable> => {
+  const createTable = async (input: CreateDataTableInput): Promise<DataTable> => {
     setTablesError(null)
     const table = await createCmsDataTable({ ...input, kind: 'data' })
     // Newly created table has no rows yet.
@@ -197,9 +197,9 @@ export function useDataWorkspace(initialTableSlug?: string): DataWorkspace {
     setRows([])
     setSelectedRowId(null)
     return table
-  }, [])
+  }
 
-  const updateTable = useCallback(async (
+  const updateTable = async (
     tableId: string,
     input: UpdateDataTableInput,
   ): Promise<DataTable> => {
@@ -211,9 +211,9 @@ export function useDataWorkspace(initialTableSlug?: string): DataWorkspace {
       t.id === tableId ? { ...table, rowCount: t.rowCount } : t,
     ))
     return table
-  }, [])
+  }
 
-  const deleteTable = useCallback(async (tableId: string): Promise<void> => {
+  const deleteTable = async (tableId: string): Promise<void> => {
     setTablesError(null)
     await deleteCmsDataTable(tableId)
     setTables((current) => current.filter((t) => t.id !== tableId))
@@ -225,12 +225,12 @@ export function useDataWorkspace(initialTableSlug?: string): DataWorkspace {
     })
     setRows([])
     setSelectedRowId(null)
-  }, [])
+  }
 
   // ---------------------------------------------------------------------------
   // Row actions
   // ---------------------------------------------------------------------------
-  const loadRows = useCallback(async (tableId: string) => {
+  const loadRows = async (tableId: string) => {
     try {
       const nextRows = await listCmsDataRows(tableId)
       setRows(nextRows)
@@ -241,51 +241,51 @@ export function useDataWorkspace(initialTableSlug?: string): DataWorkspace {
     } finally {
       setLoadingRows(false)
     }
-  }, [])
+  }
 
   // Called from event handlers — synchronous setState before await is fine.
-  const refreshRows = useCallback(async (): Promise<void> => {
+  const refreshRows = async (): Promise<void> => {
     if (!selectedTableId) return
     setLoadingRows(true)
     setRowsError(null)
     await loadRows(selectedTableId)
-  }, [loadRows, selectedTableId])
+  }
 
-  const createRow = useCallback(async (cells?: DataRowCells): Promise<DataRow> => {
+  const createRow = async (cells?: DataRowCells): Promise<DataRow> => {
     if (!selectedTable) throw new Error('No table selected')
     setRowsError(null)
     const payload = cells ?? buildEmptyCells(selectedTable.fields)
     const row = await createCmsDataRow(selectedTable.id, { cells: payload })
     setRows((current) => updateRowList(current, row))
     return row
-  }, [selectedTable])
+  }
 
-  const saveRow = useCallback(async (rowId: string, cells: DataRowCells): Promise<DataRow> => {
+  const saveRow = async (rowId: string, cells: DataRowCells): Promise<DataRow> => {
     setRowsError(null)
     const row = await saveCmsDataRowDraft(rowId, { cells })
     setRows((current) => updateRowList(current, row))
     return row
-  }, [])
+  }
 
-  const deleteRow = useCallback(async (rowId: string): Promise<void> => {
+  const deleteRow = async (rowId: string): Promise<void> => {
     setRowsError(null)
     await deleteCmsDataRow(rowId)
     setRows((current) => current.filter((r) => r.id !== rowId))
     setSelectedRowId((cur) => (cur === rowId ? null : cur))
-  }, [])
+  }
 
-  const selectRow = useCallback((rowId: string | null) => {
+  const selectRow = (rowId: string | null) => {
     setSelectedRowId(rowId)
-  }, [])
+  }
 
-  const publishRow = useCallback(async (rowId: string): Promise<DataRow> => {
+  const publishRow = async (rowId: string): Promise<DataRow> => {
     setRowsError(null)
     const row = await publishCmsDataRow(rowId)
     setRows((current) => updateRowList(current, row))
     return row
-  }, [])
+  }
 
-  const setRowStatus = useCallback(async (
+  const setRowStatus = async (
     rowId: string,
     status: 'draft' | 'unpublished',
   ): Promise<DataRow> => {
@@ -293,7 +293,7 @@ export function useDataWorkspace(initialTableSlug?: string): DataWorkspace {
     const row = await updateCmsDataRowStatus(rowId, status)
     setRows((current) => updateRowList(current, row))
     return row
-  }, [])
+  }
 
   return {
     tables,
