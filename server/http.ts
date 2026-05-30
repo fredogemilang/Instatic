@@ -1,27 +1,10 @@
-import { Type } from '@sinclair/typebox'
-import { Value } from '@sinclair/typebox/value'
+import { type TSchema, type Static } from '@sinclair/typebox'
+import { safeParseValue } from '@core/utils/typeboxHelpers'
 
 export function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   const res = new Response(JSON.stringify(body), init)
   res.headers.set('content-type', 'application/json')
   return res
-}
-
-// Validates a request body is a JSON object (not an array, not a primitive,
-// not null). Each individual handler is expected to narrow further with its
-// own TypeBox schema for the specific fields it consumes; this helper just
-// guarantees you can safely destructure with no runtime crash on garbage
-// input. Surfaced by /audit-types — was `await req.json() as Record<...>`.
-const JsonObjectSchema = Type.Record(Type.String(), Type.Unknown())
-
-export async function readJsonObject(req: Request): Promise<Record<string, unknown>> {
-  let raw: unknown
-  try {
-    raw = await req.json()
-  } catch {
-    return {}
-  }
-  return Value.Check(JsonObjectSchema, raw) ? (raw as Record<string, unknown>) : {}
 }
 
 export function methodNotAllowed(): Response {
@@ -30,6 +13,21 @@ export function methodNotAllowed(): Response {
 
 export function badRequest(message: string): Response {
   return jsonResponse({ error: message }, { status: 400 })
+}
+
+/**
+ * Parse and validate a request body against a TypeBox schema. Returns the
+ * validated value on success, or null on JSON parse failure or schema mismatch.
+ * Callers return `badRequest(msg)` on null.
+ */
+export async function readValidatedBody<T extends TSchema>(
+  req: Request,
+  schema: T,
+): Promise<Static<T> | null> {
+  let raw: unknown
+  try { raw = await req.json() } catch { return null }
+  const parsed = safeParseValue(schema, raw)
+  return parsed.ok ? (parsed.value as Static<T>) : null
 }
 
 export function setCookieHeader(res: Response, value: string): Response {

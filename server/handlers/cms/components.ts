@@ -39,7 +39,8 @@ import {
 } from '../../../src/core/data/componentFromRow'
 import { parseVisualComponent } from '@core/visualComponents/schemas'
 import type { VisualComponent } from '@core/visualComponents/schemas'
-import { jsonResponse, methodNotAllowed, readJsonObject } from '../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
 import { CMS_API_PREFIX } from './shared'
 
 export async function handleComponentsRoutes(req: Request, db: DbClient): Promise<Response | null> {
@@ -59,8 +60,10 @@ export async function handleComponentsRoutes(req: Request, db: DbClient): Promis
     const user = await requireCapability(req, db, 'site.structure.edit')
     if (user instanceof Response) return user
 
-    const body = await readJsonObject(req)
-    const rawComponents = Array.isArray(body.components) ? body.components : []
+    const ComponentsBodySchema = Type.Object({ components: Type.Array(Type.Unknown()) })
+    const body = await readValidatedBody(req, ComponentsBodySchema)
+    if (!body) return badRequest('Invalid request body')
+    const rawComponents = body.components
 
     // Parse each VC from the raw array. Invalid entries are silently dropped —
     // the client sends the in-memory VisualComponent shape.

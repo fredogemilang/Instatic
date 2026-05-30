@@ -22,7 +22,7 @@
  */
 import type { DbClient } from '../../db/client'
 import { requireAuthenticatedUser } from '../../auth/authz'
-import { badRequest, jsonResponse, methodNotAllowed } from '../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
 import { CMS_API_PREFIX } from './shared'
 import {
   USER_PREFERENCE_KEYS,
@@ -93,15 +93,9 @@ export async function handleUserPreferencesRoutes(
   }
 
   if (req.method === 'PUT') {
-    let raw: unknown
-    try {
-      raw = await req.json()
-    } catch {
-      return badRequest('Body must be JSON')
-    }
-    const envelope = safeParseValue(PutBodyEnvelopeSchema, raw)
-    if (!envelope.ok) return badRequest('Body must be { value: ... }')
-    const value = parseValueOrBadRequest(USER_PREFERENCE_SCHEMAS[key], envelope.value.value)
+    const envelope = await readValidatedBody(req, PutBodyEnvelopeSchema)
+    if (!envelope) return badRequest('Body must be { value: ... }')
+    const value = parseValueOrBadRequest(USER_PREFERENCE_SCHEMAS[key], envelope.value)
     if (value instanceof Response) return value
 
     await upsertUserPreferenceRow(db, user.id, key, value)

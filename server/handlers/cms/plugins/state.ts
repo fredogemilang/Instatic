@@ -26,7 +26,8 @@ import {
   unloadPlugin,
 } from '../../../plugins/runtime'
 import { broadcastPluginEvent } from '../../../plugins/eventBroadcaster'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../../http'
+import { Type } from '@core/utils/typeboxHelpers'
 import { type CmsHandlerOptions } from '../shared'
 import {
   lifecycleErrorMessage,
@@ -102,8 +103,9 @@ export async function handlePluginItem(
   pluginId: string,
 ): Promise<Response> {
   if (req.method === 'PATCH') {
-    const body = await readJsonObject(req)
-    if (typeof body.enabled !== 'boolean') return badRequest('Plugin enabled must be a boolean')
+    const PluginEnabledBodySchema = Type.Object({ enabled: Type.Boolean() })
+    const body = await readValidatedBody(req, PluginEnabledBodySchema)
+    if (!body) return badRequest('Plugin enabled must be a boolean')
 
     const lookup = await getInstalledPlugin(db, pluginId)
     if (!lookup) return pluginNotFound()

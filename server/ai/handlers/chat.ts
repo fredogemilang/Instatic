@@ -19,9 +19,8 @@
  *   6. Streams NDJSON events back as the driver produces them.
  */
 
-import { Type, safeParseValue, formatValueErrors } from '@core/utils/typeboxHelpers'
-import { jsonResponse } from '../../http'
-import { isStateChangingMethod, originAllowed } from '../../auth/security'
+import { Type } from '@core/utils/typeboxHelpers'
+import { jsonResponse, readValidatedBody, badRequest } from '../../http'
 import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
 import { createAuditEvent } from '../../repositories/audit'
@@ -93,9 +92,6 @@ async function handleAiChat(
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
   }
-  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
-    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
-  }
 
   // `ai.chat` is the read floor for the conversation endpoint — required
   // for every caller. Write tools are filtered separately below based on
@@ -106,24 +102,9 @@ async function handleAiChat(
   if (userOrResponse instanceof Response) return userOrResponse
   const user = userOrResponse
 
-  let rawBody: unknown
-  try {
-    rawBody = await req.json()
-  } catch {
-    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
-  }
-  const parsed = safeParseValue(ChatRequestBodySchema, rawBody)
-  if (!parsed.ok) {
-    return jsonResponse(
-      { error: `Invalid request body: ${formatValueErrors(ChatRequestBodySchema, rawBody)}` },
-      { status: 400 },
-    )
-  }
-  const { conversationId, prompt, snapshot } = parsed.value as {
-    conversationId: string
-    prompt: string
-    snapshot?: unknown
-  }
+  const chatBody = await readValidatedBody(req, ChatRequestBodySchema)
+  if (!chatBody) return badRequest('Invalid request body.')
+  const { conversationId, prompt, snapshot } = chatBody
 
   const conversation = await readConversationForUser(db, user.id, conversationId)
   if (!conversation) {

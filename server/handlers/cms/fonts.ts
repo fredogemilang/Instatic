@@ -34,8 +34,15 @@ import {
 import { getMediaAsset } from '../../repositories/media'
 import { listGoogleFonts } from '@core/fonts/googleDirectory'
 import { parseVariant } from '@core/fonts/variants'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../http'
-import { readString, type CmsHandlerOptions } from './shared'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
+import type { CmsHandlerOptions } from './shared'
+
+const GoogleFontSelectionBodySchema = Type.Object({
+  family: Type.String(),
+  variants: Type.Array(Type.String()),
+  subsets: Type.Array(Type.String()),
+})
 
 interface GoogleFontSelection {
   family: string
@@ -52,19 +59,13 @@ interface GoogleFontSelection {
 async function readGoogleFontSelectionBody(
   req: Request,
 ): Promise<GoogleFontSelection | Response> {
-  const body = await readJsonObject(req)
-  const family = readString(body, 'family')
-  const variants = Array.isArray(body.variants)
-    ? (body.variants as unknown[]).filter((v): v is string => typeof v === 'string')
-    : []
-  const subsets = Array.isArray(body.subsets)
-    ? (body.subsets as unknown[]).filter((s): s is string => typeof s === 'string')
-    : []
-
+  const body = await readValidatedBody(req, GoogleFontSelectionBodySchema)
+  if (!body) return badRequest('Invalid font selection body')
+  const family = body.family.trim()
   if (!family) return badRequest('Missing font family')
-  if (variants.length === 0) return badRequest('Pick at least one variant')
-  if (subsets.length === 0) return badRequest('Pick at least one subset')
-  return { family, variants, subsets }
+  if (body.variants.length === 0) return badRequest('Pick at least one variant')
+  if (body.subsets.length === 0) return badRequest('Pick at least one subset')
+  return { family, variants: body.variants, subsets: body.subsets }
 }
 
 export async function handleFontsRoutes(
@@ -104,10 +105,18 @@ export async function handleFontsRoutes(
     if (user instanceof Response) return user
     if (req.method !== 'POST') return methodNotAllowed()
 
-    const body = await readJsonObject(req)
-    const family = readString(body, 'family')
+    const CustomFontBodySchema = Type.Object({
+      family: Type.String(),
+      files: Type.Array(Type.Object({
+        mediaAssetId: Type.String(),
+        variant: Type.String(),
+      })),
+    })
+    const body = await readValidatedBody(req, CustomFontBodySchema)
+    if (!body) return badRequest('Invalid request body')
+    const family = body.family.trim()
     if (!family) return badRequest('Missing font family')
-    if (!Array.isArray(body.files) || body.files.length === 0) {
+    if (body.files.length === 0) {
       return badRequest('Upload at least one font file')
     }
 
@@ -115,13 +124,8 @@ export async function handleFontsRoutes(
     // MIME; the format is derived from the SNIFFED MIME (server-trusted), never
     // from the client. The variant must parse to a canonical weight/style.
     const resolved: ResolvedCustomFontFile[] = []
-    for (const raw of body.files as unknown[]) {
-      if (!raw || typeof raw !== 'object') {
-        return badRequest('Each font file must be an object')
-      }
-      const file = raw as Record<string, unknown>
-      const mediaAssetId = typeof file.mediaAssetId === 'string' ? file.mediaAssetId : ''
-      const variant = typeof file.variant === 'string' ? file.variant : ''
+    for (const file of body.files) {
+      const { mediaAssetId, variant } = file
       if (!mediaAssetId) return badRequest('Each font file needs a mediaAssetId')
       if (!parseVariant(variant)) {
         return badRequest(`Invalid font variant: "${variant}"`)

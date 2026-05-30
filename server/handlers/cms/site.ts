@@ -23,7 +23,8 @@ import {
   ForbiddenSiteChangeError,
   validateSiteWriteDiff,
 } from './siteDiff'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
 
 export async function handleSiteRoutes(req: Request, db: DbClient): Promise<Response | null> {
   const url = new URL(req.url)
@@ -41,7 +42,9 @@ export async function handleSiteRoutes(req: Request, db: DbClient): Promise<Resp
   }
 
   if (req.method === 'PUT') {
-    const body = await readJsonObject(req)
+    const SiteBodySchema = Type.Object({ site: Type.Unknown() })
+    const body = await readValidatedBody(req, SiteBodySchema)
+    if (!body) return badRequest('Invalid request body')
     try {
       const nextShell = validateSite(body.site)
       // Granular diff gate: walk the changes between the saved draft shell and

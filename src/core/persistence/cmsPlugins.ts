@@ -6,6 +6,12 @@ import type {
   PluginPermission,
 } from '@core/plugin-sdk'
 import { readEnvelope, assertOk } from '@core/http'
+import {
+  CmsPluginPackInstallSummarySchema,
+  CmsPluginSchedulesResponseEnvelopeSchema,
+  CmsPluginScheduleRunOutcomeEnvelopeSchema,
+} from './responseSchemas'
+import type { CmsPluginPackInstallSummary } from './responseSchemas'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
@@ -181,19 +187,6 @@ export async function restartCmsPlugin(
   }
 }
 
-export interface CmsPluginPackInstallSummary {
-  installed: {
-    visualComponents: { id: string; name: string }[]
-    pages: { id: string; title: string }[]
-    classes: { id: string; name: string }[]
-  }
-  replaced: {
-    visualComponents: string[]
-    pages: string[]
-    classes: string[]
-  }
-}
-
 export async function installCmsPluginPack(
   pluginId: string,
   fetchImpl: FetchLike = globalThis.fetch.bind(globalThis),
@@ -203,9 +196,7 @@ export async function installCmsPluginPack(
     method: 'POST',
     credentials: 'include',
   })
-  await assertOk(res, `CMS plugin pack install failed with ${res.status}`)
-  const body = (await res.json()) as CmsPluginPackInstallSummary
-  return body
+  return readEnvelope(res, CmsPluginPackInstallSummarySchema, `CMS plugin pack install failed with ${res.status}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -311,8 +302,17 @@ export async function listCmsPluginSchedules(
   const res = await fetchImpl(`${basePath}/plugins/${encodeURIComponent(pluginId)}/schedules`, {
     credentials: 'include',
   })
-  await assertOk(res, `CMS plugin schedules list failed with ${res.status}`)
-  return (await res.json()) as CmsPluginSchedulesResponse
+  const body = await readEnvelope(
+    res,
+    CmsPluginSchedulesResponseEnvelopeSchema,
+    `CMS plugin schedules list failed with ${res.status}`,
+  )
+  return {
+    // Deep types: schema uses Type.Unknown() because CmsPluginScheduleSummary
+    // has a `cadence: unknown` field; cast after envelope validation.
+    schedules: (body.schedules ?? []) as CmsPluginScheduleSummary[],
+    recent: (body.recent ?? {}) as Record<string, CmsPluginScheduleRunSummary[]>,
+  }
 }
 
 export async function runCmsPluginScheduleNow(
@@ -323,8 +323,7 @@ export async function runCmsPluginScheduleNow(
 ): Promise<{ outcome: { ok: boolean; status: string; error?: string; durationMs: number } }> {
   const url = `${basePath}/plugins/${encodeURIComponent(pluginId)}/schedules/${encodeURIComponent(scheduleId)}/run-now`
   const res = await fetchImpl(url, { method: 'POST', credentials: 'include' })
-  await assertOk(res, `CMS plugin schedule run-now failed with ${res.status}`)
-  return (await res.json()) as { outcome: { ok: boolean; status: string; error?: string; durationMs: number } }
+  return readEnvelope(res, CmsPluginScheduleRunOutcomeEnvelopeSchema, `CMS plugin schedule run-now failed with ${res.status}`)
 }
 
 export async function pauseCmsPluginSchedule(

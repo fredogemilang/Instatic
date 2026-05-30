@@ -31,8 +31,9 @@ import {
   badRequest,
   jsonResponse,
   methodNotAllowed,
-  readJsonObject,
+  readValidatedBody,
 } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
 import { CMS_API_PREFIX, type CmsHandlerOptions } from './shared'
 import type { MediaAssetRole } from '@core/plugin-sdk'
 import { mediaStorageRegistry } from '@core/plugins/mediaStorageRegistry'
@@ -58,9 +59,6 @@ const ALL_ROLES: ReadonlyArray<MediaAssetRole> = [
   'plugin-pack',
 ]
 
-function isMediaAssetRole(value: unknown): value is MediaAssetRole {
-  return typeof value === 'string' && (ALL_ROLES as ReadonlyArray<string>).includes(value)
-}
 
 async function handleListStorage(req: Request, db: DbClient): Promise<Response> {
   const user = await requireCapability(req, db, 'storage.elect')
@@ -125,19 +123,26 @@ async function handleListStorage(req: Request, db: DbClient): Promise<Response> 
   })
 }
 
+const ElectAdapterBodySchema = Type.Object({
+  role: Type.Union([
+    Type.Literal('original'),
+    Type.Literal('variant'),
+    Type.Literal('avatar'),
+    Type.Literal('font'),
+    Type.Literal('plugin-pack'),
+  ]),
+  adapterId: Type.String(),
+})
+
 async function handleElectAdapter(req: Request, db: DbClient): Promise<Response> {
   const user = await requireCapability(req, db, 'storage.elect')
   if (user instanceof Response) return user
 
-  const body = await readJsonObject(req)
-  const role = body['role']
-  const adapterIdRaw = body['adapterId']
-  if (!isMediaAssetRole(role)) {
+  const body = await readValidatedBody(req, ElectAdapterBodySchema)
+  if (!body) {
     return badRequest('Invalid `role` — must be one of: ' + ALL_ROLES.join(', '))
   }
-  if (typeof adapterIdRaw !== 'string') {
-    return badRequest('Invalid `adapterId` — must be a string ("" for local-disk)')
-  }
+  const { role, adapterId: adapterIdRaw } = body
   // Reject elections that point at an adapter id we have no record of.
   // The empty string (local-disk) is always allowed.
   if (adapterIdRaw !== '') {
@@ -158,17 +163,24 @@ async function handleElectAdapter(req: Request, db: DbClient): Promise<Response>
   return jsonResponse({ election })
 }
 
+const ElectDelegateBodySchema = Type.Object({
+  delegateId: Type.Union([Type.String(), Type.Null()]),
+})
+
 async function handleElectDelegate(req: Request, db: DbClient): Promise<Response> {
   const user = await requireCapability(req, db, 'storage.elect')
   if (user instanceof Response) return user
 
-  const body = await readJsonObject(req)
-  const delegateId = body['delegateId']
+  const body = await readValidatedBody(req, ElectDelegateBodySchema)
+  if (!body) {
+    return badRequest('Invalid `delegateId` — must be a non-empty string, or null to clear')
+  }
+  const { delegateId } = body
   if (delegateId === null) {
     await clearVariantDelegate(db)
     return jsonResponse({ electedDelegate: null })
   }
-  if (typeof delegateId !== 'string' || !delegateId) {
+  if (!delegateId) {
     return badRequest('Invalid `delegateId` — must be a non-empty string, or null to clear')
   }
   const delegate = mediaVariantDelegateRegistry.get(delegateId)

@@ -34,8 +34,7 @@ import { loadDraftSite } from '../../repositories/site'
 import { listDataTables } from '../../repositories/data/tables'
 import { listDataRows } from '../../repositories/data/rows'
 import { listMediaAssetsForExport } from '../../repositories/media'
-import { jsonResponse, readJsonObject } from '../../http'
-import { parseValue } from '@core/utils/typeboxHelpers'
+import { jsonResponse, readValidatedBody } from '../../http'
 import { CMS_API_PREFIX, type CmsHandlerOptions } from './shared'
 import { ExportRequestSchema, type SiteBundle } from '@core/data/bundleSchema'
 import { canSeeAllDataRows } from './data/access'
@@ -61,11 +60,8 @@ export async function handleExportRoute(
   let includeSite: boolean
 
   if (req.method === 'POST') {
-    const raw = await readJsonObject(req)
-    let exportReq
-    try {
-      exportReq = parseValue(ExportRequestSchema, raw)
-    } catch {
+    const exportReq = await readValidatedBody(req, ExportRequestSchema)
+    if (!exportReq) {
       return jsonResponse({ error: 'Invalid export request body' }, { status: 400 })
     }
     filterTables = exportReq.tables

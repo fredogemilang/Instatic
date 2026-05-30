@@ -66,8 +66,9 @@ import { evaluateFailedAttempt, evaluateLockState } from '../../auth/lockout'
 import { clientIp } from '../../auth/security'
 import { deriveDeviceLabel } from '../../auth/deviceLabel'
 import { findMatchingRecoveryCodeHash, verifyTotpCode } from '../../auth/mfa'
-import { jsonResponse, methodNotAllowed, readJsonObject, setCookieHeader } from '../../http'
-import { CMS_API_PREFIX, readString, requestAuditContext } from './shared'
+import { jsonResponse, methodNotAllowed, readValidatedBody, setCookieHeader } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
+import { CMS_API_PREFIX, requestAuditContext } from './shared'
 import { clearSessionCookie, getDummyPasswordHash, sessionCookie } from './session'
 
 type RouteParams = Record<string, string>
@@ -361,10 +362,12 @@ async function respondLoginSuccess(
   )
 }
 
+const LoginBodySchema = Type.Object({ email: Type.String(), password: Type.String() })
+
 async function handleLogin(req: Request, db: DbClient): Promise<Response> {
-  const body = await readJsonObject(req)
-  const email = readString(body, 'email').toLowerCase()
-  const password = readString(body, 'password')
+  const body = await readValidatedBody(req, LoginBodySchema)
+  const email = (body?.email ?? '').trim().toLowerCase()
+  const password = (body?.password ?? '').trim()
   const ip = clientIp(req)
 
   const ipBlock = await enforceLoginIpRateLimit(db, req, email, ip)
@@ -425,8 +428,9 @@ async function handleMfaVerify(req: Request, db: DbClient): Promise<Response> {
     return rateLimitedResponse('Too many MFA attempts. Try again later.', decision.retryAfterMs)
   }
 
-  const body = await readJsonObject(req)
-  const code = readString(body, 'code')
+  const MfaVerifyBodySchema = Type.Object({ code: Type.String() })
+  const body = await readValidatedBody(req, MfaVerifyBodySchema)
+  const code = body?.code ?? ''
   const totpOk = user.mfaTotpSecret ? verifyTotpCode(user.mfaTotpSecret, code) : false
   const recoveryHash = findMatchingRecoveryCodeHash(code, user.mfaRecoveryCodeHashes)
   if (!totpOk && !recoveryHash) {
@@ -802,9 +806,10 @@ async function handleStepUp(req: Request, db: DbClient): Promise<Response> {
     return recordStepUpRateLimit(db, req, user, ip, 'tuple', decision.retryAfterMs)
   }
 
-  const body = await readJsonObject(req)
-  const password = readString(body, 'password')
-  const mfaCode = readString(body, 'mfaCode')
+  const StepUpBodySchema = Type.Object({ password: Type.String(), mfaCode: Type.Optional(Type.String()) })
+  const body = await readValidatedBody(req, StepUpBodySchema)
+  const password = (body?.password ?? '').trim()
+  const mfaCode = (body?.mfaCode ?? '').trim()
   const passwordOk = await verifyPassword(password, user.passwordHash)
   if (!passwordOk) {
     return recordStepUpPasswordFailure(db, req, user, ip)

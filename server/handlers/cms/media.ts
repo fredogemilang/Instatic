@@ -48,8 +48,9 @@ import {
   updateMediaAssetMetadata,
   type UpdateMediaAssetMetadataInput,
 } from '../../repositories/media'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../http'
-import { CMS_API_PREFIX, readString, type CmsHandlerOptions } from './shared'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
+import { CMS_API_PREFIX, type CmsHandlerOptions } from './shared'
 import {
   EXTENSION_FOR_MIME,
   acceptReplacementMedia,
@@ -68,19 +69,6 @@ const MEDIA_LIBRARY_MIMES = Object.keys(EXTENSION_FOR_MIME) as Array<
 
 const MEDIA_PREFIX = `${CMS_API_PREFIX}/media`
 
-function readOptionalStringArray(body: Record<string, unknown>, key: string): string[] | null {
-  const value = body[key]
-  if (value === undefined) return null
-  if (!Array.isArray(value)) return null
-  return value.filter((entry): entry is string => typeof entry === 'string')
-}
-
-function readOptionalString(body: Record<string, unknown>, key: string): string | null {
-  const value = body[key]
-  if (value === undefined) return null
-  return typeof value === 'string' ? value : null
-}
-
 function notFound(): Response {
   return jsonResponse({ error: 'Media asset not found' }, { status: 404 })
 }
@@ -96,26 +84,30 @@ function readQueryFlag(url: URL, key: string): boolean {
   return value === '1' || value === 'true'
 }
 
-function readMetadataPatch(body: Record<string, unknown>): UpdateMediaAssetMetadataInput | Response {
+const UpdateMediaMetadataBodySchema = Type.Object({
+  filename: Type.Optional(Type.String()),
+  altText: Type.Optional(Type.String()),
+  caption: Type.Optional(Type.String()),
+  title: Type.Optional(Type.String()),
+  tags: Type.Optional(Type.Array(Type.String())),
+})
+
+function buildMetadataPatch(body: { filename?: string; altText?: string; caption?: string; title?: string; tags?: string[] }): UpdateMediaAssetMetadataInput | Response {
   // PATCH accepts any subset of:
   //   filename, altText, caption, title, tags (string[])
   // Filename keeps the historical contract: when present-but-empty, that's
   // a 400. Other fields tolerate empty strings (clearing alt-text / caption
   // is a real operation).
   const patch: UpdateMediaAssetMetadataInput = {}
-  if (body['filename'] !== undefined) {
-    const filename = readString(body, 'filename')
+  if (body.filename !== undefined) {
+    const filename = body.filename.trim()
     if (!filename) return badRequest('Filename is required')
     patch.filename = filename
   }
-  const altText = readOptionalString(body, 'altText')
-  if (altText !== null) patch.altText = altText
-  const caption = readOptionalString(body, 'caption')
-  if (caption !== null) patch.caption = caption
-  const title = readOptionalString(body, 'title')
-  if (title !== null) patch.title = title
-  const tags = readOptionalStringArray(body, 'tags')
-  if (tags !== null) patch.tags = tags
+  if (body.altText !== undefined) patch.altText = body.altText
+  if (body.caption !== undefined) patch.caption = body.caption
+  if (body.title !== undefined) patch.title = body.title
+  if (body.tags !== undefined) patch.tags = body.tags
   return patch
 }
 
@@ -228,9 +220,14 @@ async function handleAssignMediaFolders(
   const user = await requireCapability(req, db, 'media.write')
   if (user instanceof Response) return user
 
-  const body = await readJsonObject(req)
-  const add = readOptionalStringArray(body, 'add') ?? []
-  const remove = readOptionalStringArray(body, 'remove') ?? []
+  const AssignFoldersBodySchema = Type.Object({
+    add: Type.Optional(Type.Array(Type.String())),
+    remove: Type.Optional(Type.Array(Type.String())),
+  })
+  const body = await readValidatedBody(req, AssignFoldersBodySchema)
+  if (!body) return badRequest('Invalid request body')
+  const add = body.add ?? []
+  const remove = body.remove ?? []
   if (add.length === 0 && remove.length === 0) {
     return badRequest('Provide `add` or `remove` folder ids')
   }
@@ -248,8 +245,9 @@ async function handleUpdateMediaMetadata(
   const user = await requireCapability(req, db, 'media.write')
   if (user instanceof Response) return user
 
-  const body = await readJsonObject(req)
-  const patch = readMetadataPatch(body)
+  const body = await readValidatedBody(req, UpdateMediaMetadataBodySchema)
+  if (!body) return badRequest('Invalid request body')
+  const patch = buildMetadataPatch(body)
   if (patch instanceof Response) return patch
   if (Object.keys(patch).length === 0) return badRequest('No editable fields supplied')
 

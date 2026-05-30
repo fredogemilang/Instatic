@@ -33,8 +33,8 @@ import {
   parseVirtualVCPageId,
 } from '@core/visualComponents/virtualPage'
 import type { Page, SiteDocument, SiteShell } from '@core/page-tree'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../http'
-import { readObject, readString } from './shared'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
 
 function runtimeDependencyMap(raw: unknown): Record<string, string> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
@@ -89,7 +89,9 @@ export async function handleRuntimeRoutes(req: Request, db: DbClient): Promise<R
     if (user instanceof Response) return user
     if (req.method !== 'POST') return methodNotAllowed()
 
-    const body = await readJsonObject(req)
+    const RuntimeDependencyBodySchema = Type.Object({ packageJson: Type.Unknown() })
+    const body = await readValidatedBody(req, RuntimeDependencyBodySchema)
+    if (!body) return badRequest('Invalid request body')
     try {
       const packageJson = runtimeRequestPackageJson(body.packageJson)
       const dependencyLock = await resolveSiteDependencyLock(packageJson)
@@ -138,19 +140,28 @@ export async function handleRuntimeRoutes(req: Request, db: DbClient): Promise<R
     if (user instanceof Response) return user
     if (req.method !== 'POST') return methodNotAllowed()
 
-    const body = await readJsonObject(req)
-    const pageId = readString(body, 'pageId')
-    const breakpointId = readString(body, 'breakpointId') || undefined
-    const templateContext = readObject<TemplateRenderDataContext>(body, 'templateContext')
+    const RuntimePreviewBodySchema = Type.Object({
+      pageId: Type.String(),
+      breakpointId: Type.Optional(Type.String()),
+      // templateContext is a complex TemplateRenderDataContext — unknown here, cast below
+      templateContext: Type.Optional(Type.Unknown()),
+      site: Type.Record(Type.String(), Type.Unknown()),
+    })
+    const body = await readValidatedBody(req, RuntimePreviewBodySchema)
+    if (!body) return badRequest('Invalid request body')
+    const pageId = body.pageId.trim()
+    const breakpointId = body.breakpointId?.trim() || undefined
+    // TemplateRenderDataContext has deep-nested types that can't be modelled in
+    // TypeBox without mirroring the full interface — pass through as-is.
+    const templateContext = body.templateContext as TemplateRenderDataContext | undefined
     if (!pageId) return badRequest('Missing pageId')
 
     try {
       const shell: SiteShell = validateSite(body.site)
       // The editor sends the full in-memory SiteDocument (shell + pages + VCs).
       // Parse each component separately so validateVisualComponents can run.
-      const rawSite = body.site as Record<string, unknown> | null
-      const rawPages = Array.isArray(rawSite?.pages) ? rawSite.pages as unknown[] : []
-      const rawVCs = Array.isArray(rawSite?.visualComponents) ? rawSite.visualComponents as unknown[] : []
+      const rawPages = Array.isArray(body.site.pages) ? body.site.pages : []
+      const rawVCs = Array.isArray(body.site.visualComponents) ? body.site.visualComponents : []
       const parsedVCs = rawVCs.flatMap((raw) => {
         const vc = parseVisualComponent(raw)
         return vc ? [vc] : []

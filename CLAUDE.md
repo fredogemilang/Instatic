@@ -169,7 +169,7 @@ Every untyped boundary uses TypeBox. Inside the boundary, code trusts the parsed
 
 - **HTTP responses (client):** use the canonical client `apiRequest(path, { schema, … })` from `@core/http`. It sets `credentials`, serializes a JSON body, validates the success body against `schema`, and throws a single `ApiError` (carrying the HTTP status) on failure — detect cancellation with `isAbortError(err)`. Do NOT hand-roll `fetch` + `res.ok` + `res.json()` in admin code. The persistence layer performs its own injectable `fetch` and hands the response to `readEnvelope(res, Schema, fallbackMessage)` (same `@core/http`, also throws `ApiError`).
 - **`JSON.parse` of persisted data:** `safeParseJson(raw, Schema)` for hard, `parseJsonWithFallback(raw, Schema, default)` for soft.
-- **Request bodies (server):** validate with a TypeBox schema before handing to handlers. Helpers in `server/http.ts`.
+- **Request bodies (server):** validate with a TypeBox schema before handing to handlers. The single shared body-parsing entry point is `readValidatedBody(req, Schema)` in `server/http.ts`.
 - **Plugin manifests:** `parsePluginManifest` in `src/core/plugins/manifest.ts`.
 - **Site documents loaded from storage:** `validateSite` in `src/core/persistence/validate.ts`.
 
@@ -197,7 +197,7 @@ Every untyped boundary uses TypeBox. Inside the boundary, code trusts the parsed
 - `catch (err) {}` — silently swallowing. If genuinely safe, name it (`catch (_err)`) and add a one-line comment.
 - `console.log` in production code. Use `console.error` / `console.warn` with a `[<module>]` prefix, or remove the log.
 - Re-throwing a wrapped `Error` that loses the original stack. Use `new Error(message, { cause: err })`.
-- `as Foo` at a JSON / HTTP / `JSON.parse` boundary. Use a TypeBox schema instead.
+- `as Foo` at a JSON / HTTP / `JSON.parse` boundary. Use a TypeBox schema instead. Gated by `boundary-validation.test.ts` (rules 1–4 cover `res.json() as`, `JSON.parse as`, raw `fetch()`, and raw `req.json()`).
 - Importing `zod` anywhere outside `server/handlers/agent/tools.ts`. (The exemption exists because `@anthropic-ai/claude-agent-sdk`'s `tool()` API has an `AnyZodRawShape` constraint TypeBox can't satisfy.)
 
 ---

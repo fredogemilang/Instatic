@@ -265,3 +265,58 @@ export const CmsFontEstimateEnvelopeSchema = Type.Object({
 })
 
 export type CmsFontEstimateDto = Static<typeof CmsFontEstimateEnvelopeSchema>
+
+// ---------------------------------------------------------------------------
+// cmsPlugins.ts — plugin pack install + schedules + schedule run envelopes
+// ---------------------------------------------------------------------------
+
+/**
+ * Full response body from POST /admin/api/cms/plugins/:id/pack/install.
+ * Schema is the source of truth; the TS type is derived via Static<>.
+ */
+export const CmsPluginPackInstallSummarySchema = Type.Object(
+  {
+    installed: Type.Object({
+      visualComponents: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
+      pages: Type.Array(Type.Object({ id: Type.String(), title: Type.String() })),
+      classes: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
+    }),
+    replaced: Type.Object({
+      visualComponents: Type.Array(Type.String()),
+      pages: Type.Array(Type.String()),
+      classes: Type.Array(Type.String()),
+    }),
+  },
+  { additionalProperties: true },
+)
+
+export type CmsPluginPackInstallSummary = Static<typeof CmsPluginPackInstallSummarySchema>
+
+/**
+ * Envelope for GET /admin/api/cms/plugins/:id/schedules.
+ * CmsPluginScheduleSummary has a `cadence: unknown` field and the per-schedule
+ * run arrays are deep; both pass through as Type.Unknown() and are cast at the
+ * call site.
+ */
+export const CmsPluginSchedulesResponseEnvelopeSchema = Type.Object(
+  {
+    schedules: Type.Optional(Type.Array(Type.Unknown())),
+    recent: Type.Optional(Type.Unknown()),
+  },
+  { additionalProperties: true },
+)
+
+/**
+ * Envelope for POST /admin/api/cms/plugins/:id/schedules/:id/run-now.
+ */
+export const CmsPluginScheduleRunOutcomeEnvelopeSchema = Type.Object(
+  {
+    outcome: Type.Object({
+      ok: Type.Boolean(),
+      status: Type.String(),
+      error: Type.Optional(Type.String()),
+      durationMs: Type.Number(),
+    }),
+  },
+  { additionalProperties: true },
+)

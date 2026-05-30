@@ -22,7 +22,8 @@ import type {
   MediaStorageServingMode,
   MediaStorageVerifyResult,
 } from '@core/plugin-sdk'
-import { readEnvelope } from '@core/http'
+import { readEnvelope, responseErrorMessage } from '@core/http'
+import { safeParseJson } from '@core/utils/jsonValidate'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
@@ -100,12 +101,19 @@ export type MigrationRole = 'original' | 'variant'
  * server sends from `handleMediaStorageMigrate`. The UI uses these to
  * render a live progress bar + per-asset status; on `done` or `error`
  * the stream completes.
+ *
+ * Schema is the source of truth; used with `safeParseJson` for every
+ * NDJSON frame so malformed frames are silently skipped rather than
+ * trusted via a cast.
  */
-export type CmsMediaMigrationEvent =
-  | { kind: 'started'; total: number; role: MigrationRole; toAdapterId: string }
-  | { kind: 'progress'; id: string; ok: boolean; migrated: number; total: number; error?: string }
-  | { kind: 'done'; migrated: number; failed: number; total: number }
-  | { kind: 'error'; message: string }
+export const CmsMediaMigrationEventSchema = Type.Union([
+  Type.Object({ kind: Type.Literal('started'), total: Type.Number(), role: Type.Union([Type.Literal('original'), Type.Literal('variant')]), toAdapterId: Type.String() }),
+  Type.Object({ kind: Type.Literal('progress'), id: Type.String(), ok: Type.Boolean(), migrated: Type.Number(), total: Type.Number(), error: Type.Optional(Type.String()) }),
+  Type.Object({ kind: Type.Literal('done'), migrated: Type.Number(), failed: Type.Number(), total: Type.Number() }),
+  Type.Object({ kind: Type.Literal('error'), message: Type.String() }),
+])
+
+export type CmsMediaMigrationEvent = Static<typeof CmsMediaMigrationEventSchema>
 
 // ---------------------------------------------------------------------------
 // Envelopes
@@ -332,13 +340,7 @@ export async function startCmsMediaMigration(
     signal: controller.signal,
   })
   if (!res.ok) {
-    let message: string
-    try {
-      const body = await res.json() as { error?: unknown }
-      message = typeof body.error === 'string' ? body.error : `Migration failed with ${res.status}`
-    } catch {
-      message = `Migration failed with ${res.status}`
-    }
+    const message = await responseErrorMessage(res, `Migration failed with ${res.status}`)
     throw new Error(message)
   }
   if (!res.body) {
@@ -358,15 +360,11 @@ export async function startCmsMediaMigration(
         const parsed = parseSseFrames(buffer)
         buffer = parsed.rest
         for (const frame of parsed.frames) {
-          let event: CmsMediaMigrationEvent | null = null
-          try {
-            event = JSON.parse(frame.data) as CmsMediaMigrationEvent
-          } catch {
-            // Skip malformed frames silently — the next `done` / `error`
-            // event will terminate the stream cleanly.
-          }
-          if (event) yield event
-          if (event && (event.kind === 'done' || event.kind === 'error')) return
+          const result = safeParseJson(frame.data, CmsMediaMigrationEventSchema)
+          if (!result.ok) continue // Skip malformed frames silently — the next `done` / `error` event will terminate the stream cleanly.
+          const event = result.value
+          yield event
+          if (event.kind === 'done' || event.kind === 'error') return
         }
       }
     } finally {

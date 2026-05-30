@@ -47,7 +47,8 @@ import {
   deactivatePluginModulePack,
 } from '@core/plugins/modulePackLoader'
 import { broadcastPluginEvent } from '../../../plugins/eventBroadcaster'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../../http'
+import { Type } from '@core/utils/typeboxHelpers'
 import { type CmsHandlerOptions } from '../shared'
 import {
   assertPluginPermissionGrants,
@@ -77,16 +78,19 @@ export async function handlePluginsCollection(
   }
 
   if (req.method === 'POST') {
-    const body = await readJsonObject(req)
+    const PluginInstallBodySchema = Type.Object({
+      manifest: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+      grantedPermissions: Type.Optional(Type.Unknown()),
+    })
+    const body = await readValidatedBody(req, PluginInstallBodySchema)
+    if (!body) return badRequest('Invalid plugin manifest')
     try {
       // JSON-installed plugins have no on-disk package — only the zip-install
       // path writes files and assigns `assetBasePath`. Drop any caller-supplied
       // value before validating so a malicious manifest cannot point the
       // filesystem sinks at attacker-chosen paths.
-      const rawManifest = body.manifest ?? body
-      const sanitizedInput = rawManifest && typeof rawManifest === 'object' && !Array.isArray(rawManifest)
-        ? { ...(rawManifest as Record<string, unknown>), assetBasePath: undefined }
-        : rawManifest
+      const rawManifest: Record<string, unknown> = body.manifest ?? body
+      const sanitizedInput = { ...rawManifest, assetBasePath: undefined }
       const manifest = parsePluginManifest(sanitizedInput)
       const grantedPermissions = readPermissionGrants(body.grantedPermissions)
       const grantError = assertPluginPermissionGrants(manifest, grantedPermissions)

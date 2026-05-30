@@ -33,31 +33,8 @@ import {
   type UpdateMediaFolderInput,
 } from '../../repositories/mediaFolders'
 import { slugFromTitle } from '@core/utils/slug'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../http'
-
-function readNonEmptyString(body: Record<string, unknown>, key: string): string | null {
-  const value = body[key]
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
-}
-
-function readParentId(body: Record<string, unknown>): string | null | undefined {
-  // Three states matter:
-  //   - omitted             → undefined → keep existing parent on update
-  //   - null                → null      → move to root
-  //   - non-empty string    → string    → reparent under that folder id
-  // Anything else (number, empty string, object) → 400-worthy, caller decides
-  if (!('parentId' in body)) return undefined
-  const value = body['parentId']
-  if (value === null) return null
-  if (typeof value === 'string' && value.length > 0) return value
-  return undefined
-}
-
-function readSortOrder(body: Record<string, unknown>): number | null {
-  const value = body['sortOrder']
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  return null
-}
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
 
 export async function handleMediaFolderRoutes(
   req: Request,
@@ -78,12 +55,15 @@ export async function handleMediaFolderRoutes(
     }
 
     if (req.method === 'POST') {
-      const body = await readJsonObject(req)
-      const name = readNonEmptyString(body, 'name')
+      const CreateFolderBodySchema = Type.Object({
+        name: Type.String(),
+        parentId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      })
+      const body = await readValidatedBody(req, CreateFolderBodySchema)
+      if (!body) return badRequest('Invalid request body')
+      const name = body.name.trim()
       if (!name) return badRequest('Folder name is required')
-
-      const parentRaw = readParentId(body) ?? null
-      const parentId = parentRaw === undefined ? null : parentRaw
+      const parentId = body.parentId ?? null
 
       if (parentId !== null) {
         const parent = await getMediaFolder(db, parentId)
@@ -120,28 +100,36 @@ export async function handleMediaFolderRoutes(
     const folderId = decodeURIComponent(folderItemMatch[1])
 
     if (req.method === 'PATCH') {
-      const body = await readJsonObject(req)
+      const PatchFolderBodySchema = Type.Object({
+        name: Type.Optional(Type.String()),
+        // Three states: undefined = keep existing parent, null = move to root,
+        // string = reparent to that folder id.
+        parentId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        sortOrder: Type.Optional(Type.Number()),
+      })
+      const body = await readValidatedBody(req, PatchFolderBodySchema)
+      if (!body) return badRequest('Invalid request body')
       const existing = await getMediaFolder(db, folderId)
       if (!existing) return jsonResponse({ error: 'Folder not found' }, { status: 404 })
 
       const patch: UpdateMediaFolderInput = {}
 
-      const name = readNonEmptyString(body, 'name')
-      if (name) {
+      if (body.name !== undefined) {
+        const name = body.name.trim()
+        if (!name) return badRequest('A non-empty folder name is required')
         patch.name = name
         const slug = slugFromTitle(name) || nanoid(8).toLowerCase()
         // The slug derives from the name — the user can't set it directly.
         // Re-check uniqueness against the new (parent, slug) pair.
-        const targetParent = readParentId(body)
-        const effectiveParent = targetParent !== undefined ? targetParent : existing.parentId
+        const effectiveParent = body.parentId !== undefined ? body.parentId : existing.parentId
         if (await isMediaFolderSlugTaken(db, effectiveParent, slug, folderId)) {
           return badRequest(`A folder with the slug "${slug}" already exists here`)
         }
         patch.slug = slug
       }
 
-      const parentRaw = readParentId(body)
-      if (parentRaw !== undefined) {
+      if (body.parentId !== undefined) {
+        const parentRaw = body.parentId
         // Forbid making a folder its own ancestor — walk up the parent chain
         // from the candidate parent and reject if we run into `folderId`.
         if (parentRaw === folderId) {
@@ -162,8 +150,7 @@ export async function handleMediaFolderRoutes(
         patch.parentId = parentRaw
       }
 
-      const sortOrder = readSortOrder(body)
-      if (sortOrder !== null) patch.sortOrder = sortOrder
+      if (body.sortOrder !== undefined) patch.sortOrder = body.sortOrder
 
       if (Object.keys(patch).length === 0) {
         return badRequest('No editable fields supplied')

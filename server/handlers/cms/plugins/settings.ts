@@ -22,7 +22,8 @@ import {
 } from '@core/plugin-sdk'
 import { refreshPluginSettingsCache } from '../../../plugins/runtime'
 import { hookBus } from '@core/plugins/hookBus'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../../http'
+import { Type } from '@core/utils/typeboxHelpers'
 import { requestAuditContext } from '../shared'
 import { pluginNotFound } from './shared'
 
@@ -54,7 +55,9 @@ export async function handlePluginSettings(
   }
 
   if (req.method === 'PUT') {
-    const body = await readJsonObject(req)
+    const PluginSettingsBodySchema = Type.Object({ settings: Type.Optional(Type.Unknown()) })
+    const body = await readValidatedBody(req, PluginSettingsBodySchema)
+    if (!body) return badRequest('Invalid request body')
     let cleaned: Record<string, string | number | boolean>
     try {
       cleaned = validatePluginSettingsRecord(declared, body.settings ?? body)

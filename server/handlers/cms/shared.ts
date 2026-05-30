@@ -1,9 +1,6 @@
 /**
  * Shared helpers used by every handler in `server/handlers/cms/*`.
  *
- * - Body readers (`readString`, `readObject`, `readNullableString`,
- *   `readValidatedBody`) — narrow `Record<string, unknown>` access into
- *   the typed shape each route expects.
  * - `requestAuditContext` — the `(ipAddress, userAgent)` pair every audit
  *   event carries.
  * - `mutationErrorResponse` — translates the typed mutation errors thrown
@@ -14,9 +11,8 @@
  * handler module can pull them in without dragging the rest of the CMS
  * surface along with it.
  */
-import type { Static, TSchema } from '@sinclair/typebox'
-import { Type, Value } from '@core/utils/typeboxHelpers'
-import { jsonResponse, readJsonObject } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
+import { jsonResponse } from '../../http'
 import { clientIp } from '../../auth/security'
 import { UserMutationError } from '../../repositories/users'
 import { RoleMutationError } from '../../repositories/roles'
@@ -35,26 +31,6 @@ export interface CmsHandlerOptions {
    * branch on `db.dialect` instead of inspecting the URL themselves.
    */
   databaseUrl?: string
-}
-
-export function readString(body: Record<string, unknown>, key: string): string {
-  const value = body[key]
-  return typeof value === 'string' ? value.trim() : ''
-}
-
-export async function readValidatedBody<T extends TSchema>(
-  req: Request,
-  schema: T,
-): Promise<Static<T> | null> {
-  const body = await readJsonObject(req)
-  return Value.Check(schema, body) ? Value.Decode(schema, body) as Static<T> : null
-}
-
-export function readObject<T>(body: Record<string, unknown>, key: string): T | undefined {
-  const value = body[key]
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as T
-    : undefined
 }
 
 export function requestAuditContext(req: Request): { ipAddress: string | null; userAgent: string | null } {

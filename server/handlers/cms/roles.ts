@@ -18,11 +18,10 @@ import {
 } from '../../repositories/roles'
 import { normalizeCapabilities } from '../../auth/capabilities'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, methodNotAllowed } from '../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
 import {
   CMS_API_PREFIX,
   mutationErrorResponse,
-  readValidatedBody,
   requestAuditContext,
 } from './shared'
 

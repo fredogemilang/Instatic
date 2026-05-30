@@ -41,7 +41,15 @@ import {
   AI_DEFAULTS_PATH,
 } from './agentConfig'
 import { safeParseJson } from '@core/utils/jsonValidate'
-import { apiRequest } from '@core/http'
+import { apiRequest, ApiError } from '@core/http'
+import {
+  listConversations,
+  getConversation,
+  deleteConversation,
+  updateConversationProvider,
+  type ConversationView,
+  type ConversationDetail,
+} from '@admin/ai/api'
 import type {
   AgentActionResult,
   AgentModuleContext,
@@ -140,45 +148,6 @@ const ServerStreamEventSchema = Type.Union([
 // Slice interface
 // ---------------------------------------------------------------------------
 
-/**
- * Summary view of a conversation as shown in the history popover. Wire shape
- * mirrors `ConversationView` from `server/ai/conversations/types.ts`.
- */
-export interface AgentConversationSummary {
-  id: string
-  title: string
-  credentialId: string | null
-  modelId: string
-  updatedAt: string
-}
-
-/**
- * Wire shape returned by `GET /admin/api/ai/conversations/:id`. Used by
- * `loadAgentConversation` to hydrate the visible thread when the user opens
- * a past chat.
- */
-interface ConversationDetailWire {
-  id: string
-  title: string
-  credentialId: string | null
-  modelId: string
-  promptTokensTotal: number
-  completionTokensTotal: number
-  costUsdTotal: number
-  createdAt: string
-  updatedAt: string
-  contextJson: string | null
-  messages: Array<{
-    id: string
-    position: number
-    role: 'user' | 'assistant' | 'tool'
-    content: Array<{ kind: 'text'; text: string } | { kind: 'image'; mimeType: string; data: string } | { kind: 'toolCall'; toolCallId: string; toolName: string; input: unknown }>
-    toolCallId: string | null
-    toolName: string | null
-    createdAt: string
-  }>
-}
-
 export interface AgentSlice {
   // ── UI state ───────────────────────────────────────────────────────────────
   isAgentOpen: boolean
@@ -197,7 +166,7 @@ export interface AgentSlice {
   agentActiveCredentialId: string | null
   agentActiveModelId: string | null
   /** Conversation summaries for the history popover. */
-  agentConversations: AgentConversationSummary[]
+  agentConversations: ConversationView[]
 
   // ── Actions ────────────────────────────────────────────────────────────────
   openAgent(): void
@@ -353,7 +322,7 @@ async function postToolResult(
  * messages would).
  */
 function rehydrateMessages(
-  records: ConversationDetailWire['messages'],
+  records: ConversationDetail['messages'],
 ): AgentMessage[] {
   const out: AgentMessage[] = []
   const toolCallIndex = new Map<string, AgentToolCall>() // toolCallId → block
@@ -590,10 +559,8 @@ export function createAgentSlice(
 
     async loadAgentConversations() {
       try {
-        const res = await fetch(`${AI_CONVERSATIONS_PATH}?scope=${config.scope}`)
-        if (!res.ok) return
-        const body = await res.json() as { conversations: AgentConversationSummary[] }
-        set({ agentConversations: body.conversations })
+        const conversations = await listConversations(config.scope)
+        set({ agentConversations: conversations })
       } catch (err) {
         console.error('[AgentSlice] Failed to load conversations:', err)
       }
@@ -601,31 +568,25 @@ export function createAgentSlice(
 
     async loadAgentConversation(id: string) {
       try {
-        const res = await fetch(`${AI_CONVERSATIONS_PATH}/${encodeURIComponent(id)}`)
-        if (!res.ok) {
-          set({ agentError: 'Conversation not found.' })
-          return
-        }
-        const body = await res.json() as { conversation: ConversationDetailWire }
+        const conv = await getConversation(id)
         set({
-          agentConversationId: body.conversation.id,
-          agentActiveCredentialId: body.conversation.credentialId,
-          agentActiveModelId: body.conversation.modelId,
-          agentMessages: rehydrateMessages(body.conversation.messages),
+          agentConversationId: conv.id,
+          agentActiveCredentialId: conv.credentialId,
+          agentActiveModelId: conv.modelId,
+          agentMessages: rehydrateMessages(conv.messages),
           agentError: null,
         })
       } catch (err) {
         console.error('[AgentSlice] Failed to load conversation:', err)
-        set({ agentError: 'Failed to load conversation.' })
+        set({
+          agentError: err instanceof ApiError ? err.message : 'Failed to load conversation.',
+        })
       }
     },
 
     async deleteAgentConversation(id: string) {
       try {
-        const res = await fetch(`${AI_CONVERSATIONS_PATH}/${encodeURIComponent(id)}`, {
-          method: 'DELETE',
-        })
-        if (!res.ok) return
+        await deleteConversation(id)
         set((state) => {
           state.agentConversations = state.agentConversations.filter((c) => c.id !== id)
           if (state.agentConversationId === id) {
@@ -647,14 +608,7 @@ export function createAgentSlice(
       set({ agentActiveCredentialId: credentialId, agentActiveModelId: modelId })
       if (!currentId) return  // staged for the next conversation-create call
       try {
-        const res = await fetch(`${AI_CONVERSATIONS_PATH}/${encodeURIComponent(currentId)}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credentialId, modelId }),
-        })
-        if (!res.ok) {
-          set({ agentError: 'Failed to update conversation provider.' })
-        }
+        await updateConversationProvider(currentId, credentialId, modelId)
       } catch (err) {
         console.error('[AgentSlice] Failed to update provider:', err)
         set({ agentError: 'Failed to update conversation provider.' })

@@ -7,9 +7,8 @@
  * `ai-credentials-never-leak.test.ts`.
  */
 
-import { Type, safeParseValue, formatValueErrors, type Static } from '@core/utils/typeboxHelpers'
-import { jsonResponse } from '../../http'
-import { isStateChangingMethod, originAllowed } from '../../auth/security'
+import { Type } from '@core/utils/typeboxHelpers'
+import { jsonResponse, readValidatedBody, badRequest } from '../../http'
 import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
 import { createAuditEvent } from '../../repositories/audit'
@@ -95,29 +94,14 @@ async function handleList(req: Request, db: DbClient): Promise<Response> {
 }
 
 async function handleCreate(req: Request, db: DbClient): Promise<Response> {
-  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
-    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
-  }
   const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  let rawBody: unknown
-  try { rawBody = await req.json() } catch {
-    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
-  }
-  const parsed = safeParseValue(CreateBodySchema, rawBody)
-  if (!parsed.ok) {
-    return jsonResponse(
-      { error: `Invalid request body: ${formatValueErrors(CreateBodySchema, rawBody)}` },
-      { status: 400 },
-    )
-  }
+  const body = await readValidatedBody(req, CreateBodySchema)
+  if (!body) return badRequest('Invalid request body.')
+
   try {
-    const record = await createCredentialForUser(
-      db,
-      userOrResponse.id,
-      parsed.value as Static<typeof CreateBodySchema>,
-    )
+    const record = await createCredentialForUser(db, userOrResponse.id, body)
     await createAuditEvent(db, {
       actorUserId: userOrResponse.id,
       action: 'ai.credential.created',
@@ -150,32 +134,15 @@ async function dispatchItem(req: Request, db: DbClient, id: string): Promise<Res
 }
 
 async function handleUpdate(req: Request, db: DbClient, id: string): Promise<Response> {
-  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
-    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
-  }
   const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  let rawBody: unknown
-  try { rawBody = await req.json() } catch {
-    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
-  }
-  const parsed = safeParseValue(UpdateBodySchema, rawBody)
-  if (!parsed.ok) {
-    return jsonResponse(
-      { error: `Invalid request body: ${formatValueErrors(UpdateBodySchema, rawBody)}` },
-      { status: 400 },
-    )
-  }
+  const body = await readValidatedBody(req, UpdateBodySchema)
+  if (!body) return badRequest('Invalid request body.')
+
   try {
-    const record = await updateCredentialForUser(
-      db,
-      userOrResponse.id,
-      id,
-      parsed.value as Static<typeof UpdateBodySchema>,
-    )
+    const record = await updateCredentialForUser(db, userOrResponse.id, id, body)
     if (!record) return jsonResponse({ error: 'Credential not found' }, { status: 404 })
-    const patch = parsed.value as Static<typeof UpdateBodySchema>
     await createAuditEvent(db, {
       actorUserId: userOrResponse.id,
       action: 'ai.credential.updated',
@@ -186,9 +153,9 @@ async function handleUpdate(req: Request, db: DbClient, id: string): Promise<Res
         displayLabel: record.displayLabel,
         // Only record which fields were touched — never the key itself.
         fieldsTouched: [
-          patch.displayLabel !== undefined ? 'displayLabel' : null,
-          patch.apiKey !== undefined ? 'apiKey' : null,
-          patch.baseUrl !== undefined ? 'baseUrl' : null,
+          body.displayLabel !== undefined ? 'displayLabel' : null,
+          body.apiKey !== undefined ? 'apiKey' : null,
+          body.baseUrl !== undefined ? 'baseUrl' : null,
         ].filter((v): v is string => v !== null),
       },
     })
@@ -203,9 +170,6 @@ async function handleUpdate(req: Request, db: DbClient, id: string): Promise<Res
 }
 
 async function handleDelete(req: Request, db: DbClient, id: string): Promise<Response> {
-  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
-    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
-  }
   const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
   if (userOrResponse instanceof Response) return userOrResponse
 
@@ -245,9 +209,6 @@ async function handleDelete(req: Request, db: DbClient, id: string): Promise<Res
 async function dispatchTest(req: Request, db: DbClient, id: string): Promise<Response> {
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
-  }
-  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
-    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
   }
   const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
   if (userOrResponse instanceof Response) return userOrResponse

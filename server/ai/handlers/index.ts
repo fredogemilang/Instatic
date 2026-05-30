@@ -8,6 +8,8 @@
  */
 
 import type { DbClient } from '../../db/client'
+import { jsonResponse } from '../../http'
+import { isStateChangingMethod, originAllowed } from '../../auth/security'
 import { tryHandleAiAudit } from './audit'
 import { tryHandleAiChat } from './chat'
 import { tryHandleAiToolResult } from './toolResult'
@@ -23,6 +25,13 @@ export function tryHandleAi(
 ): Promise<Response> | null {
   const pathname = url.pathname
   if (!pathname.startsWith('/admin/api/ai/')) return null
+
+  // Centralised CSRF gate — mirrors handleCmsRequest in server/handlers/cms/index.ts.
+  // GETs pass through; state-changing methods (POST/PUT/PATCH/DELETE) require
+  // the Origin header to match the expected origin or the dev allowlist.
+  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
+    return Promise.resolve(jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 }))
+  }
 
   // Test endpoints under credentials/:id/test must match BEFORE the
   // generic credentials/:id route — both live inside the credentials

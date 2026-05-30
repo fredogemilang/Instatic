@@ -46,7 +46,7 @@ import {
   type DataRowImportInput,
 } from '../../repositories/data/rows'
 import { importMediaAsset } from '../../repositories/media'
-import { jsonResponse, readJsonObject } from '../../http'
+import { jsonResponse, readValidatedBody } from '../../http'
 import { parseValue } from '@core/utils/typeboxHelpers'
 import {
   SiteBundleSchema,
@@ -96,11 +96,8 @@ export async function handleImportRoute(
   }
 
   // Parse and validate the bundle body
-  const raw = await readJsonObject(req)
-  let bundle
-  try {
-    bundle = parseValue(SiteBundleSchema, raw)
-  } catch {
+  const bundle = await readValidatedBody(req, SiteBundleSchema)
+  if (!bundle) {
     return jsonResponse({ error: 'Invalid bundle: body does not conform to SiteBundleSchema' }, { status: 400 })
   }
 

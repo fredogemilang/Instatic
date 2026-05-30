@@ -37,10 +37,9 @@ import {
 } from '../../repositories/users'
 import { revokeAllOtherSessions } from '../../repositories/sessions'
 import { createAuditEvent } from '../../repositories/audit'
-import { badRequest, jsonResponse, methodNotAllowed } from '../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
 import {
   CMS_API_PREFIX,
-  readValidatedBody,
   requestAuditContext,
   type CmsHandlerOptions,
 } from './shared'

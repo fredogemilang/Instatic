@@ -25,9 +25,10 @@ import { createDataRow } from '../../repositories/data'
 import { createNode } from '@core/page-tree/mutations'
 import { pageToCells } from '../../../src/core/data/pageFromRow'
 import type { Page } from '@core/page-tree'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
 import type { SiteRow } from '../../types'
-import { CMS_API_PREFIX, readString, requestAuditContext } from './shared'
+import { CMS_API_PREFIX, requestAuditContext } from './shared'
 
 export async function handleSetupRoutes(req: Request, db: DbClient): Promise<Response | null> {
   const url = new URL(req.url)
@@ -49,10 +50,16 @@ export async function handleSetupRoutes(req: Request, db: DbClient): Promise<Res
       return jsonResponse({ error: 'Setup already complete' }, { status: 409 })
     }
 
-    const body = await readJsonObject(req)
-    const siteName = readString(body, 'siteName')
-    const email = readString(body, 'email').toLowerCase()
-    const password = readString(body, 'password')
+    const SetupBodySchema = Type.Object({
+      siteName: Type.String(),
+      email: Type.String(),
+      password: Type.String(),
+    })
+    const body = await readValidatedBody(req, SetupBodySchema)
+    if (!body) return badRequest('Invalid request body')
+    const siteName = body.siteName.trim()
+    const email = body.email.trim().toLowerCase()
+    const password = body.password.trim()
 
     if (!siteName) return badRequest('Missing siteName')
     if (!email.includes('@')) return badRequest('Invalid email')

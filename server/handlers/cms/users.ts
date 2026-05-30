@@ -29,12 +29,11 @@ import {
 } from '../../repositories/users'
 import type { UserStatus } from '../../types'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, methodNotAllowed } from '../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
 import {
   CMS_API_PREFIX,
   UserStatusSchema,
   mutationErrorResponse,
-  readValidatedBody,
   requestAuditContext,
 } from './shared'
 

@@ -13,9 +13,8 @@
  * is defense-in-depth.
  */
 
-import { Type, safeParseValue, formatValueErrors } from '@core/utils/typeboxHelpers'
-import { jsonResponse } from '../../http'
-import { isStateChangingMethod, originAllowed } from '../../auth/security'
+import { Type } from '@core/utils/typeboxHelpers'
+import { jsonResponse, readValidatedBody, badRequest } from '../../http'
 import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
 import { resolveBridgeToolResult } from '../runtime'
@@ -43,30 +42,12 @@ async function handleAiToolResult(req: Request, db: DbClient): Promise<Response>
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
   }
-  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
-    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
-  }
   const userOrResponse = await requireCapability(req, db, 'ai.tools.write')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  let rawBody: unknown
-  try {
-    rawBody = await req.json()
-  } catch {
-    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
-  }
-  const parsed = safeParseValue(ToolResultBodySchema, rawBody)
-  if (!parsed.ok) {
-    return jsonResponse(
-      { error: `Invalid request body: ${formatValueErrors(ToolResultBodySchema, rawBody)}` },
-      { status: 400 },
-    )
-  }
-  const { bridgeId, requestId, result } = parsed.value as {
-    bridgeId: string
-    requestId: string
-    result: { ok: boolean; data?: unknown; error?: string }
-  }
+  const body = await readValidatedBody(req, ToolResultBodySchema)
+  if (!body) return badRequest('Invalid request body.')
+  const { bridgeId, requestId, result } = body
 
   const matched = resolveBridgeToolResult(bridgeId, requestId, result)
   if (!matched) {

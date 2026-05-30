@@ -22,7 +22,7 @@ import { SiteBundleSchema } from '@core/data/bundleSchema'
 import type { LoopItem } from '@core/loops/types'
 import { LoopItemSchema } from '@core/loops/types'
 import { parseValue } from '@core/utils/typeboxHelpers'
-import { readEnvelope } from '@core/http'
+import { readEnvelope, responseErrorMessage } from '@core/http'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
@@ -409,15 +409,9 @@ export async function previewCmsDataRow(
     signal: options.signal,
   })
   if (!res.ok) {
-    // The preview endpoint emits the standard `{ error }` JSON envelope
-    // on failure; try to surface the message, fall back to status text.
-    let message = `CMS data row preview failed with ${res.status}`
-    try {
-      const json = (await res.json()) as { error?: string }
-      if (json && typeof json.error === 'string') message = json.error
-    } catch {
-      /* response body wasn't JSON — keep the default message */
-    }
+    // The preview endpoint emits the standard `{ error }` JSON envelope on
+    // failure; responseErrorMessage prefers that, then raw text, then fallback.
+    const message = await responseErrorMessage(res, `CMS data row preview failed with ${res.status}`)
     throw new Error(message)
   }
   return await res.text()

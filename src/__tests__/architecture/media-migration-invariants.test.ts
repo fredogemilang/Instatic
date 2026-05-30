@@ -87,12 +87,15 @@ describe('media migration invariants', () => {
 
   it('v1 migration tool only supports original + variant roles', async () => {
     const source = await read('server/handlers/cms/mediaStorageMigration.ts')
-    // The body parser rejects everything except 'original' / 'variant'.
-    // Re-introducing 'avatar' / 'font' / 'plugin-pack' silently would
-    // hit code paths that don't exist yet — make the rejection visible.
-    expect(source).toMatch(
-      /role !== 'original'\s*&&\s*role !== 'variant'/,
-    )
+    // The TypeBox schema for the migrate body restricts `role` to exactly
+    // 'original' | 'variant' via a Union of Literals. Re-introducing
+    // 'avatar' / 'font' / 'plugin-pack' silently would hit code paths
+    // that don't exist yet — make the rejection visible as a schema change.
+    expect(source).toContain("Type.Literal('original')")
+    expect(source).toContain("Type.Literal('variant')")
+    // Ensure font/avatar roles are NOT declared as accepted
+    expect(source).not.toContain("Type.Literal('font')")
+    expect(source).not.toContain("Type.Literal('avatar')")
   })
 
   it('the storage state endpoint exposes a per-role migration backlog', async () => {

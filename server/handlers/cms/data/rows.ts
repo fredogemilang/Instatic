@@ -38,9 +38,9 @@ import { findUserById } from '../../../repositories/users'
 import { dataTableHasField } from '@core/data/fields'
 import { readSlugCell } from '@core/data/cells'
 import { slugFromTitle } from '@core/utils/slug'
-import { badRequest, jsonResponse, methodNotAllowed } from '../../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../../http'
 import type { CmsHandlerOptions } from '../shared'
-import { CMS_API_PREFIX, readValidatedBody, requestAuditContext } from '../shared'
+import { CMS_API_PREFIX, requestAuditContext } from '../shared'
 import {
   RowAuthorBodySchema,
   RowScheduleBodySchema,

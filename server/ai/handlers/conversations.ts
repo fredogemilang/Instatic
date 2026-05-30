@@ -11,9 +11,8 @@
  * return 404).
  */
 
-import { Type, safeParseValue, formatValueErrors } from '@core/utils/typeboxHelpers'
-import { jsonResponse } from '../../http'
-import { isStateChangingMethod, originAllowed } from '../../auth/security'
+import { Type } from '@core/utils/typeboxHelpers'
+import { jsonResponse, readValidatedBody, badRequest } from '../../http'
 import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
 import {
@@ -91,30 +90,12 @@ async function handleList(req: Request, db: DbClient, url: URL): Promise<Respons
 }
 
 async function handleCreate(req: Request, db: DbClient): Promise<Response> {
-  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
-    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
-  }
   const userOrResponse = await requireCapability(req, db, 'ai.chat')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  let rawBody: unknown
-  try { rawBody = await req.json() } catch {
-    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
-  }
-  const parsed = safeParseValue(CreateBodySchema, rawBody)
-  if (!parsed.ok) {
-    return jsonResponse(
-      { error: `Invalid request body: ${formatValueErrors(CreateBodySchema, rawBody)}` },
-      { status: 400 },
-    )
-  }
-  const body = parsed.value as {
-    scope: ToolScope
-    title?: string
-    credentialId: string
-    modelId: string
-    contextJson?: string
-  }
+  const body = await readValidatedBody(req, CreateBodySchema)
+  if (!body) return badRequest('Invalid request body.')
+
   const record = await createConversationForUser(db, userOrResponse.id, body)
   return jsonResponse({ conversation: toConversationView(record) }, { status: 201 })
 }
@@ -142,37 +123,18 @@ async function handleRead(req: Request, db: DbClient, id: string): Promise<Respo
 }
 
 async function handleUpdate(req: Request, db: DbClient, id: string): Promise<Response> {
-  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
-    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
-  }
   const userOrResponse = await requireCapability(req, db, 'ai.chat')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  let rawBody: unknown
-  try { rawBody = await req.json() } catch {
-    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
-  }
-  const parsed = safeParseValue(UpdateBodySchema, rawBody)
-  if (!parsed.ok) {
-    return jsonResponse(
-      { error: `Invalid request body: ${formatValueErrors(UpdateBodySchema, rawBody)}` },
-      { status: 400 },
-    )
-  }
-  const record = await updateConversationForUser(
-    db,
-    userOrResponse.id,
-    id,
-    parsed.value as { title?: string; credentialId?: string; modelId?: string; sessionId?: string | null },
-  )
+  const body = await readValidatedBody(req, UpdateBodySchema)
+  if (!body) return badRequest('Invalid request body.')
+
+  const record = await updateConversationForUser(db, userOrResponse.id, id, body)
   if (!record) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
   return jsonResponse({ conversation: toConversationView(record) })
 }
 
 async function handleDelete(req: Request, db: DbClient, id: string): Promise<Response> {
-  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
-    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
-  }
   const userOrResponse = await requireCapability(req, db, 'ai.chat')
   if (userOrResponse instanceof Response) return userOrResponse
 

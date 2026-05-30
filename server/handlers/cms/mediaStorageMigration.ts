@@ -40,7 +40,8 @@
 import type { DbClient } from '../../db/client'
 import type { MediaAssetRole } from '@core/plugin-sdk'
 import { requireCapability } from '../../auth/authz'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../http'
+import { Type } from '@core/utils/typeboxHelpers'
 import { mediaStorageRegistry } from '@core/plugins/mediaStorageRegistry'
 import { getElectedAdapterId } from '../../repositories/mediaStorageAdapters'
 import {
@@ -115,27 +116,11 @@ function makeEmitter(controller: ReadableStreamDefaultController<Uint8Array>): E
 // Public handler
 // ---------------------------------------------------------------------------
 
-interface MigrateBody {
-  role: MediaAssetRole
-  toAdapterId: string
-}
-
-function parseBody(body: Record<string, unknown>): MigrateBody | Response {
-  const role = body['role']
-  const toAdapterId = body['toAdapterId']
-  if (
-    role !== 'original' &&
-    role !== 'variant'
-  ) {
-    return badRequest(
-      "Invalid `role`. v1 supports 'original' and 'variant'; font and plugin-pack migrations aren't implemented yet.",
-    )
-  }
-  if (typeof toAdapterId !== 'string') {
-    return badRequest('Invalid `toAdapterId` — must be a string ("" for local-disk).')
-  }
-  return { role, toAdapterId }
-}
+const MigrateBodySchema = Type.Object({
+  // v1 only supports 'original' and 'variant'; font and plugin-pack are future work.
+  role: Type.Union([Type.Literal('original'), Type.Literal('variant')]),
+  toAdapterId: Type.String(),
+})
 
 export async function handleMediaStorageMigrate(
   req: Request,
@@ -153,10 +138,13 @@ export async function handleMediaStorageMigrate(
     return jsonResponse({ error: 'Uploads directory is not configured' }, { status: 500 })
   }
 
-  const body = await readJsonObject(req)
-  const parsed = parseBody(body)
-  if (parsed instanceof Response) return parsed
-  const { role, toAdapterId } = parsed
+  const body = await readValidatedBody(req, MigrateBodySchema)
+  if (!body) {
+    return badRequest(
+      "Invalid request body — expected { role: 'original' | 'variant', toAdapterId: string }.",
+    )
+  }
+  const { role, toAdapterId } = body
 
   // Reject elections at a different adapter than the request claims.
   // Migration MUST go to the currently-elected adapter for the role —

@@ -6,9 +6,8 @@
  *   PUT /admin/api/ai/defaults/:scope         Body: { credentialId, modelId }
  */
 
-import { Type, safeParseValue, formatValueErrors } from '@core/utils/typeboxHelpers'
-import { jsonResponse } from '../../http'
-import { isStateChangingMethod, originAllowed } from '../../auth/security'
+import { Type } from '@core/utils/typeboxHelpers'
+import { jsonResponse, readValidatedBody, badRequest } from '../../http'
 import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
 import { createAuditEvent } from '../../repositories/audit'
@@ -57,9 +56,6 @@ async function handleSet(req: Request, db: DbClient, scope: string): Promise<Res
   if (req.method !== 'PUT') {
     return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
   }
-  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
-    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
-  }
   if (!VALID_SCOPES.includes(scope as ToolScope)) {
     return jsonResponse(
       { error: `Unknown scope "${scope}". Must be one of: ${VALID_SCOPES.join(', ')}` },
@@ -69,18 +65,9 @@ async function handleSet(req: Request, db: DbClient, scope: string): Promise<Res
   const userOrResponse = await requireCapability(req, db, 'ai.providers.manage')
   if (userOrResponse instanceof Response) return userOrResponse
 
-  let rawBody: unknown
-  try { rawBody = await req.json() } catch {
-    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
-  }
-  const parsed = safeParseValue(PutBodySchema, rawBody)
-  if (!parsed.ok) {
-    return jsonResponse(
-      { error: `Invalid request body: ${formatValueErrors(PutBodySchema, rawBody)}` },
-      { status: 400 },
-    )
-  }
-  const { credentialId, modelId } = parsed.value as { credentialId: string; modelId: string }
+  const body = await readValidatedBody(req, PutBodySchema)
+  if (!body) return badRequest('Invalid request body.')
+  const { credentialId, modelId } = body
 
   try {
     const record = await setDefaultForScope(

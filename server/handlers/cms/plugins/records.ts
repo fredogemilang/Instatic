@@ -24,9 +24,9 @@ import {
   updatePluginRecord,
 } from '../../../repositories/plugins'
 import { StorageListOptionsSchema } from '@core/plugin-sdk/storageSchemas'
-import { parseValue } from '@core/utils/typeboxHelpers'
+import { Type, parseValue } from '@core/utils/typeboxHelpers'
 import { validatePluginRecordData } from '@core/plugins/manifest'
-import { badRequest, jsonResponse, methodNotAllowed, readJsonObject } from '../../../http'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../../http'
 import {
   getEnabledPluginResource,
   pluginRecordNotFound,
@@ -107,7 +107,9 @@ export async function handlePluginRecordsCollection(
   }
 
   if (req.method === 'POST') {
-    const body = await readJsonObject(req)
+    const PluginRecordBodySchema = Type.Object({ data: Type.Optional(Type.Unknown()) })
+    const body = await readValidatedBody(req, PluginRecordBodySchema)
+    if (!body) return badRequest('Invalid request body')
     try {
       const data = validatePluginRecordData(resource, body.data ?? body)
       const record = await createPluginRecord(db, {
@@ -136,7 +138,9 @@ export async function handlePluginRecordItem(
   if (!resource) return pluginResourceNotFound()
 
   if (req.method === 'PATCH') {
-    const body = await readJsonObject(req)
+    const PluginRecordPatchBodySchema = Type.Object({ data: Type.Optional(Type.Unknown()) })
+    const body = await readValidatedBody(req, PluginRecordPatchBodySchema)
+    if (!body) return badRequest('Invalid request body')
     try {
       const data = validatePluginRecordData(resource, body.data ?? body)
       const record = await updatePluginRecord(db, {

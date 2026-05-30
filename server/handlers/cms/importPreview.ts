@@ -21,7 +21,7 @@ import type { DbClient } from '../../db/client'
 import { requireCapability } from '../../auth/authz'
 import { listDataRows } from '../../repositories/data/rows'
 import { listDataTables } from '../../repositories/data/tables'
-import { jsonResponse, readJsonObject } from '../../http'
+import { jsonResponse, readValidatedBody } from '../../http'
 import { parseValue } from '@core/utils/typeboxHelpers'
 import {
   SiteBundleSchema,
@@ -41,11 +41,8 @@ export async function handleImportPreviewRoute(
   const user = await requireCapability(req, db, 'data.export')
   if (user instanceof Response) return user
 
-  const raw = await readJsonObject(req)
-  let bundle
-  try {
-    bundle = parseValue(SiteBundleSchema, raw)
-  } catch {
+  const bundle = await readValidatedBody(req, SiteBundleSchema)
+  if (!bundle) {
     return jsonResponse({ error: 'Invalid bundle: body does not conform to SiteBundleSchema' }, { status: 400 })
   }
 

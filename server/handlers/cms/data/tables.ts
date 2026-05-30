@@ -38,8 +38,8 @@ import { readSlugCell } from '@core/data/cells'
 import { slugFromTitle } from '@core/utils/slug'
 import { normalizeRouteBase } from '@core/templates/templateMatching'
 import { fetchPublishedDataRowItems } from '@core/loops/sources/dataRows'
-import { badRequest, jsonResponse, methodNotAllowed } from '../../../http'
-import { CMS_API_PREFIX, readValidatedBody, requestAuditContext } from '../shared'
+import { badRequest, jsonResponse, methodNotAllowed, readValidatedBody } from '../../../http'
+import { CMS_API_PREFIX, requestAuditContext } from '../shared'
 import {
   TableCreateBodySchema,
   TablePatchBodySchema,

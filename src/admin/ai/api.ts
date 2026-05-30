@@ -92,7 +92,7 @@ const DefaultsResponseSchema = Type.Object({
 })
 export type AiDefaults = Static<typeof DefaultsResponseSchema>['defaults']
 
-const ConversationViewSchema = Type.Object({
+export const ConversationViewSchema = Type.Object({
   id: Type.String(),
   scope: ToolScope,
   title: Type.String(),
@@ -110,6 +110,43 @@ export type ConversationView = Static<typeof ConversationViewSchema>
 
 const ConversationListResponseSchema = Type.Object({
   conversations: Type.Array(ConversationViewSchema),
+})
+
+const ConversationItemResponseSchema = Type.Object({
+  conversation: ConversationViewSchema,
+})
+
+export const MessageViewSchema = Type.Object({
+  id: Type.String(),
+  position: Type.Number(),
+  role: Type.Union([Type.Literal('user'), Type.Literal('assistant'), Type.Literal('tool')]),
+  content: Type.Array(Type.Union([
+    Type.Object({ kind: Type.Literal('text'), text: Type.String() }),
+    Type.Object({ kind: Type.Literal('image'), mimeType: Type.String(), data: Type.String() }),
+    Type.Object({
+      kind: Type.Literal('toolCall'),
+      toolCallId: Type.String(),
+      toolName: Type.String(),
+      input: Type.Unknown(),
+    }),
+  ])),
+  toolCallId: Type.Union([Type.String(), Type.Null()]),
+  toolName: Type.Union([Type.String(), Type.Null()]),
+  createdAt: Type.String(),
+})
+export type MessageView = Static<typeof MessageViewSchema>
+
+export const ConversationDetailViewSchema = Type.Composite([
+  ConversationViewSchema,
+  Type.Object({
+    contextJson: Type.Union([Type.String(), Type.Null()]),
+    messages: Type.Array(MessageViewSchema),
+  }),
+])
+export type ConversationDetail = Static<typeof ConversationDetailViewSchema>
+
+const ConversationDetailResponseSchema = Type.Object({
+  conversation: ConversationDetailViewSchema,
 })
 
 // ---------------------------------------------------------------------------
@@ -224,7 +261,7 @@ export async function setDefault(
 }
 
 // ---------------------------------------------------------------------------
-// Endpoints — conversations (Phase 3 uses these; surfaced now for testing)
+// Endpoints — conversations
 // ---------------------------------------------------------------------------
 
 export async function listConversations(scope: 'site' | 'content' | 'data' | 'plugin'): Promise<ConversationView[]> {
@@ -233,6 +270,30 @@ export async function listConversations(scope: 'site' | 'content' | 'data' | 'pl
     schema: ConversationListResponseSchema,
   })
   return body.conversations
+}
+
+export async function getConversation(id: string): Promise<ConversationDetail> {
+  const body = await apiRequest(`/admin/api/ai/conversations/${encodeURIComponent(id)}`, {
+    schema: ConversationDetailResponseSchema,
+  })
+  return body.conversation
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await apiRequest(`/admin/api/ai/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function updateConversationProvider(
+  id: string,
+  credentialId: string,
+  modelId: string,
+): Promise<ConversationView> {
+  const body = await apiRequest(`/admin/api/ai/conversations/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: { credentialId, modelId },
+    schema: ConversationItemResponseSchema,
+  })
+  return body.conversation
 }
 
 // ---------------------------------------------------------------------------
