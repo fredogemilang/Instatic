@@ -34,7 +34,8 @@ docs/
 │   ├── loops.md                    ← base.loop + loop sources
 │   ├── media.md                    ← Media workspace + storage adapters
 │   ├── audit-log.md                ← audit_events catalog
-│   ├── site-transfer.md            ← export / import bundles
+│   ├── site-transfer.md            ← export / import CMS bundles
+│   ├── site-import.md              ← Super Import (static sites → CMS)
 │   ├── editor-preferences.md       ← catalog-driven editor prefs
 │   └── canvas-iframe-per-frame.md  ← per-breakpoint iframe rendering
 │
@@ -145,7 +146,8 @@ Plans (`docs/plans/`) describe in-flight work and are deleted when the work ship
 | [features/loops.md](features/loops.md)                           | `base.loop` + loop entity sources                                    |
 | [features/media.md](features/media.md)                           | Media workspace, upload pipeline, storage adapters                  |
 | [features/audit-log.md](features/audit-log.md)                   | Audit event catalog + recording new actions                         |
-| [features/site-transfer.md](features/site-transfer.md)           | Export / import site bundles                                        |
+| [features/site-transfer.md](features/site-transfer.md)           | Export / import CMS bundle (JSON round-trip between instances)      |
+| [features/site-import.md](features/site-import.md)               | Super Import — static-site files / ZIP → pages, style rules, media |
 | [features/editor-preferences.md](features/editor-preferences.md) | Catalog-driven local UI preferences for the editor                   |
 | [features/canvas-iframe-per-frame.md](features/canvas-iframe-per-frame.md) | Per-breakpoint iframe rendering in the visual editor canvas |
 

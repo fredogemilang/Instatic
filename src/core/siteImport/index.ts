@@ -5,7 +5,7 @@
  * Phase 2: ingestInput, classifyFiles, buildImportPlan, commitImportPlan,
  *          applyConflictResolutions + all plan/result types.
  *
- * @see docs/plans/2026-05-29-super-import.md
+ * @see docs/features/site-import.md
  */
 
 // ── Phase 1 ──────────────────────────────────────────────────────────────────
