@@ -46,12 +46,22 @@ server/ai/
     └── transport.ts        — createBridge() / resolveBridgeToolResult()
 
 src/admin/pages/site/agent/
-├── agentSlice.ts           — Zustand slice factory (scope-agnostic; createAgentSlice(config))
-├── agentConfig.ts          — API path constants (AGENT_API_PATH, AI_CONVERSATIONS_PATH, …)
+├── index.ts                — public barrel (all external imports go through here)
+├── agentSlice.ts           — scope-agnostic Zustand slice factory (createAgentSlice(config))
+├── agentSliceConfig.site.ts— site-editor config: scope, snapshot builder, executor wiring
+├── agentConfig.ts          — API path constants (AGENT_TOOL_RESULT_PATH, AI_CONVERSATIONS_PATH, …)
+├── agentApi.ts             — HTTP layer: tool-result POST, conversation bootstrap, message rehydration
+├── streamEvents.ts         — NDJSON schema (ServerStreamEventSchema) + processStreamEvent reducer
+├── pageContext.ts          — page snapshot builder (buildCurrentPageContext, buildPageContext)
 ├── executor.ts             — browser-side dispatcher: validates + runs write tools
 ├── renderEvidence.ts       — captureAgentRenderSnapshot (render_snapshot tool)
-├── storeRef.ts             — bridge from executor to editor store
+├── storeRef.ts             — setAgentStoreApi / getAgentStoreApi (avoids store ↔ executor cycle)
 └── types.ts                — ServerStreamEvent, AgentMessage, AgentActionResult, PageContext, …
+
+src/admin/pages/content/agent/
+├── agentSliceConfig.content.ts — content-workspace config: scope, snapshot builder, executor wiring
+├── contentAgentStore.ts        — standalone per-mount Zustand store (AgentSlice only)
+└── contentBridge.ts            — content workspace write-tool executor
 
 src/admin/pages/site/panels/AgentPanel/  — Agent Panel UI
 ```
@@ -101,7 +111,7 @@ NDJSON stream events (one JSON object + \n per line):
     { type: 'done' }
     { type: 'error', message }                             ← on server error
 
-Browser: processStreamEvent(event) in agentSlice.ts
+Browser: processStreamEvent(event) in streamEvents.ts
     │
     ├─→ 'bridgeReady'   → store bridgeId in closure
     ├─→ 'toolRequest'   → executeAgentTool(toolName, input)  (executor.ts)
@@ -118,7 +128,7 @@ The two-endpoint design keeps the **browser as editor-store authority** (write t
 
 ## The page snapshot
 
-Before each `sendAgentMessage` call, `buildCurrentPageContext(get)` (in `agentSlice.ts`) extracts a serializable `PageContext` from the editor store:
+Before each `sendAgentMessage` call, `buildCurrentPageContext(get)` (in `pageContext.ts`) extracts a serializable `PageContext` from the editor store:
 
 - Page id, title, root node id
 - Every node on the active page: id, moduleId, label, parentId, children, props, classIds, breakpointOverrides
@@ -289,34 +299,53 @@ The same importer that powers the Agent's `insertHtml` tool also powers the past
 
 ## Client store (`agentSlice`)
 
-`createAgentSlice(config)` (`src/admin/pages/site/agent/agentSlice.ts`) is a scope-agnostic Zustand slice factory. The site editor mounts it with:
+`createAgentSlice(config)` (`src/admin/pages/site/agent/agentSlice.ts`) is a scope-agnostic Zustand slice factory. Scope-specific wiring is kept out of the factory — each surface supplies its own `AgentSliceConfig`. The site editor uses `siteAgentSliceConfig` from `agentSliceConfig.site.ts`:
 
 ```ts
-const config: AgentSliceConfig = {
+// agentSliceConfig.site.ts — wired in store.ts via createAgentSlice(siteAgentSliceConfig)
+export const siteAgentSliceConfig: AgentSliceConfig = {
   scope: 'site',
-  buildSnapshot: () => buildCurrentPageContext(get),
-  dispatchTool: (toolName, input) => executeAgentTool(toolName, input),
+  buildSnapshot: () => buildCurrentPageContext(
+    () => getAgentStoreApi<EditorStore>().getState(),
+  ),
+  dispatchTool: executeAgentTool,
+  noProviderMessage: 'No AI provider configured for the site editor. …',
 }
 ```
+
+`getAgentStoreApi` reads the live store via `storeRef.ts`, wired in `store.ts` after store creation (`setAgentStoreApi(useEditorStore)`). This avoids a static import cycle: executor → store → agentSlice → executor.
+
+The content workspace uses the same factory with `contentAgentSliceConfig` mounted in a standalone per-page store (`contentAgentStore.ts`).
 
 Key slice state and actions:
 
 ```ts
 interface AgentSlice {
+  // ── UI state ──────────────────────────────────────────────────────────
+  isAgentOpen:               boolean
   isAgentStreaming:          boolean
   agentMessages:             AgentMessage[]
   agentError:                string | null
-  agentConversationId:       string | null   // ai_conversations row id
+  agentSessionId:            string | null
+  /** Active ai_conversations row id — created lazily on first send. */
+  agentConversationId:       string | null
+  /** Active (credentialId, modelId) surfaced by the model picker. */
   agentActiveCredentialId:   string | null
   agentActiveModelId:        string | null
+  /** Conversation summaries for the history popover. */
+  agentConversations:        ConversationView[]
 
-  sendAgentMessage(content: string): Promise<void>
-  abortAgent():                void
-  clearAgentMessages():        void
-  startNewAgentConversation(): void
-  loadAgentConversations():    Promise<void>
-  loadAgentConversation(id: string): Promise<void>
-  deleteAgentConversation(id: string): Promise<void>
+  // ── Actions ───────────────────────────────────────────────────────────
+  openAgent():                                         void
+  closeAgent():                                        void
+  toggleAgent():                                       void
+  sendAgentMessage(content: string):                   Promise<void>
+  abortAgent():                                        void
+  clearAgentMessages():                                void
+  startNewAgentConversation():                         void
+  loadAgentConversations():                            Promise<void>
+  loadAgentConversation(id: string):                   Promise<void>
+  deleteAgentConversation(id: string):                 Promise<void>
   setAgentProvider(credentialId: string, modelId: string): Promise<void>
 }
 ```
@@ -364,11 +393,17 @@ Conversations and their message history are persisted server-side in `ai_convers
   - `server/ai/handlers/toolResult.ts` — `POST /admin/api/ai/tool-result` endpoint
   - `server/ai/runtime/runner.ts` — `runChat()` driver loop
   - `server/ai/runtime/transport.ts` — `createBridge()` / `resolveBridgeToolResult()`
-  - `src/admin/pages/site/agent/agentSlice.ts` — client store slice + `buildCurrentPageContext`
+  - `src/admin/pages/site/agent/agentSlice.ts` — scope-agnostic slice factory (`createAgentSlice`)
+  - `src/admin/pages/site/agent/agentSliceConfig.site.ts` — site-editor scope config
+  - `src/admin/pages/site/agent/agentApi.ts` — tool-result POST, conversation bootstrap, message rehydration
+  - `src/admin/pages/site/agent/streamEvents.ts` — `ServerStreamEventSchema` + `processStreamEvent`
+  - `src/admin/pages/site/agent/pageContext.ts` — `buildCurrentPageContext`, `buildPageContext`
   - `src/admin/pages/site/agent/executor.ts` — write-tool browser dispatcher
   - `src/admin/pages/site/agent/agentConfig.ts` — API path constants
   - `src/admin/pages/site/agent/renderEvidence.ts` — `captureAgentRenderSnapshot`
   - `src/admin/pages/site/agent/types.ts` — `ServerStreamEvent`, `AgentMessage`, `PageContext`, …
+  - `src/admin/pages/site/agent/index.ts` — public barrel
+  - `src/admin/pages/content/agent/contentAgentStore.ts` — standalone content-workspace agent store
   - `src/admin/pages/site/panels/AgentPanel/` — Agent Panel UI
 - Gate tests:
   - `src/__tests__/architecture/ai-driver-isolation.test.ts`
