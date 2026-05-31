@@ -1,7 +1,9 @@
 /**
  * CRUD for data tables.
  *
- *   listDataTables       — read every non-deleted table
+ *   listDataTables       — read every non-deleted table. System tables sort
+ *                          first in a fixed order (pages, posts, components);
+ *                          custom tables follow, ordered by created_at.
  *   getDataTable         — read a single table by id (or null)
  *   createDataTable      — insert a new table
  *   updateDataTable      — partial update (all fields optional)
@@ -100,7 +102,14 @@ export async function listDataTables(db: DbClient): Promise<DataTable[]> {
            created_by_user_id, updated_by_user_id, created_at, updated_at
     from data_tables
     where deleted_at is null
-    order by created_at asc
+    order by
+      case kind
+        when 'page' then 0
+        when 'postType' then 1
+        when 'component' then 2
+        else 3
+      end,
+      created_at asc
   `
   return rows.map(mapTable)
 }
@@ -124,7 +133,14 @@ export async function listDataTablesWithCounts(db: DbClient): Promise<DataTableL
            ) as row_count
     from data_tables t
     where t.deleted_at is null
-    order by t.created_at asc
+    order by
+      case t.kind
+        when 'page' then 0
+        when 'postType' then 1
+        when 'component' then 2
+        else 3
+      end,
+      t.created_at asc
   `
   return rows.map((row) => ({
     ...mapTable(row),
