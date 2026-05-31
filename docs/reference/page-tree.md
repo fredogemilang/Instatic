@@ -121,6 +121,16 @@ All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<P
 
 - `cloneScopedClassesForNodeMap(...)` — rewrites class ids that scope to specific nodes when those nodes are duplicated.
 
+`src/core/page-tree/slugs.ts` (exported via `@core/page-tree`):
+
+- `pagePublicPath(slug)` — maps a slug to its public URL path: `'index'` → `'/'`, everything else → `'/<slug>'`.
+- `isHomePage(page)` — returns `true` when `page.slug === 'index'`. The home page is the one published at the site root.
+- `findHomePage(pages)` — returns the `Page` with `slug === 'index'`, or `undefined`. Used by `lifecycleActions` to default the editor to the home page on load and by `SiteExplorerPanel` to pin it to the top of the list.
+- `normalizePageSlug(value)` — lowercases, strips invalid characters, and collapses hyphens.
+- `pageSlugError(slug)` — returns a validation error message or `null` if the slug is valid.
+- `pageSlugDuplicateError(slug, pages, currentPageId?)` — checks for slug collisions across the page list.
+- `createUniquePageSlug(title, pages)` — generates a collision-free slug from a page title.
+
 ---
 
 ## Routing mutations from the editor store

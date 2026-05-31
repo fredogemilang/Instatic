@@ -342,15 +342,35 @@ render(
 
 ---
 
+## `@admin/lib/urlState` — router-free query-string sync
+
+A companion module at `src/admin/lib/urlState/` provides URL state primitives for contexts that **cannot import the router** (the visual editor is forbidden from doing so by `no-router-in-site-page.test.ts`).
+
+```ts
+import { useInitialQueryParams, useUrlQuerySync } from '@admin/lib/urlState'
+```
+
+| Hook | Purpose |
+|------|---------|
+| `useInitialQueryParams()` | Returns the query params present at first mount (stable, read-once). |
+| `useUrlQuerySync(params, opts?)` | Mirrors the given key→value map into the URL via `replaceState`. `null` values remove the key; unspecified keys are untouched. |
+
+These hooks operate on `window.history.replaceState` directly and deliberately do **not** dispatch `pb:locationchange` — query-string updates for selection state must never trigger a route re-match. Three workspaces use them: the site editor (`useSiteEditorUrlSync`), the Content workspace, and the Data workspace.
+
+Full contract and URL shapes are documented in [docs/editor.md](../editor.md) → "URL state and workspace deep links".
+
+---
+
 ## Related
 
-- [docs/editor.md](../editor.md) — admin shell + router placement
+- [docs/editor.md](../editor.md) — admin shell + router placement, URL state contract
 - [docs/architecture.md](../architecture.md) — `/admin/*` namespace owned by the SPA
 - [docs/features/spotlight.md](../features/spotlight.md) — Spotlight is the only outside consumer with a router carve-out
 - Source-of-truth files:
   - `src/admin/lib/routing/Router.tsx` — `Router`, `MemoryRouter`, `Routes`, `Route`, `Navigate`
   - `src/admin/lib/routing/routerHooks.ts` — `useLocation`, `useNavigate`, `useParams`, `useInRouterContext`, `matchPath`
   - `src/admin/lib/routing/index.ts` — barrel
+  - `src/admin/lib/urlState/urlState.ts` — `useInitialQueryParams`, `useUrlQuerySync`
   - `src/admin/lib/useAdminNavigate.ts` — typed workspace navigation
   - `src/admin/router.tsx` — the route table
 - Gate tests:

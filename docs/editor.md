@@ -93,6 +93,64 @@ Every route is wrapped with `withRouteBoundary(...)` → `<ErrorBoundary locatio
 
 ---
 
+## URL state and workspace deep links
+
+`src/admin/lib/urlState/` provides two hooks that make workspace selections directly bookmarkable and shareable via the query string, without touching the router:
+
+```ts
+import { useInitialQueryParams, useUrlQuerySync } from '@admin/lib/urlState'
+```
+
+### Why a separate module
+
+The visual editor (`src/admin/pages/site/`) is forbidden from importing the admin router (gated by `no-router-in-site-page.test.ts`). Yet the editor still needs the address bar to reflect the open page so bookmarks and shared links work. `urlState` solves this by operating on `window.history.replaceState` directly — no `pb:locationchange` event, no route re-match, just a query-string update that keeps the pathname stable.
+
+### `useInitialQueryParams()`
+
+Captures the `URLSearchParams` present at first mount using a `useState` lazy initializer (runs exactly once). Subsequent `useUrlQuerySync` writes never change what the one-shot deep-link read observes.
+
+```ts
+const initialParams = useInitialQueryParams()
+const pageSlug = initialParams.get('page')  // read once on load
+```
+
+### `useUrlQuerySync(params, options?)`
+
+Mirrors a key→value map into the URL via `replaceState` on every render where the values change.
+
+- A non-empty string value sets the param (`?key=value`).
+- `null` or empty removes the param.
+- Keys NOT in `params` are left untouched — workspaces own only their own params.
+- `replaceState` (never `pushState`) so navigating between rows/pages doesn't flood the browser back stack.
+- The `enabled` option (default `true`) lets callers gate the sync on a load-complete flag so an in-progress deep link isn't overwritten before the selection settles.
+
+```ts
+useUrlQuerySync(
+  { table: selectedTable?.slug ?? null, row: selectedRowId },
+  { enabled: !loadingTables },
+)
+```
+
+### URL contract per workspace
+
+| Workspace | URL form | Notes |
+|-----------|----------|-------|
+| **Site editor** | `/admin/site` | Home page (slug `index`); bare URL is canonical — no `?page=` written |
+| **Site editor** | `/admin/site?page=<slug>` | Opens the page with that slug |
+| **Site editor** | `/admin/site?table=pages&row=<rowId>` | Cross-workspace deep link from Data workspace; normalized to `?page=<slug>` after consume |
+| **Site editor** | `/admin/site?table=components&row=<rowId>` | Opens the Visual Component with that id; normalized after consume |
+| **Content** | `/admin/content?table=<collectionSlug>&row=<rowId>` | Opens the collection and entry |
+| **Data** | `/admin/data?table=<tableSlug>&row=<rowId>` | Opens the table and row |
+
+### Site editor URL sync — `useSiteEditorUrlSync`
+
+`src/admin/pages/site/hooks/useSiteEditorUrlSync.ts` implements a bidirectional sync for the site editor:
+
+1. **READ (once, after load):** consumes `?page=<slug>` or `?table=…&row=…` from the initial URL and applies the selection to the editor store. Guarded by a ref so it fires at most once per mount.
+2. **WRITE (ongoing):** mirrors the active page's slug back into the URL so the address bar stays current. The home page (`slug === 'index'`) is always represented as the bare `/admin/site` — the `?page=` param is omitted.
+
+---
+
 ## Auth and access
 
 After login, every route renders `<AuthenticatedAdmin section={...}>`. Before rendering the workspace, it calls `canAccessWorkspace(currentUser, section)`. If the user's capabilities don't include the workspace, it `<Navigate>`s to `firstAccessibleWorkspace(currentUser)` (e.g. a contributor with only `media.manage` lands on `/admin/media`).
@@ -119,6 +177,7 @@ src/admin/
 │
 ├── lib/
 │   ├── routing/                ← in-house router
+│   ├── urlState/               ← workspace-agnostic URL query-string sync
 │   └── useAdminNavigate.ts
 │
 ├── preauth/                    ← login / setup flows
