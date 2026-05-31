@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
 import { Button } from '@ui/components/Button'
 import { Dialog } from '@ui/components/Dialog'
@@ -63,12 +63,17 @@ export function RelationPickerDialog({
   )
   const rows: DataRow[] = data ?? []
 
-  // Re-sync selection when dialog opens or currentValue changes
-  useEffect(() => {
-    if (open) {
-      setSelected(normalizeSelection(currentValue))
-    }
-  }, [open, currentValue])
+  // Re-sync selection when the dialog opens or currentValue changes. Done by
+  // adjusting state during render (tracking the previous open/value) rather
+  // than in an effect — the React-recommended pattern, which avoids the
+  // cascading re-render an effect-driven setState would trigger.
+  const [prevOpen, setPrevOpen] = useState(open)
+  const [prevCurrentValue, setPrevCurrentValue] = useState(currentValue)
+  if (open !== prevOpen || currentValue !== prevCurrentValue) {
+    setPrevOpen(open)
+    setPrevCurrentValue(currentValue)
+    if (open) setSelected(normalizeSelection(currentValue))
+  }
 
   const primaryFieldId = targetTable?.primaryFieldId ?? ''
 

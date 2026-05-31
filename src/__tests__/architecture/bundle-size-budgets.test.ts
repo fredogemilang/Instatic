@@ -140,10 +140,12 @@ const BUDGETS: ChunkBudget[] = [
   // import boundary, and by this size cap against silent CM6 dep upgrades.
   {
     prefix: 'CodeMirrorEditor-',
-    maxBytes: 650_000,
+    maxBytes: 700_000,
     rationale:
-      'lazy CodeMirror 6 chunk (current ~606 KB raw / 208 KB gzipped). ' +
-      'Only loaded when a user opens a text file in the code editor panel.',
+      'lazy CodeMirror 6 chunk (current ~674 KB raw / ~230 KB gzipped). ' +
+      'Only loaded when a user opens a text file in the code editor panel. ' +
+      'Grew from ~606 KB when @codemirror/lang-html (bundling embedded CSS + ' +
+      'JS grammar) was added for the HTML-import editor.',
   },
 ]
 

@@ -195,7 +195,6 @@ export function createSiteImportAdapter(opts: AdapterCallbacks): SiteImportAdapt
       // Surface as a non-fatal log: the asset uploaded fine, only the
       // folder placement failed. The user can drag it to the right folder
       // by hand afterwards.
-      // eslint-disable-next-line no-console
       console.warn(
         `[siteImportAdapter] Asset ${assetId} placed at the media root; folder assign returned ${res.status}.`,
       )

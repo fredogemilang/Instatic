@@ -35,7 +35,7 @@
  * in the `url('...')` form so the picker recognises imported assets out of
  * the box.
  */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ControlProps } from './shared'
 import { ControlRow } from '@ui/components/ControlRow'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
@@ -88,7 +88,7 @@ function wrapUrl(payload: string): string {
 // useless inside the gradient text input — we always show a real gradient
 // example instead. Image mode has its own picker affordances and never
 // renders a free-form text input at this level.
-interface BackgroundImageControlProps extends ControlProps<string> {}
+type BackgroundImageControlProps = ControlProps<string>
 
 export function BackgroundImageControl({
   propKey,
@@ -99,15 +99,19 @@ export function BackgroundImageControl({
   disabled,
 }: BackgroundImageControlProps) {
   const cssValue = String(value ?? '')
-  const detected = detectMode(cssValue)
-  const [mode, setMode] = useState<BgImageMode>(detected)
+  const [mode, setMode] = useState<BgImageMode>(() => detectMode(cssValue))
 
   // Resync with the external value when it changes from elsewhere (preset
   // applied, breakpoint switched, import landed, ...). Without this the mode
-  // tab can drift out of sync with the stored value.
-  useEffect(() => {
+  // tab can drift out of sync with the stored value. Done by adjusting state
+  // during render (tracking the previous value) rather than in an effect —
+  // the React-recommended pattern, which avoids the cascading re-render an
+  // effect-driven setState would trigger.
+  const [prevCssValue, setPrevCssValue] = useState(cssValue)
+  if (cssValue !== prevCssValue) {
+    setPrevCssValue(cssValue)
     setMode(detectMode(cssValue))
-  }, [cssValue])
+  }
 
   function handleModeChange(newMode: BgImageMode) {
     setMode(newMode)

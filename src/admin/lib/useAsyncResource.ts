@@ -117,8 +117,9 @@ export function useAsyncResource<T>(
     // so only deps + the refresh nonce drive re-runs. loader/options are read
     // from the render in which `deps` last changed — exactly the closure that
     // matches those deps. exhaustive-deps can't statically analyse the spread
-    // and emits a (tolerated) warning; we must NOT add `loader` to the array or
-    // every render would re-fetch.
+    // (and would have us add `loader`, which would re-fetch every render), so
+    // the rule is disabled for this one intentional array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, reloadCount])
 
   return { data, loading, error, refresh }
