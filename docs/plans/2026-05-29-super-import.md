@@ -249,9 +249,42 @@ src/core/siteImport/
 ├── cssToStyleRules.ts   Phase 1 wrapper for a single CSS file → StyleRule[] + warnings
 ├── assetPlan.ts         scan fragments + CSS for asset refs; plan uploads + URL rewrite map
 ├── applyAssetRewrites.ts patch fragment node props + CSS url(...) with new media URLs
+├── scopeClasses.ts      per-page class scoping for cross-stylesheet name collisions
 ├── conflicts.ts         detect page-slug / rule-name collisions; produce ConflictPlan
 └── applyImport.ts       atomic orchestrator: upload → mutate store → return ImportResult
 ```
+
+### Cross-stylesheet class scoping (`scopeClasses.ts`)
+
+A multi-page export links **one stylesheet per page**, and those stylesheets
+routinely reuse the same class name (`.btn`, `.hero`, `.site-header`, …) with
+**different declarations** — e.g. `index.html`'s `instatic.css` has
+`.btn { border-radius: 0 }` while `original.html`'s `style.css` has
+`.btn { border-radius: 999px }`. The CMS has a single **global** class registry,
+so a naive name-merge lets one page's class silently clobber the other's — the
+loser renders with the wrong styles (rounded buttons that should be square, a
+collapsed hero that lost its `min-height`/`position`, etc.).
+
+`scopeCollidingClasses` runs in `buildImportPlan` between CSS parsing and the
+asset plan. For each class name it groups the per-file definitions by their
+*content* (base `styles` + `contextStyles`):
+
+- **one distinct definition** → keep the bare name; the class is shared across
+  pages (no duplication).
+- **N distinct definitions** → the first keeps the bare name, the rest get a
+  numeric suffix (`btn`, `btn-2`, …). Files sharing a definition share its name.
+
+A rename is applied **consistently within each source stylesheet**: the
+`kind:'class'` rule's `name` + `selector`, every `kind:'ambient'` selector in
+that file that references the class as a token (`.btn-solid:hover`,
+`.btn.btn-lg`, `.plan-cta .btn`), and the `classIds` tokens on the nodes of
+every page that links that stylesheet. Each page then renders with exactly the
+class definitions from its own stylesheet. One `scoped-class` warning is emitted
+per scoped name for the wizard's Done step.
+
+**Limitation:** pure element / attribute selectors (`body`, `h1`, `a:hover`)
+carry no class token and cannot be scoped — they remain global and the last
+definition in cascade order wins on every page.
 
 ### File classification
 

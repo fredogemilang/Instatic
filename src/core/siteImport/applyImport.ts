@@ -28,6 +28,7 @@ import { extractRootColorTokens } from './colorTokens'
 import { classifyFiles } from './classifyFiles'
 import { makeHtmlPagePlan } from './htmlPagePlan'
 import { buildAssetPlan, type CssFileResult } from './assetPlan'
+import { scopeCollidingClasses } from './scopeClasses'
 import { applyAssetRewrites } from './applyAssetRewrites'
 import { detectConflicts } from './conflicts'
 import type {
@@ -133,10 +134,20 @@ export function buildImportPlan({ fileMap, currentSite, options }: BuildImportPl
     cssFileResults.push({ cssPath: f.path, rules: rulesAfterColors, assetRefs, fontFaces })
   }
 
+  // 4b. Scope class names that are defined differently across stylesheets.
+  //     A multi-page export links one stylesheet per page and reuses class
+  //     names (`.btn`, `.hero`, …) with divergent declarations; the CMS has a
+  //     single global registry, so naive merging lets one page's class clobber
+  //     another's. `scopeCollidingClasses` keeps each page faithful to its own
+  //     stylesheet by giving divergent definitions distinct names and rewriting
+  //     the affected selectors + node class tokens. Identical defs stay shared.
+  const scoped = scopeCollidingClasses(rawPagePlans, cssFileResults)
+  warnings.push(...summariseScopeRenames(scoped.renames))
+
   // 5. Build asset plan — normalises URLs in node props and CSS values,
   //    resolves @font-face blocks into custom fonts, collects assets to upload
   const { normalizedPagePlans, normalizedStyleRules, fonts, assets, warnings: assetWarnings } =
-    buildAssetPlan(rawPagePlans, cssFileResults, fileMap)
+    buildAssetPlan(scoped.pagePlans, scoped.cssFileResults, fileMap)
   warnings.push(...assetWarnings)
 
   // 6. Detect conflicts against the current site
@@ -356,6 +367,36 @@ export { applyConflictResolutions } from './conflicts'
 /** Decode UTF-8 bytes to a string. */
 function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+}
+
+/**
+ * Collapse per-file class renames into one `scoped-class` warning per original
+ * class name, so the wizard reports "`.btn` was defined 2 different ways across
+ * stylesheets → kept as btn, btn-2" rather than a flood of per-file entries.
+ */
+function summariseScopeRenames(
+  renames: ReadonlyArray<{ originalName: string; scopedName: string; cssPath: string }>,
+): ImportWarning[] {
+  if (renames.length === 0) return []
+  const scopedByOriginal = new Map<string, Set<string>>()
+  for (const { originalName, scopedName } of renames) {
+    let set = scopedByOriginal.get(originalName)
+    if (!set) {
+      set = new Set<string>()
+      scopedByOriginal.set(originalName, set)
+    }
+    set.add(scopedName)
+  }
+  const warnings: ImportWarning[] = []
+  for (const [originalName, scopedNames] of scopedByOriginal) {
+    const variants = [originalName, ...[...scopedNames].filter((n) => n !== originalName)]
+    warnings.push({
+      kind: 'scoped-class',
+      message: `Class ".${originalName}" was defined differently across stylesheets; kept per-page fidelity by scoping it to: ${variants.map((n) => `.${n}`).join(', ')}`,
+      selector: `.${originalName}`,
+    })
+  }
+  return warnings
 }
 
 /**

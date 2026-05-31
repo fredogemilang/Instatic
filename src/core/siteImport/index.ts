@@ -32,6 +32,11 @@ export type { HtmlPagePlanResult } from './htmlPagePlan'
 export { buildAssetPlan } from './assetPlan'
 export type { CssFileResult, AssetPlanResult } from './assetPlan'
 
+// ── Phase 2 — cross-stylesheet class scoping ─────────────────────────────────
+
+export { scopeCollidingClasses } from './scopeClasses'
+export type { ScopeClassesResult } from './scopeClasses'
+
 // ── Phase 2 — URL rewriting ───────────────────────────────────────────────────
 
 export { applyAssetRewrites } from './applyAssetRewrites'

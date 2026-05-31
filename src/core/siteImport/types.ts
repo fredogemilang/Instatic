@@ -49,6 +49,12 @@ export type NewStyleRule = Omit<StyleRule, 'id' | 'createdAt' | 'updatedAt'>
  * - `duplicate-class`: two `.foo { ... }` rules with the same class selector
  *   appeared in the same file. The later rule's declarations win (CSS cascade
  *   semantics). One warning is emitted per duplicated class.
+ * - `scoped-class`: a class name was defined differently across two or more
+ *   source stylesheets (each page links its own). To keep every page faithful
+ *   to its own CSS, the divergent definitions were scoped to distinct names
+ *   (`btn`, `btn-2`, …) and the tokens on the affected pages' nodes + that
+ *   stylesheet's selectors were rewritten to match. Nothing is lost; the class
+ *   list just gains suffixed names. See `scopeClasses.ts`.
  *
  * Phase 2 (site import pipeline) kinds:
  * - `missing-stylesheet`: a `<link rel="stylesheet">` href referenced in an
@@ -73,6 +79,7 @@ export type ImportWarningKind =
   | 'blocked-property'
   | 'asset-reference'
   | 'duplicate-class'
+  | 'scoped-class'
   | 'missing-stylesheet'
   | 'asset-upload-failed'
   | 'external-font'
