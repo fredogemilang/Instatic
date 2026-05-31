@@ -208,4 +208,5 @@ Quick map from "where do I look for X?" to the canonical file:
 | Plugin sandbox host              | `server/plugins/quickjsHost.ts`, `server/plugins/modulePackVm.ts` |
 | Publisher                        | `src/core/publisher/`                                    |
 | TypeBox helpers                  | `src/core/utils/typeboxHelpers.ts`                       |
+| Error message extraction         | `src/core/utils/errorMessage.ts`                         |
 | Architecture gate tests          | `src/__tests__/architecture/*.test.ts`                   |

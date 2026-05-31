@@ -167,7 +167,10 @@ Detailed patterns: [`docs/reference/typebox-patterns.md`](docs/reference/typebox
 
 Every untyped boundary uses TypeBox. Inside the boundary, code trusts the parsed value.
 
-- **HTTP responses (client):** use the canonical client `apiRequest(path, { schema, … })` from `@core/http`. It sets `credentials`, serializes a JSON body, validates the success body against `schema`, and throws a single `ApiError` (carrying the HTTP status) on failure — detect cancellation with `isAbortError(err)`. Do NOT hand-roll `fetch` + `res.ok` + `res.json()` in admin code. The persistence layer performs its own injectable `fetch` and hands the response to `readEnvelope(res, Schema, fallbackMessage)` (same `@core/http`, also throws `ApiError`).
+- **HTTP responses (client):** `@core/http` is a single three-layer stack — there is exactly ONE way to validate a response, expressed at the altitude you need:
+  - **`apiRequest(path, { schema, … })`** — the canonical entry. Does the `fetch` itself: sets `credentials`, serializes a JSON body (FormData passes through untouched), validates the success body against `schema`, and throws a single `ApiError` (carrying the HTTP status) on failure. Detect cancellation with `isAbortError(err)`. **Default to this** — do NOT hand-roll `fetch` + `res.ok` + `res.json()` in admin code.
+  - **`readEnvelope(res, Schema, fallbackMessage)`** — for the persistence layer, which performs its own injectable `fetch` (test seam) and then hands the `Response` here. Checks `res.ok` (throws `ApiError` with status + the `{ error }` envelope message), then validates the body. Its no-body sibling is `assertOk(res, fallback)` for `void`/Blob/streaming/text responses.
+  - **`parseJsonResponse(res, Schema)`** — the low-level body-validation primitive that `apiRequest` and `readEnvelope` are *built on*. It validates a body with NO HTTP-status semantics. Reserved for genuine primitives only: the `@core/http` internals, the XHR upload path (`useUploadQueue`), and server-side fetches of external APIs. Do NOT reach for it in admin/persistence code — `assertOk(res, m); parseJsonResponse(res, S)` is exactly `readEnvelope(res, S, m)`; always write the latter.
 - **`JSON.parse` of persisted data:** `safeParseJson(raw, Schema)` for hard, `parseJsonWithFallback(raw, Schema, default)` for soft.
 - **Request bodies (server):** validate with a TypeBox schema before handing to handlers. The single shared body-parsing entry point is `readValidatedBody(req, Schema)` in `server/http.ts`.
 - **Plugin manifests:** `parsePluginManifest` in `src/core/plugins/manifest.ts`.
@@ -188,7 +191,7 @@ Every untyped boundary uses TypeBox. Inside the boundary, code trusts the parsed
 
 - Async UI handlers wrap in `try/catch`. Logged errors use the prefix `console.error('[<component>] <description>:', err)`.
 - User-visible errors go through component state + `role="alert"` (or `role="status"` for non-blocking). Never `alert()` / `confirm()` / `prompt()` — gated by `no-native-browser-dialogs.test.ts`.
-- Error message extraction: `err instanceof Error ? err.message : 'Unknown <thing> error'`.
+- Error message extraction: `getErrorMessage(err, 'Unknown <thing> error')` from `src/core/utils/errorMessage.ts` — handles the `instanceof Error` check and the empty-message fallback in one place.
 - Soft fallbacks (corrupted localStorage, missing optional config): `parseJsonWithFallback` + continue with defaults.
 - Hard fallbacks (corrupted required document, broken HTTP envelope): let the error bubble to the nearest error boundary. Do not silently mask.
 

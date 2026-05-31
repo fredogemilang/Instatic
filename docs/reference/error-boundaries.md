@@ -255,7 +255,7 @@ const handler = useCallback(async () => {
     await doSomethingThatMightFail()
   } catch (err) {
     console.error('[my-feature] save failed:', err)
-    pushToast({ kind: 'error', title: 'Save failed', body: err.message })
+    pushToast({ kind: 'error', title: 'Save failed', body: getErrorMessage(err, 'Save failed') })
     setError(err)
   }
 }, [])
@@ -300,7 +300,7 @@ The square-bracket prefix is **load-bearing** — log scrapers in production fil
 | `console.log` for errors                                             | `console.error` with `[<module>]` prefix                 |
 | Throwing without a useful message                                     | Include the path / context (`'failed to load page X'`)   |
 | Re-throwing without `cause`                                          | `throw new Error('wrapped', { cause: err })` preserves the chain |
-| Using `error.message` directly without `instanceof Error` check      | `err instanceof Error ? err.message : 'Unknown error'`   |
+| Using `error.message` directly without `instanceof Error` check      | `getErrorMessage(err, 'Unknown error')` from `@core/utils/errorMessage`   |
 | Using `alert(error.message)`                                          | `pushToast` or the error boundary fallback               |
 
 ---
@@ -317,5 +317,6 @@ The square-bracket prefix is **load-bearing** — log scrapers in production fil
   - `src/ui/components/ErrorBoundary/errorReporting.ts` — chain + log helpers
   - `src/admin/main.tsx` — React root callbacks + outermost boundary
   - `src/admin/router.tsx` — `RouteBoundary` per route
+  - `src/core/utils/errorMessage.ts` — `getErrorMessage` utility
 - Gate tests:
   - `src/__tests__/architecture/error-boundary-coverage.test.ts`

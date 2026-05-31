@@ -130,7 +130,7 @@ let body
 try {
   body = parseValue(CreatePostSchema, raw)
 } catch (err) {
-  return badRequest(err instanceof Error ? err.message : 'Invalid body')
+  return badRequest(getErrorMessage(err, 'Invalid body'))
 }
 // body is typed; proceed.
 ```
@@ -265,7 +265,7 @@ Common boundaries already wrapped — extend the same pattern when you add a new
 |--------------------------------------------|-----------------------------------------------------|-----------------------------------------|
 | HTTP request (client, canonical)           | `apiRequest(path, { schema, … })`                   | `src/core/http/apiClient.ts`            |
 | HTTP response from a held `Response`        | `readEnvelope(res, Schema, fallback)`               | `src/core/http/apiClient.ts`            |
-| HTTP response (generic JSON)               | `parseJsonResponse(res, Schema)`                    | `src/core/utils/jsonValidate.ts`        |
+| HTTP body-validation primitive (no status semantics; `@core/http` internals, XHR, server-side external APIs) | `parseJsonResponse(res, Schema)` | `src/core/utils/jsonValidate.ts` |
 | Request body (server handler)              | `parseValue(Schema, await readJsonObject(req))`     | `server/http.ts` + per-handler          |
 | `JSON.parse` of localStorage               | `parseJsonWithFallback(raw, Schema, default)`       | `src/core/utils/jsonValidate.ts`        |
 | `JSON.parse` of disk JSON                  | `safeParseJson(raw, Schema)`                        | `src/core/utils/jsonValidate.ts`        |
@@ -280,7 +280,7 @@ Common boundaries already wrapped — extend the same pattern when you add a new
 
 | Pattern                                                       | Use instead                                                     |
 |---------------------------------------------------------------|-----------------------------------------------------------------|
-| `await res.json() as Foo`                                     | `parseJsonResponse(res, FooSchema)`                             |
+| `await res.json() as Foo`                                     | `apiRequest(path, { schema })` (client) or `readEnvelope(res, FooSchema, msg)` (held `Response`) — `parseJsonResponse` only for `@core/http` internals / XHR / server-side |
 | `JSON.parse(raw) as Foo`                                      | `safeParseJson(raw, FooSchema)` / `parseJsonWithFallback`       |
 | Hand-rolled `interface Foo` next to a `FooSchema`             | `type Foo = Static<typeof FooSchema>`                            |
 | Importing `zod` in app code                                   | TypeBox — the only legitimate `zod` use is `server/handlers/agent/tools.ts` |
