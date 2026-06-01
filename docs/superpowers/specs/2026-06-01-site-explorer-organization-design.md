@@ -196,7 +196,7 @@ Browser smoke testing covers the persistence path:
 
 - Run `bun run dev`.
 - Open `http://127.0.0.1:5173/admin/site`.
-- Use the seeded local admin account from `AGENTS.md`.
+- Use the seeded local admin account from `CLAUDE.md`.
 - Create a folder under Pages, drag a page into it, save, reload, and verify the folder placement persists.
 - Rename a page from the Site Explorer and verify the row, slug, and reload state.
 
