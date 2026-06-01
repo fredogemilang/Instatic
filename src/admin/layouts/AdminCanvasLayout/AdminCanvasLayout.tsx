@@ -49,7 +49,6 @@ import { CanvasRoot, CANVAS_ROOT_DROPPABLE_ID } from '@admin/pages/site/canvas'
 import { PropertiesPanel } from '@admin/pages/site/panels/PropertiesPanel'
 import { CodeEditorPanel } from '@admin/pages/site/code-editor'
 import { Toolbar } from '@admin/pages/site/toolbar/Toolbar'
-import { ToolbarDivider } from '@admin/pages/site/toolbar/Toolbar'
 import { SettingsButton } from '@admin/pages/site/toolbar/SettingsButton'
 import { ZoomControls } from '@admin/pages/site/toolbar/ZoomControls'
 import { PublishButton } from '@admin/pages/site/toolbar/PublishButton'
@@ -304,7 +303,6 @@ export function AdminCanvasLayout() {
         rightSlot={(
           <>
             <ZoomControls />
-            <ToolbarDivider />
             <PublishButton
               enabled={canPublishPages}
               onSave={canSaveSite ? persistence.saveSite : undefined}

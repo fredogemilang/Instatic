@@ -632,6 +632,17 @@ describe('Toolbar — structural requirements', () => {
     expect(src).toContain('enabled={canPublishPages}')
   })
 
+  it('AdminCanvasLayout keeps zoom and publishing controls adjacent without a divider', () => {
+    const { readFileSync } = require('fs')
+    const src = readFileSync(
+      new URL('../../admin/layouts/AdminCanvasLayout/AdminCanvasLayout.tsx', import.meta.url),
+      'utf-8',
+    )
+    expect(src).toContain('<ZoomControls />')
+    expect(src).toContain('<PublishButton')
+    expect(src).not.toContain('ToolbarDivider')
+  })
+
   it('touch targets: all toolbar buttons have a defined compact height (Guideline #357)', () => {
     // Guideline #357 (user directive #1532): WCAG 2.5.5 44px touch target requirement
     // is explicitly waived for editor chrome. Toolbar controls target 28px.
