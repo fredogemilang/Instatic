@@ -173,7 +173,7 @@ Every admin page picks one of three root layouts from `src/admin/layouts/`. Impo
 | `AdminWorkspaceCanvasLayout` | Content, Data, Media | Canvas chrome (toolbar, sidebar, full-height canvas) WITHOUT site-only modules (no PropertiesPanel, no DnD, no CodeMirror). |
 | `AdminPageLayout` | Plugins, Users, Account, plugin admin pages | Lightweight — toolbar + centered scrollable page body. **Must not import the editor store.** Site name and favicon come from `useSiteSummary` + the `adminUi` Zustand store. |
 
-The `adminUi` store (`src/admin/state/adminUi.ts`) is the small cross-shell state store: settings-modal open flag, site name/favicon for the toolbar, and the active live-page path. It lives outside `@site/` so `AdminPageLayout` can subscribe without pulling in the 165 KB editor graph. The editor's `settingsSlice` mirrors its state into `adminUi` via a registered bridge so both are always in sync.
+The `adminUi` store (`src/admin/state/adminUi.ts`) is the small cross-shell state store: settings-modal open flag, site-import modal open flag, site name/favicon for the toolbar, and the active live-page path. It lives outside `@site/` so `AdminPageLayout` can subscribe without pulling in the 165 KB editor graph. The editor's `settingsSlice` mirrors its state into `adminUi` via a registered bridge so both are always in sync.
 
 `AdminWorkspaceCanvasLayout` and `AdminPageLayout` both call `useSiteSummary()` — a lightweight hook that fires a single `cmsAdapter.loadSite()` per session and writes the name + favicon into `adminUi`. The Site editor's `usePersistence` writes the same fields when it hydrates the full site, so after navigating to `/admin/site` the toolbar updates without a second fetch.
 
@@ -197,7 +197,7 @@ src/admin/
 │   └── AdminPageLayout/        ← lightweight page shell (no editor store)
 │
 ├── state/
-│   └── adminUi.ts              ← cross-shell Zustand store (settings, site name)
+│   └── adminUi.ts              ← cross-shell Zustand store (settings, site import, site name)
 │
 ├── lib/
 │   ├── routing/                ← in-house router
@@ -597,7 +597,7 @@ See [docs/features/plugin-system.md](features/plugin-system.md) for the plugin S
   - `src/admin/main.tsx` — React root mount
   - `src/admin/AuthenticatedAdmin.tsx` — post-login shell + prewarmedLazy scheduler
   - `src/admin/lib/prewarmedLazy.ts` — React.lazy alternative with explicit preload + sync fast-path
-  - `src/admin/state/adminUi.ts` — cross-shell Zustand store (settings modal, site name/favicon)
+  - `src/admin/state/adminUi.ts` — cross-shell Zustand store (settings modal, site-import modal, site name/favicon)
   - `src/admin/state/useSiteSummary.ts` — lightweight site name/favicon fetch for non-editor layouts
   - `src/admin/layouts/AdminPageLayout/AdminPageLayout.tsx` — lightweight non-editor shell
   - `src/admin/layouts/AdminWorkspaceCanvasLayout/AdminWorkspaceCanvasLayout.tsx` — canvas shell for Content/Data/Media
