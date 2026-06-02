@@ -4,12 +4,14 @@
  * Composes the DataSidebar, DataCanvas, and DataInspector through
  * AdminWorkspaceCanvasLayout. Capability resolution mirrors ContentPage.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AdminWorkspaceCanvasLayout } from '@admin/layouts/AdminWorkspaceCanvasLayout'
 import { useAuthenticatedAdminUser } from '@admin/sessionContext'
 import { useNavigate } from '@admin/lib/routing'
 import { useEditorStore } from '@site/store/store'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
+import { CMS_SITE_BUNDLE_IMPORTED_EVENT } from '@admin/state/adminEvents'
+import { useAdminUi } from '@admin/state/adminUi'
 import {
   canCreateContent,
   canEditAnyContent,
@@ -22,7 +24,6 @@ import { DataCanvas } from './components/DataCanvas/DataCanvas'
 import { DataInspector } from './components/DataInspector/DataInspector'
 import { NewTableDialog } from './components/NewTableDialog/NewTableDialog'
 import { ExportDialog } from './components/ExportDialog/ExportDialog'
-import { ImportDialog } from './components/ImportDialog/ImportDialog'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,11 +60,25 @@ export function DataPage() {
 
   const workspace = useDataWorkspace()
   const setPropertiesPanel = useEditorStore((s) => s.setPropertiesPanel)
+  const openSiteImport = useAdminUi((s) => s.openSiteImport)
   const confirmDelete = useConfirmDelete()
 
   const [newTableDialogOpen, setNewTableDialogOpen] = useState(false)
   const [exportDialog, setExportDialog] = useState<ExportDialogState>({ kind: 'closed' })
-  const [importDialog, setImportDialog] = useState(false)
+
+  useEffect(() => {
+    function refreshAfterBundleImport() {
+      void Promise.all([workspace.refreshTables(), workspace.refreshRows()])
+        .catch((err) => {
+          console.error('[DataPage] Refresh after import failed:', err)
+        })
+    }
+
+    window.addEventListener(CMS_SITE_BUNDLE_IMPORTED_EVENT, refreshAfterBundleImport)
+    return () => {
+      window.removeEventListener(CMS_SITE_BUNDLE_IMPORTED_EVENT, refreshAfterBundleImport)
+    }
+  }, [workspace])
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -198,7 +213,7 @@ export function DataPage() {
               selectedRowIds: [],
               activeTableId: workspace.selectedTableId,
             })}
-            onOpenImport={() => setImportDialog(true)}
+            onOpenImport={openSiteImport}
             canCreate={canCreate}
           />
         )}
@@ -252,18 +267,6 @@ export function DataPage() {
         />
       )}
 
-      {importDialog && (
-        <ImportDialog
-          open={importDialog}
-          onClose={() => setImportDialog(false)}
-          onImportComplete={() => {
-            void Promise.all([workspace.refreshTables(), workspace.refreshRows()])
-              .catch((err) => {
-                console.error('[DataPage] Refresh after import failed:', err)
-              })
-          }}
-        />
-      )}
     </>
   )
 }

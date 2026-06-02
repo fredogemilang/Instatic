@@ -16,7 +16,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import React from 'react'
-import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, act, waitFor, within } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
 import { useAdminUi } from '@admin/state/adminUi'
 import { subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
@@ -877,6 +877,20 @@ describe('ImportStep — progress + completion states', () => {
     }
   })
 
+  it('category rows use diverse smart rail accents', () => {
+    const progress = makeInitialRunProgress()
+    progress.phase = 'uploading'
+    progress.categories.media = { done: 0, total: 3 }
+    renderImportStep(progress, null)
+
+    const rows = ['pages', 'styles', 'media', 'colors', 'fonts', 'scripts'].map((id) =>
+      screen.getByTestId(`site-import-category-${id}`),
+    )
+    const accents = rows.map((row) => row.getAttribute('data-accent'))
+    expect(accents.every(Boolean)).toBe(true)
+    expect(new Set(accents).size).toBe(rows.length)
+  })
+
   it('failed state surfaces the error message via role="alert"', () => {
     const progress = makeInitialRunProgress()
     progress.phase = 'failed'
@@ -1022,10 +1036,10 @@ describe('ConflictsStep — conflict rendering', () => {
         onRuleResolutionChange={noopResChange}
       />,
     )
-    const optionValues = Array.from(document.querySelectorAll('option')).map((o) => o.value)
-    expect(optionValues).toContain('auto-rename')
-    expect(optionValues).toContain('skip')
-    expect(optionValues).not.toContain('overwrite')
+    const rowControls = within(screen.getByRole('group', { name: 'Conflict resolution for home.html' }))
+    expect(rowControls.getByRole('button', { name: 'Rename' })).toBeDefined()
+    expect(rowControls.getByRole('button', { name: 'Skip' })).toBeDefined()
+    expect(rowControls.queryByRole('button', { name: 'Overwrite' })).toBeNull()
   })
 
   it('offers the "Overwrite" option when a real existing page id is present', () => {
@@ -1051,8 +1065,14 @@ describe('ConflictsStep — conflict rendering', () => {
         onRuleResolutionChange={noopResChange}
       />,
     )
-    const optionValues = Array.from(document.querySelectorAll('option')).map((o) => o.value)
-    expect(optionValues).toContain('overwrite')
+    const rowControls = within(screen.getByRole('group', { name: 'Conflict resolution for about.html' }))
+    expect(rowControls.getByRole('button', { name: 'Overwrite' })).toBeDefined()
+    expect(rowControls.getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Rename',
+      'Skip',
+      'Overwrite',
+      'Custom',
+    ])
   })
 
   it('calls onPageResolutionChange when a row resolution changes', () => {
@@ -1079,13 +1099,132 @@ describe('ConflictsStep — conflict rendering', () => {
         onRuleResolutionChange={noopResChange}
       />,
     )
-    // Find the Select for conflict resolution and change it to 'overwrite'
-    const select = document.querySelector('select') as HTMLSelectElement
-    expect(select).not.toBeNull()
-    fireEvent.change(select, { target: { value: 'overwrite' } })
+    const rowControls = within(screen.getByRole('group', { name: 'Conflict resolution for about.html' }))
+    fireEvent.click(rowControls.getByRole('button', { name: 'Overwrite' }))
     expect(changes.length).toBeGreaterThan(0)
     expect(changes[0][0]).toBe('about.html')
     expect(changes[0][1].action).toBe('overwrite')
+  })
+
+  it('marks the current row resolution as pressed in the segmented control', () => {
+    const plan = makeMinimalPlan({
+      conflicts: {
+        pages: [],
+        rules: [
+          {
+            source: 'styles/main.css',
+            desiredName: 'hero-title',
+            existingRuleId: 'r-1',
+            defaultResolution: { action: 'auto-rename', resolvedName: 'hero-title-2' },
+          },
+        ],
+      },
+    })
+    const ruleRes = new Map<string, ConflictResolution>([
+      ['hero-title', { action: 'skip' }],
+    ])
+    render(
+      <ConflictsStep
+        plan={plan}
+        pageResolutions={emptyPageRes}
+        ruleResolutions={ruleRes}
+        onPageResolutionChange={noopResChange}
+        onRuleResolutionChange={noopResChange}
+      />,
+    )
+
+    const rowControls = within(screen.getByRole('group', { name: 'Conflict resolution for hero-title' }))
+    expect(rowControls.getByRole('button', { name: 'Skip' }).getAttribute('aria-pressed')).toBe('true')
+    expect(rowControls.getByRole('button', { name: 'Rename' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('applies one resolution to every class conflict from the section controls', () => {
+    const changes: [string, ConflictResolution][] = []
+    const plan = makeMinimalPlan({
+      conflicts: {
+        pages: [],
+        rules: [
+          {
+            source: 'styles/auth.css',
+            desiredName: 'auth-back',
+            existingRuleId: 'r-auth',
+            defaultResolution: { action: 'auto-rename', resolvedName: 'auth-back-2' },
+          },
+          {
+            source: 'styles/form.css',
+            desiredName: 'field',
+            existingRuleId: 'r-field',
+            defaultResolution: { action: 'auto-rename', resolvedName: 'field-2' },
+          },
+          {
+            source: 'styles/form.css',
+            desiredName: 'control',
+            existingRuleId: 'r-control',
+            defaultResolution: { action: 'auto-rename', resolvedName: 'control-2' },
+          },
+        ],
+      },
+    })
+
+    render(
+      <ConflictsStep
+        plan={plan}
+        pageResolutions={emptyPageRes}
+        ruleResolutions={emptyRuleRes}
+        onPageResolutionChange={noopResChange}
+        onRuleResolutionChange={(desiredName, res) => changes.push([desiredName, res])}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip all class name conflicts' }))
+
+    expect(changes).toEqual([
+      ['auth-back', { action: 'skip' }],
+      ['field', { action: 'skip' }],
+      ['control', { action: 'skip' }],
+    ])
+  })
+
+  it('omits bulk overwrite for page conflicts when any page has no overwrite target', () => {
+    const changes: [string, ConflictResolution][] = []
+    const plan = makeMinimalPlan({
+      conflicts: {
+        pages: [
+          {
+            source: 'about.html',
+            desiredSlug: 'about',
+            existingPageId: 'p-about',
+            defaultResolution: { action: 'auto-rename', resolvedSlug: 'about-2' },
+          },
+          {
+            source: 'about-copy.html',
+            desiredSlug: 'about',
+            existingPageId: '',
+            defaultResolution: { action: 'auto-rename', resolvedSlug: 'about-3' },
+          },
+        ],
+        rules: [],
+      },
+    })
+
+    render(
+      <ConflictsStep
+        plan={plan}
+        pageResolutions={emptyPageRes}
+        ruleResolutions={emptyRuleRes}
+        onPageResolutionChange={(source, res) => changes.push([source, res])}
+        onRuleResolutionChange={noopResChange}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Overwrite all page slug conflicts' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip all page slug conflicts' }))
+
+    expect(changes).toEqual([
+      ['about.html', { action: 'skip' }],
+      ['about-copy.html', { action: 'skip' }],
+    ])
   })
 })
 
@@ -1191,6 +1330,17 @@ describe('AnalyzeStep — MEDIA group renders from plan.assets only', () => {
     // The "Media" nav button renders its label + the total asset count.
     const mediaNav = screen.getByText('Media').closest('button')
     expect(mediaNav?.textContent).toContain('1')
+  })
+
+  it('review category nav uses diverse smart rail accents', () => {
+    renderAnalyzeStep()
+
+    const navItems = ['pages', 'styles', 'media', 'colors', 'fonts', 'scripts'].map((id) =>
+      screen.getByTestId(`site-import-review-category-${id}`),
+    )
+    const accents = navItems.map((item) => item.getAttribute('data-accent'))
+    expect(accents.every(Boolean)).toBe(true)
+    expect(new Set(accents).size).toBe(navItems.length)
   })
 
   it('Media pane groups the PNG under an "Images" tile reading "1 file"', () => {

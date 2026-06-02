@@ -20,6 +20,7 @@ import { Switch } from '@ui/components/Switch'
 import { Checkbox } from '@ui/components/Checkbox'
 import { Input } from '@ui/components/Input'
 import { SearchBar } from '@ui/components/SearchBar'
+import type { RailAccent } from '@ui/railAccent'
 import { HeadingIcon } from 'pixel-art-icons/icons/heading'
 import { BracesIcon } from 'pixel-art-icons/icons/braces'
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
@@ -28,6 +29,7 @@ import { DragAndDropSolidIcon } from 'pixel-art-icons/icons/drag-and-drop-solid'
 import type { ImportPlan } from '@core/siteImport'
 import type { ImportSelection } from '../SiteImportModal'
 import { ImportStepper } from '../shared/ImportStepper'
+import { withSiteImportCategoryTints } from '../shared/importCategoryAccent'
 import styles from './AnalyzeStep.module.css'
 
 // ---------------------------------------------------------------------------
@@ -39,17 +41,20 @@ type Category = 'pages' | 'styles' | 'media' | 'colors' | 'fonts' | 'scripts' | 
 interface CategoryDef {
   id: Exclude<Category, 'skipped'>
   label: string
+  accent: RailAccent
   tint: string
 }
 
-const CATEGORIES: CategoryDef[] = [
-  { id: 'pages', label: 'Pages', tint: 'var(--rail-tint-lilac)' },
-  { id: 'styles', label: 'Style rules', tint: 'var(--rail-tint-sky)' },
-  { id: 'media', label: 'Media', tint: 'var(--rail-tint-peach)' },
-  { id: 'colors', label: 'Color tokens', tint: 'var(--rail-tint-sky)' },
-  { id: 'fonts', label: 'Fonts', tint: 'var(--rail-tint-mint)' },
-  { id: 'scripts', label: 'Scripts', tint: 'var(--rail-tint-mint)' },
-]
+type BaseCategoryDef = Omit<CategoryDef, 'accent' | 'tint'>
+
+const CATEGORIES: CategoryDef[] = withSiteImportCategoryTints<BaseCategoryDef>([
+  { id: 'pages', label: 'Pages' },
+  { id: 'styles', label: 'Style rules' },
+  { id: 'media', label: 'Media' },
+  { id: 'colors', label: 'Color tokens' },
+  { id: 'fonts', label: 'Fonts' },
+  { id: 'scripts', label: 'Scripts' },
+])
 
 /** How many selector rows to render per expanded group before collapsing into a "+N more" line. */
 const RULE_ROW_CAP = 60
@@ -200,6 +205,8 @@ export function AnalyzeStep({
                 type="button"
                 className={styles.navItem}
                 data-active={active === c.id ? 'true' : undefined}
+                data-accent={c.accent}
+                data-testid={`site-import-review-category-${c.id}`}
                 onClick={() => setActive(c.id)}
               >
                 <span className={styles.navDot} style={{ '--tint': c.tint } as CSSProperties} />

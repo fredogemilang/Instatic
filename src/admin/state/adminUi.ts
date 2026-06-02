@@ -32,6 +32,11 @@ export interface AdminUiState {
   openSettings: (section?: string) => void
   closeSettings: () => void
 
+  /** True when the global Site Import modal should be mounted + visible. */
+  siteImportOpen: boolean
+  openSiteImport: () => void
+  closeSiteImport: () => void
+
   /**
    * Site summary surfaced in the admin toolbar (site name + favicon).
    *
@@ -105,6 +110,10 @@ export const useAdminUi = create<AdminUiState>((set) => ({
     set({ settingsOpen: false })
     editorSettingsBridge?.(false)
   },
+
+  siteImportOpen: false,
+  openSiteImport: () => set({ siteImportOpen: true }),
+  closeSiteImport: () => set({ siteImportOpen: false }),
 
   siteName: 'Untitled Site',
   siteFaviconUrl: null,

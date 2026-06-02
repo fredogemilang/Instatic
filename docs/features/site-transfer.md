@@ -13,6 +13,7 @@ The transfer format is **self-contained** — no external service, no signed URL
   - `POST /admin/api/cms/export` — produce a bundle from the current site
   - `POST /admin/api/cms/import/preview` — analyze a bundle without applying (diff summary)
   - `POST /admin/api/cms/import` — apply the bundle
+- UI entry: drop the exported `.json` into the canonical Site Import modal (`src/admin/modals/SiteImport`). Spotlight and workspace **Import site** actions open this same global shell modal.
 - Three import strategies: `replace` (destructive), `merge-add` (insert if new), `merge-overwrite` (upsert).
 - Media bytes are embedded as base64. Variants are **not** exported — they regenerate on first request after import.
 - v1 caveat: bundles are assembled in memory. Large sites with heavy media will be slow / memory-hungry — chunked streaming is a future improvement.
@@ -237,8 +238,8 @@ Save the response JSON to disk (browser handles the download automatically).
 
 1. On the source host: export with `includeShell: true, includeMedia: true`.
 2. On the destination host: setup wizard completes (creates an owner account, empty site).
-3. POST the bundle to `/admin/api/cms/import/preview` to see what would change.
-4. POST to `/admin/api/cms/import` with `strategy: 'replace'`.
+3. On the destination host: open **Import Site** from Spotlight or the Data workspace, then drop the exported JSON bundle.
+4. Review the preview and import with `strategy: 'replace'`.
 5. After import, the published HTML is regenerated on next publish (or `republish-all`).
 
 ### Selective export (one post type only)

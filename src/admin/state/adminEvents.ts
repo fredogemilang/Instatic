@@ -19,3 +19,10 @@
  * Plugins page list, etc.).
  */
 export const CMS_SITE_RELOAD_EVENT = 'cms-site-reload'
+
+/**
+ * Fired after a CMS-exported SiteBundle has been imported successfully through
+ * the global Site Import modal. Data/content views that cache table or row
+ * lists should refresh when they are mounted.
+ */
+export const CMS_SITE_BUNDLE_IMPORTED_EVENT = 'cms-site-bundle-imported'

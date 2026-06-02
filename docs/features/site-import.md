@@ -1,18 +1,20 @@
 # Site Import
 
-`src/core/siteImport` converts a static-site bundle (HTML pages, CSS files, images, fonts, JS) into live CMS pages, style rules, and media-library assets in one undoable step.
+`src/admin/modals/SiteImport` is the canonical import surface. It routes static-site bundles (HTML pages, CSS files, images, fonts, JS) through `src/core/siteImport`, and routes CMS-exported `SiteBundle` JSON files through the CMS transfer endpoints for full import/export parity.
 
-The pipeline has two parts: a pure analysis function (`buildImportPlan`) that produces an `ImportPlan` preview, and an async commit function (`commitImportPlan`) that uploads assets and writes to the store. The admin wizard (`src/admin/modals/SiteImport/`) drives both through a four-stage modal.
+The static-site pipeline has two parts: a pure analysis function (`buildImportPlan`) that produces an `ImportPlan` preview, and an async commit function (`commitImportPlan`) that uploads assets and writes to the store. CMS bundle imports keep their native semantics: validate the `SiteBundle`, preview against `/admin/api/cms/import/preview`, then apply through `/admin/api/cms/import`.
 
 ---
 
 ## TL;DR
 
-- Entry: drop files, a folder, or a `.zip` → four-stage modal (Drop → Review → Conflicts → Import, with completion shown inside the Import stage).
+- Entry: global admin-shell modal, opened from Spotlight or workspace actions. Drop files, a folder, a `.zip`, or a CMS-exported `.json` bundle. Static files use the four-stage modal (Drop → Review → Conflicts → Import, with completion shown inside the Import stage). CMS bundles use Drop → Review bundle → Import.
 - `buildImportPlan({ fileMap, currentSite })` — pure, synchronous — produces an `ImportPlan` with pages, style rules, media, color tokens, fonts, and scripts.
 - `commitImportPlan(plan, adapter)` — uploads assets, then wraps all store writes in a single `adapter.commit` call → one Cmd+Z reverts the whole import.
-- Conflict resolution: auto-rename (default), overwrite, skip, or custom-rename — per page slug and per class name.
+- Static imports load the current CMS draft into the editor store on demand when launched outside `/admin/site`; if no draft exists, the modal creates an empty site before analysis.
+- Conflict resolution: rename with a numeric suffix (default), overwrite, skip, or custom-rename — per page slug and per class name, with category-level bulk actions for rename / skip / overwrite.
 - What imports: pages, `kind:'class'` and `kind:'ambient'` style rules, images/fonts/binaries, root CSS color tokens, `@font-face` families, JS files as site-wide scripts.
+- CMS bundle import preserves exported tables, rows, optional site shell, and embedded media using the same merge strategies as site transfer (`replace`, `merge-add`, `merge-overwrite`).
 - HTML forms import through the shared HTML importer as first-class form primitives (`base.form`, controls, labels, submit buttons), not as custom containers.
 - What cannot be modeled: `@keyframes`, `@supports`, `@container`, `@layer`, `@import` — surfaced as warnings, never silently dropped.
 - Headless: `src/core/siteImport/` carries no admin, React, or server imports (gated by `siteImport-headless.test.ts`).
@@ -41,15 +43,17 @@ src/core/siteImport/
 
 src/admin/modals/SiteImport/
 ├── index.ts
-├── SiteImportModal.tsx          — four-stage wizard shell
+├── SiteImportModal.tsx          — canonical import wizard shell + CMS bundle router
 ├── SiteImportModal.module.css
 ├── steps/
 │   ├── DropStep.tsx             — full-modal drop zone (files, folder, .zip)
 │   ├── AnalyzeStep.tsx          — category navigator (left) + detail pane (right)
+│   ├── CmsBundleReviewStep.tsx  — CMS bundle diff + merge strategy review
 │   ├── ConflictsStep.tsx        — page-slug + class-name conflict resolution rows
 │   └── ImportStep.tsx           — determinate progress surface + complete/failed states
 └── shared/
     ├── createSiteImportAdapter.ts  — wires adapter to editor store + media API
+    ├── useCmsBundleImport.ts       — CMS bundle parse/preview/import flow
     ├── ConflictRow.tsx             — single slug/class-name conflict row with resolution picker
     ├── ImportStepper.tsx           — shared four-stage progress rail (Review + Import)
     └── importProgress.ts           — RunProgress model used by ImportStep
@@ -60,7 +64,11 @@ src/admin/modals/SiteImport/
 ## Data flow
 
 ```text
-User drops files / folder / .zip
+User drops files / folder / .zip / CMS bundle JSON
+            │
+            ├─ valid SiteBundle JSON → previewSiteBundle → CmsBundleReviewStep
+            │                                      │
+            │                                      └─ importSiteBundle(strategy)
             │
             ▼
     ingestInput(input)
@@ -191,6 +199,8 @@ Each conflict has a `defaultResolution`:
 
 `applyConflictResolutions` applies the resolutions to the plan (renames page slugs, renames rule selectors, remaps `classIds` on nodes). `commitImportPlan` applies skip/overwrite actions from `defaultResolution` at commit time.
 
+The conflict wizard renders bulk controls in each conflict category. Page slug conflicts and class name conflicts can each be set to rename with a numeric suffix, skip, or overwrite in one action; the page overwrite bulk action is hidden when any listed page conflict is only an intra-import collision and has no existing page to replace. Individual rows use segmented controls for the same actions and still allow custom renames after a bulk action.
+
 ---
 
 ## Atomicity
@@ -206,7 +216,11 @@ Each conflict has a `defaultResolution`:
 
 `SiteImportModal.tsx` drives four user-visible stages — **Drop → Review → Conflicts → Import** — shown in the shared `ImportStepper` rail. Completion lives inside the Import stage (the stepper has no separate "Done" stage). Internally the `run` step renders `ImportStep`, whose `RunProgress.phase` switches it between the running, complete, and failed surfaces.
 
-**Drop** — full-modal drop zone. Accepts loose files, a folder, or a `.zip`. `ingestInput` normalizes all input shapes to `FileMap`. Size guards: 1 GB aggregate, 10 k files, 5 GB uncompressed (zip-bomb guard).
+The modal is mounted once at the authenticated admin shell (`AuthenticatedAdmin.tsx`) behind `useAdminUi().siteImportOpen`. It is not owned by the Site editor route. The Site editor, Data workspace, and Spotlight command all open the same shell-level modal state, so importing works from any admin workspace with the required capability.
+
+**Drop** — full-modal drop zone. Accepts loose files, a folder, a `.zip`, or a CMS-exported `.json` bundle. A single JSON file is first checked with `parseSiteBundle`; valid bundles route to the CMS bundle review path. Everything else goes through `ingestInput`, which normalizes static import input shapes to `FileMap`. Static import analysis needs a `currentSite`; when the modal opens outside the Site editor, it loads the CMS draft through `cmsAdapter.loadSite('default')` before calling `buildImportPlan`. Size guards: 1 GB aggregate, 10 k files, 5 GB uncompressed (zip-bomb guard).
+
+**CMS bundle review** — shown when the dropped file validates as `SiteBundle`. The wizard calls `previewSiteBundle` to render a diff against the local site, then lets the user pick `replace`, `merge-add`, or `merge-overwrite`. Commit calls `importSiteBundle`; on success the modal closes and the caller can refresh workspace data.
 
 **Analyze (Review)** — category navigator. Left column: one nav entry per import category with its count and include-toggle, plus "Add more files" (files can be added at any point — re-ingests and rebuilds the plan) and a "Can't import" entry for skipped items. Right pane: detail view per category:
 - **Pages** — checkbox + inline slug editor per page.
@@ -217,7 +231,7 @@ Each conflict has a `defaultResolution`:
 - **Scripts** — Switch per JS file.
 - **Can't import** — list of `unusedCss` + `droppedAtRules` with reasons.
 
-**Conflicts** — shown only when conflicts exist. Page-slug rows and class-name rows, each with a dropdown: `Auto-rename | Overwrite | Skip | Custom…`.
+**Conflicts** — shown only when conflicts exist. Page-slug rows and class-name rows each use a segmented control: `Rename | Skip | Overwrite | Custom`.
 
 **Import** (`ImportStep`) — a calm, determinate progress surface (no terminal log). A headline activity (phase verb + N of M), a determinate bar with a travelling shimmer, a one-line current-item ticker, and a per-category breakdown mirroring the Review navigator (pending ring → spinner → mint check, with a tint-washed progress fill). Everything is driven by real pipeline state: media (asset uploads) is the only incremental phase, so it dominates the bar; the other categories land together at the atomic commit. The commit phase is uncancellable; the upload phase is cancellable (orphaned uploads are harmless).
 
@@ -256,7 +270,7 @@ On success the same step switches to its **complete** state — a success mark, 
 ## Related
 
 - [docs/features/html-import.md](html-import.md) — `@core/htmlImport` is used by `htmlPagePlan.ts` to parse each HTML file's body into a `PageNode` fragment
-- [docs/features/site-transfer.md](site-transfer.md) — the separate CMS bundle export/import (JSON-based round-trip for CMS-native data, not static HTML)
+- [docs/features/site-transfer.md](site-transfer.md) — CMS bundle export/import format and server endpoints used by the JSON branch of this modal
 - [docs/reference/page-tree.md](../reference/page-tree.md) — `NodeTree<PageNode>`, `ImportFragment` shape
 - [docs/reference/typebox-patterns.md](../reference/typebox-patterns.md) — boundary validation
 - Source-of-truth files:

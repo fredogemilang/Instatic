@@ -17,6 +17,7 @@
  * once the commit lands. Media therefore naturally dominates the bar.
  */
 import { type CSSProperties } from 'react'
+import type { RailAccent } from '@ui/railAccent'
 import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
 import { BracesIcon } from 'pixel-art-icons/icons/braces'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
@@ -27,6 +28,7 @@ import { CheckIcon } from 'pixel-art-icons/icons/check'
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import type { ImportResult } from '@core/siteImport'
 import { ImportStepper } from '../shared/ImportStepper'
+import { withSiteImportCategoryTints } from '../shared/importCategoryAccent'
 import type { CategoryCount, ImportCategoryId, RunProgress } from '../shared/importProgress'
 import styles from './ImportStep.module.css'
 
@@ -37,20 +39,23 @@ import styles from './ImportStep.module.css'
 interface CategoryConfig {
   id: ImportCategoryId
   label: string
+  accent: RailAccent
   tint: string
   unit: string
   verb: string
   Icon: typeof FileTextSolidIcon
 }
 
-const CATEGORIES: CategoryConfig[] = [
-  { id: 'pages', label: 'Pages', tint: 'var(--rail-tint-lilac)', unit: 'pages', verb: 'Building pages', Icon: FileTextSolidIcon },
-  { id: 'styles', label: 'Style rules', tint: 'var(--rail-tint-sky)', unit: 'rules', verb: 'Applying style rules', Icon: BracesIcon },
-  { id: 'media', label: 'Media', tint: 'var(--rail-tint-peach)', unit: 'files', verb: 'Uploading media', Icon: ImageSolidIcon },
-  { id: 'colors', label: 'Color tokens', tint: 'var(--rail-tint-sky)', unit: 'tokens', verb: 'Creating color tokens', Icon: PaintBucketSolidIcon },
-  { id: 'fonts', label: 'Fonts', tint: 'var(--rail-tint-mint)', unit: 'fonts', verb: 'Embedding fonts', Icon: HeadingIcon },
-  { id: 'scripts', label: 'Scripts', tint: 'var(--rail-tint-mint)', unit: 'files', verb: 'Attaching scripts', Icon: CodeIcon },
-]
+type BaseCategoryConfig = Omit<CategoryConfig, 'accent' | 'tint'>
+
+const CATEGORIES: CategoryConfig[] = withSiteImportCategoryTints<BaseCategoryConfig>([
+  { id: 'pages', label: 'Pages', unit: 'pages', verb: 'Building pages', Icon: FileTextSolidIcon },
+  { id: 'styles', label: 'Style rules', unit: 'rules', verb: 'Applying style rules', Icon: BracesIcon },
+  { id: 'media', label: 'Media', unit: 'files', verb: 'Uploading media', Icon: ImageSolidIcon },
+  { id: 'colors', label: 'Color tokens', unit: 'tokens', verb: 'Creating color tokens', Icon: PaintBucketSolidIcon },
+  { id: 'fonts', label: 'Fonts', unit: 'fonts', verb: 'Embedding fonts', Icon: HeadingIcon },
+  { id: 'scripts', label: 'Scripts', unit: 'files', verb: 'Attaching scripts', Icon: CodeIcon },
+])
 
 type RowState = 'pending' | 'active' | 'done'
 
@@ -161,6 +166,8 @@ export function ImportStep({ progress, siteName, result, droppedAtRules, logOpen
                     key={cfg.id}
                     className={styles.cat}
                     data-state={state}
+                    data-accent={cfg.accent}
+                    data-testid={`site-import-category-${cfg.id}`}
                     style={{ '--cat-tint': cfg.tint, '--cat-p': local } as CSSProperties}
                   >
                     <span className={styles.catIcon}>

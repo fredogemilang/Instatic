@@ -1,21 +1,23 @@
 /**
  * ConflictRow — a single slug or class-name conflict with its resolution picker.
  *
- * Shows the source path (or class name) and a `<Select>` for the resolution
+ * Shows the source path (or class name) and a segmented control for the resolution
  * action. When "Custom…" is selected, an `<Input>` appears inline for the
  * user to type the custom slug or name.
  */
-import { Select } from '@ui/components/Select'
+import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { Input } from '@ui/components/Input'
 import type { ConflictResolution } from '@core/siteImport'
 import styles from './ConflictRow.module.css'
 
+type ResolutionAction = ConflictResolution['action']
+
 const ACTION_OPTIONS = [
-  { value: 'auto-rename', label: 'Auto-rename' },
-  { value: 'overwrite',   label: 'Overwrite' },
+  { value: 'auto-rename', label: 'Rename', tooltip: 'Rename with a numeric suffix' },
   { value: 'skip',        label: 'Skip' },
-  { value: 'custom-rename', label: 'Custom…' },
-]
+  { value: 'overwrite',   label: 'Overwrite' },
+  { value: 'custom-rename', label: 'Custom' },
+] satisfies ReadonlyArray<{ value: ResolutionAction; label: string; tooltip?: string }>
 
 // Options minus "Overwrite" — used when there is no existing target to
 // overwrite (an intra-batch collision between two imported items).
@@ -38,25 +40,25 @@ export interface ConflictRowProps {
 
 export function ConflictRow({ kind, source, desired, current, canOverwrite = true, onChange }: ConflictRowProps) {
   const isCustom = current.action === 'custom-rename'
+  const resolutionLabel = kind === 'page' ? (source || desired) : desired
   const customValue =
     kind === 'page'
       ? (current.resolvedSlug ?? desired)
       : (current.resolvedName ?? desired)
 
-  function handleActionChange(action: string) {
-    const typed = action as ConflictResolution['action']
-    if (typed === 'auto-rename') {
-      onChange({ action: typed })
-    } else if (typed === 'overwrite') {
-      onChange({ action: typed })
-    } else if (typed === 'skip') {
-      onChange({ action: typed })
+  function handleActionChange(action: ResolutionAction) {
+    if (action === 'auto-rename') {
+      onChange({ action })
+    } else if (action === 'overwrite') {
+      onChange({ action })
+    } else if (action === 'skip') {
+      onChange({ action })
     } else {
       // custom-rename — pre-fill with the desired value
       onChange(
         kind === 'page'
-          ? { action: typed, resolvedSlug: desired }
-          : { action: typed, resolvedName: desired },
+          ? { action, resolvedSlug: desired }
+          : { action, resolvedName: desired },
       )
     }
   }
@@ -68,12 +70,12 @@ export function ConflictRow({ kind, source, desired, current, canOverwrite = tru
         <span className={styles.desired}>{desired}</span>
       </div>
       <div className={styles.controls}>
-        <Select
+        <SegmentedControl<ResolutionAction>
           value={current.action}
-          fieldSize="sm"
           options={canOverwrite ? ACTION_OPTIONS : ACTION_OPTIONS_NO_OVERWRITE}
-          onChange={(e) => handleActionChange(e.target.value)}
-          aria-label="Conflict resolution"
+          onChange={handleActionChange}
+          size="xs"
+          aria-label={`Conflict resolution for ${resolutionLabel}`}
         />
         {isCustom && (
           <Input

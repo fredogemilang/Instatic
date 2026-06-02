@@ -83,7 +83,6 @@ import { EditorPermissionsProvider } from '@site/EditorPermissionsProvider'
 import type { EditorPermissions } from '@site/editorPermissionsContext'
 
 import { ImportHtmlModal } from '@admin/modals/ImportHtml'
-import { SiteImportModal } from '@admin/modals/SiteImport'
 
 // SettingsModal is heavy (~37 KB raw) and closed 99% of the time. lazy()
 // pushes it into its own chunk and the conditional render below avoids
@@ -129,7 +128,6 @@ export function AdminCanvasLayout() {
   // shell reads from it too.
   const settingsOpen = useAdminUi((s) => s.settingsOpen)
   const importHtmlModalOpen = useEditorStore((s) => s.importHtmlModalOpen)
-  const siteImportModalOpen = useEditorStore((s) => s.siteImportModalOpen)
   const publishSiteSummary = useAdminUi((s) => s.setSiteSummary)
   const publishActiveLivePath = useAdminUi((s) => s.setActiveLivePath)
   // Public path of the page currently open in the Site-editor canvas.
@@ -377,9 +375,6 @@ export function AdminCanvasLayout() {
           react to `importHtmlModalOpen` without a lazy-load delay. */}
       {importHtmlModalOpen && <ImportHtmlModal />}
 
-      {/* Super Import wizard — opens from Spotlight "Import Site" command.
-          Freshly mounted on each open so all wizard state starts clean. */}
-      {siteImportModalOpen && <SiteImportModal />}
     </div>
     </EditorPermissionsProvider>
   )

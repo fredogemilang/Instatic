@@ -48,7 +48,7 @@
  * + compiles all workspace page chunks. The difference is the SCHEDULE:
  * active first, others in idle time. Total wire bytes are unchanged.
  */
-import { Suspense, useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import type { CmsCurrentUser } from '@core/persistence'
 import { AppLoadingScreen } from './AppLoadingScreen'
 import type { AdminWorkspace } from './workspace'
@@ -58,6 +58,7 @@ import { canAccessWorkspace, firstAccessibleWorkspace, workspacePath } from './a
 import { Navigate, useInRouterContext } from './lib/routing'
 import { SpotlightRoot } from './spotlight'
 import { prewarmedLazy } from './lib/prewarmedLazy'
+import { useAdminUi } from './state/adminUi'
 import styles from './AdminEntry.module.css'
 
 // The 9 workspace pages — pre-warmed AND synchronously-renderable once
@@ -101,6 +102,10 @@ const AccountPage = prewarmedLazy(
 const DataPage = prewarmedLazy(
   () => import('./pages/data/DataPage').then((m) => ({ default: m.DataPage })),
   { displayName: 'DataPage' },
+)
+
+const SiteImportModal = lazy(() =>
+  import('./modals/SiteImport').then((m) => ({ default: m.SiteImportModal })),
 )
 
 // Plugin runtime (globalThis.__instatic) is now installed LAZILY by
@@ -181,6 +186,7 @@ const ALL_WORKSPACE_PAGES = [
 export default function AuthenticatedAdmin({ section, currentUser }: AuthenticatedAdminProps) {
   const inRouter = useInRouterContext()
   const fallbackWorkspace = firstAccessibleWorkspace(currentUser)
+  const siteImportOpen = useAdminUi((s) => s.siteImportOpen)
 
   // Schedule background preloads for non-active workspace pages AFTER
   // the active page has rendered + painted. `useEffect` fires after
@@ -266,6 +272,11 @@ export default function AuthenticatedAdmin({ section, currentUser }: Authenticat
               section === 'account' ? <AccountPage /> :
               <DashboardPage />}
           </Suspense>
+          {siteImportOpen && (
+            <Suspense fallback={null}>
+              <SiteImportModal />
+            </Suspense>
+          )}
         </SpotlightRoot>
       </StepUpProvider>
     </AdminSessionProvider>

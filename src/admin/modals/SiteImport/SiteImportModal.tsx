@@ -1,18 +1,21 @@
 /**
  * SiteImportModal — the Super Import wizard.
  *
- * A five-step dialog that lets the user import a static site (folder, .zip,
- * or loose files) into the visual editor in a single undo-able operation.
+ * A canonical import dialog for both static-site imports and CMS-native site
+ * bundles. Static-site inputs (folder, .zip, loose files) import into the
+ * visual editor in one undo-able operation. CMS-exported JSON bundles use the
+ * server-side transfer endpoints for full import/export parity.
  *
  * Steps:
  *   drop      → user drops/picks files
- *   analyze   → review plan: pages, style rules, media, skipped items
- *   conflicts → resolve slug / class-name conflicts (skipped if none)
- *   run       → upload assets + commit to store
- *   done      → summary + action shortcuts
+ *   analyze    → review static plan: pages, style rules, media, skipped items
+ *   cms-review → review CMS bundle diff + merge strategy
+ *   conflicts  → resolve slug / class-name conflicts (skipped if none)
+ *   run        → upload assets + commit static plan to store
  *
- * Mount pattern: the parent renders `{siteImportModalOpen && <SiteImportModal />}`
- * so the component is always freshly mounted on open — no reset logic needed.
+ * Mount pattern: the authenticated admin shell renders
+ * `{siteImportOpen && <SiteImportModal />}` so the component is always freshly
+ * mounted on open — no reset logic needed.
  *
  * Undo guarantee: `mutateAllPagesAndSite` wraps the full commit in one Immer
  * history snapshot, so Cmd+Z reverts the entire import in one press.
@@ -40,20 +43,26 @@ import {
   TooManyFilesError,
   PathTraversalError,
 } from '@core/siteImport'
+import type { SiteDocument } from '@core/page-tree'
+import { cmsAdapter } from '@core/persistence/cms'
+import { CMS_SITE_RELOAD_EVENT } from '@admin/state/adminEvents'
+import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
 import { DropStep } from './steps/DropStep'
 import { AnalyzeStep } from './steps/AnalyzeStep'
 import { ConflictsStep } from './steps/ConflictsStep'
 import { ImportStep } from './steps/ImportStep'
+import { CmsBundleReviewStep } from './steps/CmsBundleReviewStep'
 import { makeInitialRunProgress, type RunProgress } from './shared/importProgress'
 import { createSiteImportAdapter } from './shared/createSiteImportAdapter'
+import { describeCmsBundleLoadError, useCmsBundleImport } from './shared/useCmsBundleImport'
 import styles from './SiteImportModal.module.css'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type Step = 'drop' | 'analyze' | 'conflicts' | 'run'
+export type Step = 'drop' | 'analyze' | 'conflicts' | 'run' | 'cms-review'
 
 export interface ImportSelection {
   pagesIncluded: Set<string>       // by source path
@@ -61,6 +70,10 @@ export interface ImportSelection {
   assetsIncluded: Set<string>      // by sourcePath
   fontsIncluded: Set<string>       // by font family
   scriptsIncluded: Set<string>     // by script path
+}
+
+interface SiteImportModalProps {
+  onCmsBundleImportComplete?: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +107,29 @@ function describeIngestError(err: unknown): string {
   if (err instanceof TooManyFilesError) return `Too many files (${err.count}). Maximum is ${err.limit}.`
   if (err instanceof PathTraversalError) return `Unsafe path detected: "${err.path}".`
   return err instanceof Error ? err.message : 'Unknown import error'
+}
+
+async function ensureCurrentSiteForStaticImport(): Promise<SiteDocument> {
+  const existingSite = useEditorStore.getState().site
+  if (existingSite) return existingSite
+
+  const loadedSite = await cmsAdapter.loadSite('default')
+  if (loadedSite) {
+    useEditorStore.getState().loadSite(loadedSite)
+    return loadedSite
+  }
+
+  return useEditorStore.getState().createSite('My Site')
+}
+
+async function saveImportedDraftSite(): Promise<void> {
+  const site = useEditorStore.getState().site
+  if (!site) throw new Error('Import completed, but no draft site is loaded.')
+  await cmsAdapter.saveSite(site)
+  useEditorStore.getState().setHasUnsavedChanges(false)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(CMS_SITE_RELOAD_EVENT))
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -141,8 +177,24 @@ function buildResolvedPlan(
 // Modal component
 // ---------------------------------------------------------------------------
 
-export function SiteImportModal() {
-  const closeModal = useEditorStore((s) => s.closeSiteImportModal)
+export function SiteImportModal({ onCmsBundleImportComplete }: SiteImportModalProps = {}) {
+  const closeAdminSiteImportModal = useAdminUi((s) => s.closeSiteImport)
+  function closeModal() {
+    closeAdminSiteImportModal()
+  }
+
+  const {
+    cmsBundleState,
+    cmsCanImport,
+    cmsImportButtonLabel,
+    clearCmsBundle,
+    importCmsBundle,
+    loadCmsBundleFile,
+    setCmsStrategy,
+  } = useCmsBundleImport({
+    closeModal,
+    onImportComplete: onCmsBundleImportComplete,
+  })
 
   // ── Wizard state ──────────────────────────────────────────────────────────
 
@@ -167,11 +219,21 @@ export function SiteImportModal() {
     setBusy(true)
     setErrorMsg(null)
     try {
+      if (files.length === 1 && await loadCmsBundleFile(files[0])) {
+        setFileMap(null)
+        setPlan(null)
+        setSelection(null)
+        setBusy(false)
+        setStep('cms-review')
+        return
+      }
+
       const map = await ingestInput(files)
-      finalizePlan(map)
+      await finalizePlan(map)
     } catch (err) {
       console.error('[SiteImportModal] ingest failed:', err)
-      setErrorMsg(describeIngestError(err))
+      const singleJson = files.length === 1 && files[0].name.toLowerCase().endsWith('.json')
+      setErrorMsg(singleJson ? describeCmsBundleLoadError(err) : describeIngestError(err))
       setBusy(false)
     }
   }
@@ -181,7 +243,7 @@ export function SiteImportModal() {
     setErrorMsg(null)
     try {
       const map = await ingestInput({ zipBytes })
-      finalizePlan(map)
+      await finalizePlan(map)
     } catch (err) {
       console.error('[SiteImportModal] ingest failed:', err)
       setErrorMsg(describeIngestError(err))
@@ -204,7 +266,7 @@ export function SiteImportModal() {
         ...fileMap,
         files: { ...fileMap.files, ...added.files },
       }
-      finalizePlan(merged)
+      await finalizePlan(merged)
     } catch (err) {
       console.error('[SiteImportModal] add files failed:', err)
       setBusy(false)
@@ -212,13 +274,8 @@ export function SiteImportModal() {
     }
   }
 
-  function finalizePlan(map: FileMap) {
-    const currentSite = useEditorStore.getState().site
-    if (!currentSite) {
-      setErrorMsg('Editor has no site loaded. Open a site first.')
-      setBusy(false)
-      return
-    }
+  async function finalizePlan(map: FileMap) {
+    const currentSite = await ensureCurrentSiteForStaticImport()
     const importPlan = buildImportPlan({
       fileMap: map,
       currentSite,
@@ -271,9 +328,17 @@ export function SiteImportModal() {
     void kickOffRun(plan, pageResolutions, ruleResolutions)
   }
 
+  function handleCmsChooseDifferentFile() {
+    clearCmsBundle()
+    setErrorMsg(null)
+    setBusy(false)
+    setStep('drop')
+  }
+
   function handleBack() {
     if (step === 'conflicts') setStep('analyze')
     else if (step === 'analyze') setStep('drop')
+    else if (step === 'cms-review') handleCmsChooseDifferentFile()
   }
 
   // ── Run ───────────────────────────────────────────────────────────────────
@@ -332,6 +397,12 @@ export function SiteImportModal() {
 
     try {
       const importResult = await commitImportPlan(resolvedPlan, adapter)
+      setRunProgress((prev) => ({
+        ...prev,
+        phase: 'applying',
+        currentItem: 'Saving imported draft…',
+      }))
+      await saveImportedDraftSite()
       // Reconcile every category to what was actually committed — skipped pages
       // or rules (conflict resolutions) leave fewer than the planned totals.
       setRunProgress((prev) => ({
@@ -366,6 +437,7 @@ export function SiteImportModal() {
 
   function handleClose() {
     if (runProgress.phase === 'applying') return // uncancellable during commit
+    if (cmsBundleState?.importing) return
     closeModal()
   }
 
@@ -420,6 +492,32 @@ export function SiteImportModal() {
           </Button>
           <Button variant="primary" type="button" onClick={handleConflictsImport}>
             Import
+          </Button>
+        </>
+      )
+    }
+
+    if (step === 'cms-review') {
+      return (
+        <>
+          <span className={styles.footNote}>
+            CMS bundle import preserves exported tables, rows, site shell, and media.
+          </span>
+          <Button
+            variant="secondary"
+            type="button"
+            disabled={cmsBundleState?.importing}
+            onClick={handleBack}
+          >
+            Back
+          </Button>
+          <Button
+            variant={cmsBundleState?.strategy === 'replace' ? 'destructive' : 'primary'}
+            type="button"
+            disabled={!cmsCanImport}
+            onClick={() => { void importCmsBundle() }}
+          >
+            {cmsImportButtonLabel}
           </Button>
         </>
       )
@@ -480,11 +578,14 @@ export function SiteImportModal() {
   const titleByStep: Record<Step, string> = {
     drop: 'Import site',
     analyze: 'Review import',
+    'cms-review': 'Review bundle',
     conflicts: 'Resolve conflicts',
     // The Import step title tracks its phase: "Importing" while running,
     // "Import complete" once committed.
     run: runProgress.phase === 'done' ? 'Import complete' : 'Importing',
   }
+  const isCmsReplace = step === 'cms-review' && cmsBundleState?.strategy === 'replace'
+  const isCmsImporting = step === 'cms-review' && cmsBundleState?.importing === true
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -493,15 +594,19 @@ export function SiteImportModal() {
       open={true}
       onClose={handleClose}
       title={titleByStep[step]}
-      eyebrow="Page builder"
+      eyebrow="Instatic"
       size={step === 'analyze' ? '2xl' : 'xl'}
-      tone="neutral"
+      tone={isCmsReplace ? 'danger' : 'neutral'}
       footer={renderFooter() ?? undefined}
       bodyClassName={
-        step === 'analyze' ? styles.analyzeBody : step === 'run' ? styles.importBody : undefined
+        step === 'analyze' || step === 'cms-review'
+          ? styles.analyzeBody
+          : step === 'run'
+            ? styles.importBody
+            : undefined
       }
-      closeOnEscape={runProgress.phase !== 'applying'}
-      closeOnBackdrop={runProgress.phase !== 'applying'}
+      closeOnEscape={runProgress.phase !== 'applying' && !isCmsImporting}
+      closeOnBackdrop={runProgress.phase !== 'applying' && !isCmsImporting}
     >
       <div className={styles.body}>
         {step === 'drop' && (
@@ -551,6 +656,18 @@ export function SiteImportModal() {
                 return next
               })
             }}
+          />
+        )}
+
+        {step === 'cms-review' && cmsBundleState && (
+          <CmsBundleReviewStep
+            filename={cmsBundleState.filename}
+            preview={cmsBundleState.preview}
+            previewLoading={cmsBundleState.previewLoading}
+            previewError={cmsBundleState.previewError}
+            strategy={cmsBundleState.strategy}
+            onStrategyChange={setCmsStrategy}
+            onChooseDifferentFile={handleCmsChooseDifferentFile}
           />
         )}
 

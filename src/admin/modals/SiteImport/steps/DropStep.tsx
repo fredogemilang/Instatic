@@ -4,6 +4,7 @@
  * Accepts files via drag-and-drop, folder picker, or multi-file picker.
  * Handles directory entry walking for dropped folders. A single .zip file
  * is handed off as raw bytes; everything else is passed as a File array.
+ * The parent detects CMS-exported .json bundles before static-site ingestion.
  *
  * Validation errors (oversized, zip-bomb, traversal) are shown via the
  * `errorMessage` prop — the MODAL catches them from ingestInput() and passes
@@ -90,11 +91,11 @@ export function DropStep({ busy, errorMessage, onFilesReady, onZipReady }: DropS
         onDragEnter={(e) => { e.preventDefault(); if (!busy) setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={(e) => { void handleDrop(e) }}
-        aria-label="Drop site files, a folder, or a .zip archive here"
+        aria-label="Drop site files, a folder, a CMS bundle, or a .zip archive here"
       >
         <UploadIcon size={28} aria-hidden="true" className={styles.dropIcon} />
-        <p className={styles.dropTitle}>Drop a site folder or .zip here</p>
-        <p className={styles.dropHint}>HTML, CSS, images, and fonts are supported</p>
+        <p className={styles.dropTitle}>Drop a site folder, CMS bundle, or .zip here</p>
+        <p className={styles.dropHint}>HTML, CSS, images, fonts, and CMS .json bundles are supported</p>
         <div className={styles.dropActions}>
           <Button
             variant="secondary"

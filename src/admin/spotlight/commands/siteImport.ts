@@ -19,17 +19,19 @@ export function getSiteImportCommands(): Command[] {
     {
       id: 'editor.importSite',
       title: 'Import Site',
-      subtitle: 'Import pages from a folder, files, or .zip archive',
+      subtitle: 'Import pages or CMS bundles from files, folders, or .zip archives',
       group: 'editor',
       iconName: 'files-stack-2-solid',
-      keywords: ['import', 'site', 'zip', 'folder', 'bundle', 'html', 'css'],
-      workspaces: ['site'],
+      keywords: ['import', 'site', 'zip', 'folder', 'bundle', 'json', 'cms', 'html', 'css'],
+      workspaces: ['any'],
       capability: SITE_WRITE_CAPABILITIES,
       run: async (ctx) => {
         ctx.closeSpotlight()
-        // Lazy import to avoid pulling the editor store into non-site bundles.
-        const { useEditorStore } = await import('@site/store/store')
-        useEditorStore.getState().openSiteImportModal()
+        // Lazy import keeps the tiny admin UI store out of the static command
+        // registry and avoids loading the modal chunk until the shell mount sees
+        // the flag flip.
+        const { useAdminUi } = await import('@admin/state/adminUi')
+        useAdminUi.getState().openSiteImport()
       },
     },
   ]
