@@ -67,6 +67,8 @@ export function SelectMenu({
           role="option"
           aria-selected={option.value === selectedValue}
           disabled={option.disabled}
+          data-placeholder-option={option.placeholder ? 'true' : undefined}
+          className={option.placeholder ? styles.placeholderOption : undefined}
           tabIndex={-1}
           onMouseEnter={() => {
             if (option.disabled) return

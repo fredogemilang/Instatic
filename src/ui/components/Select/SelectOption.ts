@@ -12,6 +12,7 @@ export interface SelectOption {
   textValue?: string
   icon?: ReactNode
   disabled?: boolean
+  placeholder?: boolean
 }
 
 export interface NormalizedSelectOption {
@@ -20,6 +21,7 @@ export interface NormalizedSelectOption {
   textValue: string
   icon?: ReactNode
   disabled?: boolean
+  placeholder?: boolean
 }
 
 export function stringifySelectValue(value: unknown): string {

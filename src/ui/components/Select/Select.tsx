@@ -15,6 +15,7 @@ import styles from './Select.module.css'
 import {
   getInitialActiveIndex,
   getOptionId,
+  hasTextValue,
   isEnabledOptionIndex,
   normalizeOptions,
   type SelectOption,
@@ -95,7 +96,10 @@ export function Select({
   const triggerId = id ?? `select-${generatedId}`
   const menuId = `${triggerId}-menu`
 
-  const normalizedOptions = normalizeOptions(options, children)
+  const normalizedOptions = normalizeOptions(options, children).map((option) => ({
+    ...option,
+    placeholder: option.placeholder ?? (option.value === '' && hasTextValue(placeholder)),
+  }))
 
   const {
     isControlled,

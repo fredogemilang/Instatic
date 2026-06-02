@@ -116,3 +116,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+.placeholderOption .optionLabel {
+    color: var(--editor-text-muted);
+}
