@@ -53,10 +53,7 @@
     overflow: hidden;
     border: 1px solid var(--panel-border);
     border-radius: var(--panel-radius);
-    background: linear-gradient(180deg, var(--panel-bg), var(--editor-surface));
-    box-shadow:
-        var(--panel-shadow),
-        inset 0 1px 0 color-mix(in srgb, var(--editor-text-bright) 7%, transparent);
+    background: var(--editor-surface);
     transition:
         opacity 120ms ease,
         transform 120ms ease;
@@ -69,11 +66,6 @@
     left: 0;
     right: 0;
     height: 200px;
-    background: radial-gradient(
-        80% 100% at 30% 0%,
-        color-mix(in srgb, var(--editor-text-bright) 5%, transparent),
-        transparent
-    );
     pointer-events: none;
 }
 
@@ -89,8 +81,7 @@
     flex-direction: column;
     min-width: 0;
     padding: 20px 16px;
-    border-right: 1px solid var(--panel-border);
-    background: color-mix(in srgb, var(--editor-bg) 28%, transparent);
+    background: var(--editor-surface-2);
 }
 
 .brand {
@@ -111,9 +102,9 @@
 
 .sectionButton.sectionButton {
     width: 100%;
-    min-height: 46px;
     height: auto;
-    padding: 6px 12px;
+    padding: 4px;
+    padding-right: 12px;
     border-radius: var(--panel-radius);
     color: var(--editor-text-secondary);
     background: transparent;
@@ -133,10 +124,6 @@
     background: var(--editor-surface-4);
 }
 
-.sectionButtonFocus {
-    box-shadow: var(--editor-focus-ring);
-}
-
 .sectionLabel {
     display: inline-flex;
     align-items: center;
@@ -150,14 +137,21 @@
     width: 30px;
     height: 30px;
     min-width: 30px;
-    border-radius: var(--editor-radius);
+    border-radius: calc(var(--panel-radius) - 4px);
     color: var(--moduleInserterAccent);
-    background: color-mix(in srgb, var(--moduleInserterAccent) 13%, transparent);
+    background: color-mix(
+        in srgb,
+        var(--moduleInserterAccent) 13%,
+        transparent
+    );
 }
 
 .sectionButtonActive .sectionIcon {
-    background: color-mix(in srgb, var(--moduleInserterAccent) 22%, transparent);
-    box-shadow: 0 0 16px color-mix(in srgb, var(--moduleInserterAccent) 30%, transparent);
+    background: color-mix(
+        in srgb,
+        var(--moduleInserterAccent) 22%,
+        transparent
+    );
 }
 
 .sectionIcon svg {
@@ -330,7 +324,9 @@
     align-items: center;
     gap: 9px;
     min-height: 32px;
-    padding: 0 24px 14px;
+    padding: 0 24px 0px;
+    box-shadow: 0px 10px 10px 0 var(--editor-surface);
+    z-index: 2;
 }
 
 .sectionBar {
@@ -363,7 +359,7 @@
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
-    padding: 2px 34px 30px 24px;
+    padding: 16px;
 }
 
 .grid {
@@ -386,7 +382,9 @@
     --moduleInserterTileInnerRadius: calc(
         var(--moduleInserterItemRadius) - var(--moduleInserterTilePadding)
     );
-    --moduleInserterTileControlInset: calc(var(--moduleInserterTilePadding) + 4px);
+    --moduleInserterTileControlInset: calc(
+        var(--moduleInserterTilePadding) + 4px
+    );
     --moduleInserterTileControlRadius: calc(
         var(--moduleInserterTileInnerRadius) - var(--editor-radius-sm)
     );
@@ -507,7 +505,8 @@
     justify-content: center;
     min-width: 0;
     overflow: hidden;
-    border: 1px solid color-mix(in srgb, var(--editor-text-bright) 5%, transparent);
+    border: 1px solid
+        color-mix(in srgb, var(--editor-text-bright) 5%, transparent);
     border-radius: var(--moduleInserterTileInnerRadius);
     background: color-mix(in srgb, var(--editor-surface) 82%, var(--editor-bg));
 }
@@ -586,7 +585,8 @@
     height: var(--drop-height);
     pointer-events: none;
     border: 1px solid var(--canvas-selection-ring-color);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--canvas-selection-ring-color) 32%, transparent);
+    box-shadow: 0 0 0 1px
+        color-mix(in srgb, var(--canvas-selection-ring-color) 32%, transparent);
 }
 
 .dropPreview[data-position="before"],
@@ -621,7 +621,10 @@
     top: 0;
     pointer-events: none;
     width: 190px;
-    transform: translate(calc(var(--ghost-x) + 14px), calc(var(--ghost-y) + 14px));
+    transform: translate(
+        calc(var(--ghost-x) + 14px),
+        calc(var(--ghost-y) + 14px)
+    );
     border: 1px solid var(--panel-border);
     border-radius: var(--panel-radius);
     overflow: hidden;
