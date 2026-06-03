@@ -230,8 +230,11 @@ The walker is **purely synchronous** — async data (loop sources, media) is res
 `server/publish/loopPrefetch.ts`:
 
 ```ts
+// collectLoopNodes uses walkRenderTree (server/publish/renderTreeWalk.ts) so
+// base.loop nodes inside Visual Component definition trees are included —
+// a loop inside a VC body is fetched and rendered with real data.
 async function prefetchLoops(page, site, db) {
-  const loopNodes = findLoopNodes(page)            // walk the tree for base.loop nodes
+  const loopNodes = collectLoopNodes(page, site)   // descends page tree + all VC trees
   const results = await Promise.all(
     loopNodes.map(async (node) => {
       const source = loopSourceRegistry.get(node.props.sourceId)
@@ -243,7 +246,7 @@ async function prefetchLoops(page, site, db) {
 }
 ```
 
-The map is attached to `RenderContext.loopPrefetch`. The walker reads from it; no async at render time.
+The map is passed into `RenderContext.loopData`. The walker reads from it; no async at render time.
 
 ---
 

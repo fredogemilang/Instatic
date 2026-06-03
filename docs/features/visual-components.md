@@ -305,18 +305,27 @@ At render time, the publisher's `renderVisualComponentRef` runs when the walker 
 ```text
 renderVisualComponentRef(refNode, ctx, renderNode):
     │
-    ├─→ vc = ctx.components.get(refNode.props.componentId)
-    ├─→ build inner RenderContext with vc.tree as the active tree
-    ├─→ resolve instanceProps from refNode.props (each VCParam.id → value)
-    ├─→ recurse renderNode(vc.tree.rootNodeId, innerCtx) with prop-binding substitution
-    ├─→ for each base.slot-outlet encountered in the VC tree:
-    │     match its slotName to a base.slot-instance child of refNode in the OUTER tree
-    │     render the slot-instance's children in the outer ctx
-    │     substitute their rendered HTML at the outlet's position
-    └─→ return composed HTML
+    ├─→ vc = selectVisualComponentById(ctx.site, refNode.props.componentId)
+    ├─→ build slotInstancesByName from refNode's base.slot-instance children
+    │     (keyed by slotName — these are the user's slot fills in the consumer page tree)
+    │
+    ├─→ instantiateVCAtRef(vc, propOverrides, slotInstancesByName, ctx.page.nodes, refNode.id)
+    │     → flat instantiated node map with slot outlets already filled
+    │
+    ├─→ wrap the instantiated map in a synthetic Page + synthetic RenderContext
+    │     The synthetic ctx inherits loopData, mediaAssets, infiniteLoopIds,
+    │     publishVersion, and holeNodeIds from the OUTER ctx so that:
+    │       • base.loop nodes inside the VC body fetch and render with data
+    │       • image / media props inside the VC body resolve to full <picture> markup
+    │
+    ├─→ renderNode(rootNodeId, syntheticCtx)  ← CSS dedup shared with outer page
+    │
+    └─→ inject refNode's classIds + inlineStyles onto the VC's root element
 ```
 
-The slot-outlet ↔ slot-instance pairing happens at render time, **not** at edit time — slot fills always live in the consumer page tree, so they edit freely; the publisher just bridges the two trees on render.
+Slot-outlet ↔ slot-instance bridging happens inside `instantiateVCAtRef` — by the time the recursive render walk starts, the instantiated node map already contains the consumer's slot content at the correct positions. The consumer page tree is the canonical store for slot fills; the publisher materialises them at render time only.
+
+Server-side prefetch — `loopPrefetch.ts` and `mediaPrefetch.ts` — both use `walkRenderTree` (`server/publish/renderTreeWalk.ts`) to descend into every VC definition tree referenced from the page, so a `base.loop` or image inside a VC body is collected and pre-fetched before the render walk starts.
 
 See [docs/features/publisher.md](publisher.md) for the broader pipeline.
 

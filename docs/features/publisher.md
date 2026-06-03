@@ -53,6 +53,7 @@ server/publish/
 ├── siteCssBundle.ts                — server-side hashing + file emission
 ├── frontendInjections.ts           — splice plugin <script>/<link>/<meta> into HTML
 ├── mediaPresentation.ts            — <picture>/<srcset> materialization at publish time
+├── renderTreeWalk.ts               — walkRenderTree: visits every node that contributes to a rendered page (page nodes + VC definition trees, cycle-guarded); single source of truth for loop-prefetch and media-prefetch
 ├── mediaPrefetch.ts, loopPrefetch.ts — pre-warm caches needed by the renderer
 ├── republish.ts                    — bulk re-publish on site-level changes
 ├── publishScheduler.ts             — scheduled publish jobs
@@ -134,9 +135,10 @@ Constraints (gated by tests):
 When the walker hits a `base.visual-component-ref` node, it calls `renderVisualComponentRef`:
 
 1. Resolves the target Visual Component from the site's `components` table.
-2. Builds an inner `RenderContext` whose tree is the VC's `tree` and whose `instanceProps` are taken from the ref node's props.
-3. Walks the VC tree via `renderNode`, with prop bindings (`{paramId}`) substituted against the instance props.
-4. Pairs each `base.slot-instance` (in the consumer page tree, beneath the VC ref) with its matching `base.slot-outlet` (in the VC definition tree) by `slotName` and inlines the consumer-supplied content.
+2. Builds `slotInstancesByName` from the ref's `base.slot-instance` children in the consumer page tree.
+3. Calls `instantiateVCAtRef(vc, propOverrides, slotInstancesByName, ctx.page.nodes, node.id)` to materialise a flat node map where slot outlets are already filled with consumer content.
+4. Wraps the instantiated node map in a synthetic `Page` and a synthetic `RenderContext`. **The synthetic context inherits `loopData`, `mediaAssets`, `infiniteLoopIds`, `publishVersion`, and `holeNodeIds` from the outer context**, so `base.loop` nodes and image props inside the VC body resolve with data exactly as they would on a plain page.
+5. Renders via `renderNode(rootNodeId, syntheticCtx)`. The shared `cssMap` ensures CSS dedup across the whole page, including all inlined VC instances.
 
 See [docs/features/visual-components.md](visual-components.md) for the VC modeling details.
 
@@ -286,8 +288,9 @@ Editing the CSP manually is **not** safe — it's a derived value. Edit the sour
 | `server/publish/publishScheduler.ts`            | Scheduled publish jobs (cron-style).                                |
 | `server/publish/frontendInjections.ts`          | Compute plugin `<script>`/`<link>`/`<meta>` tags + CSP entries.     |
 | `server/publish/mediaPresentation.ts`           | At publish time, build `<picture>` / `<img srcset>` markup from `media_assets.variants_json`. |
-| `server/publish/mediaPrefetch.ts`               | Resolve all referenced media into a `Map<url, ResolvedMedia>` before render. |
-| `server/publish/loopPrefetch.ts`                | Fetch every loop source's items before render so the walker is purely synchronous. Also exports `canonicalRenderQuery(searchParams)` — strips all non-loop-pagination params from a URL's query, returning only `loop_<nodeId>_page` keys in sorted order (or `''` when none remain). Used by `publicRouter.ts` to normalise the Layer B cache key and Layer A fast-path eligibility. |
+| `server/publish/mediaPrefetch.ts`               | Collect every image/media-typed prop from the full render tree — including VC definition trees — via `walkRenderTree`, then batch-fetch matching `media_assets` rows into a `Map<publicPath, MediaAsset>` before render. |
+| `server/publish/loopPrefetch.ts`                | Collect every `base.loop` node from the full render tree — including VC definition trees — via `walkRenderTree`, fetch each source's items, and return a `Map<nodeId, ResolvedLoopData>` before render so the walker is purely synchronous. Also exports `canonicalRenderQuery(searchParams)` — strips all non-loop-pagination params from a URL's query, returning only `loop_<nodeId>_page` keys in sorted order (or `''` when none remain). Used by `publicRouter.ts` to normalise the Layer B cache key and Layer A fast-path eligibility. |
+| `server/publish/renderTreeWalk.ts`              | `walkRenderTree(nodes, rootNodeId, site, onNode)` — visits every node that contributes to a rendered page: all page-tree nodes reachable from `rootNodeId`, plus all nodes inside each referenced VC's definition tree (recursively, cycle-guarded by a `Set<vcId>`). Used by both `mediaPrefetch.ts` and `loopPrefetch.ts` so their traversal logic can't drift apart. |
 | `server/publish/runtime/packageServer.ts`       | Serve per-site `bun install` workspace under `/_instatic/runtime/cache/`. |
 | `server/publish/loopRuntime.ts`                 | The loop runtime asset (small JS shim used by certain loop variants).|
 | `server/handlers/cms/hole.ts`                   | `GET /_instatic/hole-runtime.js` (serves `HOLE_RUNTIME_JS`) and `GET /_instatic/hole/<nodeId>` (renders a node subtree at request time for Layer C islands). |
@@ -437,10 +440,12 @@ This is rare and requires architectural review — most "new behavior" fits with
   - `src/core/publisher/render.ts` — `publishPage`
   - `src/core/publisher/renderNode.ts` — the walker
   - `src/core/publisher/renderContext.ts` — `RenderContext`
+  - `src/core/publisher/renderVisualComponentRef.ts` — VC inlining + context threading
   - `src/core/publisher/cssCollector.ts` — `CssCollector` + sanitization
   - `src/core/publisher/escapeProps.ts` — Constraint #211 enforcement
   - `server/publish/publishedHtmlPipeline.ts` — plugin filter point
   - `server/publish/publicRenderer.ts` — server wrappers
+  - `server/publish/renderTreeWalk.ts` — `walkRenderTree` (shared render-tree visitor)
 - Gate tests:
   - `src/__tests__/architecture/dispatcher-html-pipeline.test.ts`
   - `src/__tests__/architecture/publish-html-filter-context.test.ts`
