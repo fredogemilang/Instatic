@@ -117,7 +117,14 @@ export class CmsAdapter implements IPersistenceAdapter {
     // Convert DataRow[] → Page[] → validate (passes VCs for ref/slot checks)
     const rawDataRows = pagesBody.rows ?? []
     const rawPages = rawDataRows.map(pageFromRow)
-    const pages = validatePages(shell, rawPages, visualComponents)
+    // Load is tolerant: one corrupt page row must not brick the whole editor
+    // (ISS-017). Strip page VC-refs only against the ids genuinely in storage
+    // (rawVCs), so a VC the loader deduped/de-cycled away does not delete the
+    // page's authored slot content (ISS-016).
+    const pages = validatePages(shell, rawPages, visualComponents, {
+      tolerant: true,
+      storedVcIds: new Set(rawVCs.map((vc) => vc.id)),
+    })
 
     const site: SiteDocument = { ...shell, pages, visualComponents }
     site.explorer = reconcileSiteExplorerOrganization(site.explorer, site)

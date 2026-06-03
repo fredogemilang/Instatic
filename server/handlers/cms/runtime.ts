@@ -167,7 +167,12 @@ export async function handleRuntimeRoutes(req: Request, db: DbClient): Promise<R
         return vc ? [vc] : []
       })
       const visualComponents = validateVisualComponents(parsedVCs)
-      const pages = validatePages(shell, rawPages, visualComponents)
+      // Strip page VC-refs only against ids present in the submitted roster, so
+      // a deduped/de-cycled VC does not strip authored slot content from the
+      // preview render (ISS-016).
+      const pages = validatePages(shell, rawPages, visualComponents, {
+        storedVcIds: new Set(parsedVCs.map((vc) => vc.id)),
+      })
       const site: SiteDocument = { ...shell, pages, visualComponents }
       const page = resolvePreviewPage(site, pageId)
       if (!page) return jsonResponse({ error: 'Page not found' }, { status: 404 })

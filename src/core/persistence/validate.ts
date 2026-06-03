@@ -119,24 +119,50 @@ export function validateSite(raw: unknown): SiteShell {
  * Returns the validated `Page[]` ready to assemble into a `SiteDocument`.
  * Throws `SiteValidationError` on the first invalid page.
  */
+export interface ValidatePagesOptions {
+  /**
+   * Load semantics: a page that fails parse or tree-coherence is logged and
+   * SKIPPED rather than aborting the whole batch — one corrupt row must not
+   * brick the editor (ISS-017). The strict write/save path leaves this false so
+   * a dropped page can never be mistaken for an intentional delete.
+   */
+  tolerant?: boolean
+  /**
+   * The set of VC ids genuinely present in storage (the raw roster, BEFORE the
+   * loader's dedupe/cycle repair). Page refs are stripped only when their
+   * target is absent from THIS set — never when the loader merely repaired a
+   * duplicate-name or cyclic VC away, which would destroy authored slot content
+   * (ISS-016). Defaults to the surviving `visualComponents` ids (correct for the
+   * write path, where the roster is authoritative).
+   */
+  storedVcIds?: ReadonlySet<string>
+}
+
 export function validatePages(
   _shell: SiteShell,
   rawPages: unknown[],
   visualComponents: VisualComponent[] = [],
+  options: ValidatePagesOptions = {},
 ): Page[] {
-  const pages: Page[] = []
+  const { tolerant = false, storedVcIds } = options
+  let pages: Page[] = []
   for (let i = 0; i < rawPages.length; i++) {
     try {
       pages.push(parsePage(rawPages[i], i))
     } catch (err) {
       const message = err instanceof Error ? err.message : `page ${i} is invalid`
+      if (tolerant) {
+        console.error('[persistence/validate] dropping unparseable page', i, message)
+        continue
+      }
       throw new SiteValidationError(message, extractSiteErrorPath(message))
     }
   }
   validatePageSlugList(pages)
-  validatePageNodeTreesList(pages)
+  pages = validatePageNodeTreesList(pages, tolerant)
   syncVCSlotInstancesInPages(pages, visualComponents)
-  stripDanglingVCRefsInPages(pages, visualComponents)
+  const knownVcIds = storedVcIds ?? new Set(visualComponents.map((vc) => vc.id))
+  stripDanglingVCRefsInPages(pages, knownVcIds)
   sanitizePageNodeRichtextProps(pages)
   return pages
 }
@@ -261,8 +287,7 @@ export function stripDanglingVCRefs(site: SiteDocument): void {
 }
 
 /** Strip dangling VC refs from page node maps only. */
-function stripDanglingVCRefsInPages(pages: Page[], visualComponents: VisualComponent[]): void {
-  const knownVcIds = new Set(visualComponents.map((vc) => vc.id))
+function stripDanglingVCRefsInPages(pages: Page[], knownVcIds: ReadonlySet<string>): void {
   stripDanglingRefsFromNodeMaps(pages.map((p) => p.nodes as Record<string, BaseNode>), knownVcIds)
 }
 
@@ -275,13 +300,13 @@ function stripDanglingVCRefsInVCs(vcs: VisualComponent[]): void {
   )
 }
 
-function stripDanglingRefsFromNodeMaps(nodeMaps: Array<Record<string, BaseNode>>, knownVcIds: Set<string>): void {
+function stripDanglingRefsFromNodeMaps(nodeMaps: Array<Record<string, BaseNode>>, knownVcIds: ReadonlySet<string>): void {
   for (const nodes of nodeMaps) {
     stripOneNodeMap(nodes, knownVcIds)
   }
 }
 
-function stripOneNodeMap(nodes: Record<string, BaseNode>, knownVcIds: Set<string>): void {
+function stripOneNodeMap(nodes: Record<string, BaseNode>, knownVcIds: ReadonlySet<string>): void {
   // Collect all top-level ref IDs pointing at an unknown VC
   const danglingRefIds: string[] = []
   for (const [nodeId, node] of Object.entries(nodes)) {
@@ -502,15 +527,28 @@ function validatePageSlugList(pages: Page[]): void {
   }
 }
 
-/** Rule 3: every page tree must be internally coherent before save/hydration. */
-function validatePageNodeTreesList(pages: Page[]): void {
+/**
+ * Rule 3: every page tree must be internally coherent before save/hydration.
+ * In tolerant (load) mode an incoherent page is logged and dropped so it can't
+ * brick the whole site load; in strict (write) mode it throws. Returns the
+ * surviving pages.
+ */
+function validatePageNodeTreesList(pages: Page[], tolerant: boolean): Page[] {
+  const valid: Page[] = []
   for (let i = 0; i < pages.length; i++) {
     try {
       assertValidNodeTree(pages[i], `site.pages[${i}]`)
+      valid.push(pages[i]!)
     } catch (err) {
+      if (tolerant) {
+        const message = err instanceof Error ? err.message : `page ${i} has an invalid tree`
+        console.error('[persistence/validate] dropping page with invalid tree', pages[i]?.id, message)
+        continue
+      }
       throw siteValidationErrorFromTreeInvariant(err, `site.pages[${i}]`)
     }
   }
+  return valid
 }
 
 /**
