@@ -21,6 +21,10 @@ The complete catalog of design tokens declared in `src/styles/globals.css`. Ever
 --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 ```
 
+Inter Variable is loaded via a targeted `@font-face` declaration in `globals.css` — Latin subset only (`unicode-range: U+0000-00FF, …`), with `font-display: swap`. Non-Latin characters fall back to `system-ui`. The monospace stack is entirely system-native; no custom monospace font is loaded.
+
+If the admin UI needs broader character coverage, add a second `@font-face` block in `globals.css` with the appropriate `unicode-range` pointing at the matching subset file under `@fontsource-variable/inter/files/`.
+
 Type sizes are per-component and don't yet have a token scale. If a recurring size emerges across 3+ primitives, promote it to a token.
 
 ---
