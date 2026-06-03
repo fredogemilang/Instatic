@@ -33,31 +33,31 @@
 
 export function runInstaticHoleRuntime(): void {
   function instaticFetchHole(el: HTMLElement): void {
-  var id = el.dataset.instaticHole || '';
-  var version = el.dataset.instaticVersion || '';
-  var u = location.pathname + location.search;
-  fetch('/_instatic/hole/' + encodeURIComponent(id) + '?v=' + encodeURIComponent(version) + '&u=' + encodeURIComponent(u))
-    .then(function(r) { return r.text(); })
-    .then(function(html) { el.outerHTML = html; })
-    .catch(function() {});
-}
-var io = new IntersectionObserver(function(entries) {
-  for (var i = 0; i < entries.length; i++) {
-    var e = entries[i];
-    if (!e.isIntersecting) continue;
-    io.unobserve(e.target);
-    var hole = e.target.closest('instatic-hole[data-instatic-hole]') as HTMLElement | null;
-    if (hole) instaticFetchHole(hole);
+    const id = el.dataset.instaticHole || '';
+    const version = el.dataset.instaticVersion || '';
+    const u = location.pathname + location.search;
+    fetch('/_instatic/hole/' + encodeURIComponent(id) + '?v=' + encodeURIComponent(version) + '&u=' + encodeURIComponent(u))
+      .then(function(r) { return r.text(); })
+      .then(function(html) { el.outerHTML = html; })
+      .catch(function() {});
   }
-}, { rootMargin: '200px 0px' });
-var holes = document.querySelectorAll('instatic-hole[data-instatic-hole]');
-for (var i = 0; i < holes.length; i++) {
-  var el = holes[i] as HTMLElement;
-  // <instatic-hole> is display:contents (no box) — observe its placeholder child,
-  // which has a box. Holes without a placeholder are fetched eagerly.
-  var box = el.firstElementChild;
-  if (box) { io.observe(box); } else { instaticFetchHole(el); }
-}
+  const io = new IntersectionObserver(function(entries) {
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (!e.isIntersecting) continue;
+      io.unobserve(e.target);
+      const hole = e.target.closest('instatic-hole[data-instatic-hole]') as HTMLElement | null;
+      if (hole) instaticFetchHole(hole);
+    }
+  }, { rootMargin: '200px 0px' });
+  const holes = document.querySelectorAll('instatic-hole[data-instatic-hole]');
+  for (let i = 0; i < holes.length; i++) {
+    const el = holes[i] as HTMLElement;
+    // <instatic-hole> is display:contents (no box) — observe its placeholder child,
+    // which has a box. Holes without a placeholder are fetched eagerly.
+    const box = el.firstElementChild;
+    if (box) { io.observe(box); } else { instaticFetchHole(el); }
+  }
 }
 
 export const HOLE_RUNTIME_JS = `(${runInstaticHoleRuntime.toString()})();`
