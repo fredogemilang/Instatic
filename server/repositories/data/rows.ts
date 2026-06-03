@@ -29,7 +29,7 @@ import type { DataRow, DataRowCells, DataRowStatus } from '@core/data/schemas'
 import type { StorageFilterOperator, StorageFilterValue } from '@core/plugin-sdk/storageSchemas'
 import { jsonField } from '../../db/jsonExtract'
 import { userRefAt, toIso, toIsoOrNull, type UserJoinColumns } from './shared'
-import { bumpPublishVersion } from '../../publish/renderCache'
+import { bumpPublishVersion, withPublishLock } from '../../publish/renderCache'
 
 // ---------------------------------------------------------------------------
 // Input shapes
@@ -782,8 +782,13 @@ export async function updateDataRowStatus(
   `
   if (!rows[0]) return null
   // Layer B: a status change to draft/unpublished removes the row from
-  // visitor-facing content — invalidate the render cache.
-  bumpPublishVersion()
+  // visitor-facing content — invalidate the render cache. Serialize the bump
+  // with publishes so it can't fire between a concurrent publish's version
+  // read and its own bump, which would strand that publish's baked shells
+  // (ISS-038).
+  await withPublishLock(async () => {
+    bumpPublishVersion()
+  })
   return getDataRow(db, rows[0].id)
 }
 

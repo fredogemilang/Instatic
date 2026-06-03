@@ -76,8 +76,33 @@ function cacheKey(key: RenderCacheKey): string {
  *
  * Call after every publish commit (full publish, per-row publish, unpublish).
  */
-export function bumpPublishVersion(): void {
-  publishVersion++
+export function bumpPublishVersion(): number {
+  return ++publishVersion
+}
+
+// ---------------------------------------------------------------------------
+// Publish serialization
+// ---------------------------------------------------------------------------
+
+let publishChain: Promise<unknown> = Promise.resolve()
+
+/**
+ * Run a publish operation under a single in-process lock so no two publishes'
+ * read-version → bake → bump-version windows overlap (ISS-038). Without this,
+ * two concurrent publishes both read version N, stamp every `<instatic-hole>`
+ * shell with N+1, then each bump independently to N+2 — leaving baked shells
+ * permanently mis-stamped (the hole endpoint serves them as stale). The lock
+ * also serializes the two-slot artefact swap. JS is single-threaded, so a
+ * promise-chain serializer is sufficient.
+ */
+export function withPublishLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = (): Promise<T> => fn()
+  const result = publishChain.then(run, run)
+  publishChain = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  return result
 }
 
 /**

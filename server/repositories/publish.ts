@@ -35,7 +35,7 @@ import { renderPublishedSnapshot } from '../publish/publicRenderer'
 import { applyPublishedHtmlPipeline } from '../publish/publishedHtmlPipeline'
 import { prepareInactiveSlot, writeArtefact, writeStaticAsset, swapSlot } from '../publish/staticArtefact'
 import { buildSiteCssBundle } from '../publish/siteCssBundle'
-import { bumpPublishVersion, getPublishVersion } from '../publish/renderCache'
+import { bumpPublishVersion, getPublishVersion, withPublishLock } from '../publish/renderCache'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -178,6 +178,16 @@ export async function getDraftPublishStatus(db: DbClient): Promise<DraftPublishS
 }
 
 export async function publishDraftSite(
+  db: DbClient,
+  adminUserId: string,
+  uploadsDir?: string,
+): Promise<PublishResult> {
+  // Serialize against every other publish so the version read→bake→bump window
+  // can't interleave and mis-stamp baked hole shells (ISS-038).
+  return withPublishLock(() => publishDraftSiteLocked(db, adminUserId, uploadsDir))
+}
+
+async function publishDraftSiteLocked(
   db: DbClient,
   adminUserId: string,
   uploadsDir?: string,

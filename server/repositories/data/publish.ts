@@ -29,7 +29,7 @@ import {
 } from '../../publish/publicRenderer'
 import { applyPublishedHtmlPipeline } from '../../publish/publishedHtmlPipeline'
 import { removeArtefactInPlace, updateArtefactInPlace } from '../../publish/staticArtefact'
-import { bumpPublishVersion, getPublishVersion } from '../../publish/renderCache'
+import { bumpPublishVersion, getPublishVersion, withPublishLock } from '../../publish/renderCache'
 
 // ---------------------------------------------------------------------------
 // Internal row shapes
@@ -120,6 +120,17 @@ export async function publishDataRow(
    * column on `data_rows` is nullable (`on delete set null`), so a
    * null publisher round-trips cleanly through the schema.
    */
+  publisherUserId: string | null,
+  uploadsDir?: string,
+): Promise<PublishDataRowResult> {
+  // Serialize against every other publish so the version read→bake→bump window
+  // can't interleave and mis-stamp baked hole shells (ISS-038).
+  return withPublishLock(() => publishDataRowLocked(db, rowId, publisherUserId, uploadsDir))
+}
+
+async function publishDataRowLocked(
+  db: DbClient,
+  rowId: string,
   publisherUserId: string | null,
   uploadsDir?: string,
 ): Promise<PublishDataRowResult> {
