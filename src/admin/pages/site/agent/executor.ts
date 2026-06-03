@@ -36,8 +36,8 @@ const getStoreState = (): EditorStore => getAgentStoreApi<EditorStore>().getStat
 
 /**
  * Parse the CSS harvested from `<style>` blocks in an agent-supplied HTML
- * snippet into registry rules. Uses the live site's breakpoints so any
- * `@media (max-width: …)` folds into the matching breakpoint's contextStyles;
+ * snippet into registry rules. Uses the live site's viewport contexts so any
+ * matching `@media` folds into that viewport's contextStyles;
  * unmatched conditions round-trip as reusable site conditions. Returns empty
  * arrays for an empty/whitespace-only snippet.
  */
@@ -47,7 +47,9 @@ function parseImportedStyleCss(styleCss: string): {
 } {
   if (!styleCss.trim()) return { rules: [], conditions: [] }
   const site = getStoreState().site
-  const breakpoints = site ? site.breakpoints.map((b) => ({ id: b.id, width: b.width })) : []
+  const breakpoints = site
+    ? site.breakpoints.map((b) => ({ id: b.id, width: b.width, mediaQuery: b.mediaQuery }))
+    : []
   const { rules, conditions } = cssToStyleRules(styleCss, { breakpoints })
   return { rules, conditions }
 }

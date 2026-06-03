@@ -33,6 +33,7 @@ export interface BreakpointInfo {
   id: string
   label: string
   width: number
+  mediaQuery?: string
   icon: string
 }
 

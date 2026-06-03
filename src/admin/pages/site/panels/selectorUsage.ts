@@ -104,7 +104,7 @@ function cssPropToKebab(key: string): string {
 
 export function getSelectorStyleSummary(cls: StyleRule): string {
   const propCount = Object.values(cls.styles).filter(hasStyleValue).length
-  // contextStyles holds both width-breakpoint and custom-condition overrides
+  // contextStyles holds both viewport-context and custom-condition overrides
   // (the unified editing-context axis); count non-empty contexts.
   const contextCount = Object.values(cls.contextStyles ?? {}).filter((styles) =>
     Object.values(styles).some(hasStyleValue),

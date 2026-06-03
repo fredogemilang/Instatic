@@ -173,6 +173,27 @@ describe('PagesSection — inline delete confirmation flow', () => {
 // ---------------------------------------------------------------------------
 
 describe('BreakpointsSection — Activate button aria-disabled pattern', () => {
+  it('shows each viewport context frame width and media query separately', () => {
+    loadSiteWithBreakpoints('desktop')
+    render(<BreakpointsSection />)
+
+    expect(screen.getByText(/1440px frame/i)).toBeDefined()
+    expect(screen.getByText(/\(max-width: 1440px\)/i)).toBeDefined()
+  })
+
+  it('persists a mobile-first media query when editing a viewport context', () => {
+    loadSiteWithBreakpoints('desktop')
+    render(<BreakpointsSection />)
+
+    fireEvent.click(screen.getByRole('button', { name: /edit tablet viewport/i }))
+    const mediaQueryInput = screen.getByLabelText(/^css media query$/i)
+    fireEvent.change(mediaQueryInput, { target: { value: '(min-width: 768px)' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    const tablet = useEditorStore.getState().site!.breakpoints.find((bp) => bp.id === 'tablet')
+    expect(tablet?.mediaQuery).toBe('(min-width: 768px)')
+  })
+
   it('Activate button has aria-disabled="true" for the currently active breakpoint', () => {
     loadSiteWithBreakpoints('desktop')
     render(<BreakpointsSection />)
@@ -242,7 +263,7 @@ describe('BreakpointsSection — inline remove confirmation flow', () => {
   it('clicking Remove shows Confirm and Cancel buttons', () => {
     loadSiteWithBreakpoints()
     render(<BreakpointsSection />)
-    const removeBtns = screen.getAllByRole('button', { name: /remove .* breakpoint/i })
+    const removeBtns = screen.getAllByRole('button', { name: /remove .* viewport/i })
     fireEvent.click(removeBtns[0])
     expect(screen.getByRole('button', { name: /confirm remove/i })).toBeDefined()
     expect(screen.getByRole('button', { name: /cancel remove/i })).toBeDefined()
@@ -252,7 +273,7 @@ describe('BreakpointsSection — inline remove confirmation flow', () => {
     loadSiteWithBreakpoints()
     render(<BreakpointsSection />)
     const bpCountBefore = useEditorStore.getState().site!.breakpoints.length
-    const removeBtns = screen.getAllByRole('button', { name: /remove .* breakpoint/i })
+    const removeBtns = screen.getAllByRole('button', { name: /remove .* viewport/i })
     fireEvent.click(removeBtns[0])
     fireEvent.click(screen.getByRole('button', { name: /confirm remove/i }))
     expect(useEditorStore.getState().site!.breakpoints.length).toBe(bpCountBefore - 1)
@@ -262,7 +283,7 @@ describe('BreakpointsSection — inline remove confirmation flow', () => {
     loadSiteWithBreakpoints()
     render(<BreakpointsSection />)
     const bpCountBefore = useEditorStore.getState().site!.breakpoints.length
-    const removeBtns = screen.getAllByRole('button', { name: /remove .* breakpoint/i })
+    const removeBtns = screen.getAllByRole('button', { name: /remove .* viewport/i })
     fireEvent.click(removeBtns[0])
     fireEvent.click(screen.getByRole('button', { name: /cancel remove/i }))
     expect(useEditorStore.getState().site!.breakpoints.length).toBe(bpCountBefore)
@@ -370,32 +391,32 @@ describe('BreakpointsSection — minimum breakpoint guard (Task #241)', () => {
   it('Remove button has aria-disabled="true" when only 1 breakpoint exists', () => {
     loadSiteWithOneBreakpoint()
     render(<BreakpointsSection />)
-    const removeBtn = screen.getByRole('button', { name: /remove desktop breakpoint/i })
+    const removeBtn = screen.getByRole('button', { name: /remove desktop viewport/i })
     expect(removeBtn.getAttribute('aria-disabled')).toBe('true')
   })
 
   it('Remove button is NOT the disabled attribute (stays keyboard-focusable)', () => {
     loadSiteWithOneBreakpoint()
     render(<BreakpointsSection />)
-    const removeBtn = screen.getByRole('button', { name: /remove desktop breakpoint/i })
+    const removeBtn = screen.getByRole('button', { name: /remove desktop viewport/i })
     expect(removeBtn.hasAttribute('disabled')).toBe(false)
   })
 
   it('Remove button shows a Tooltip when only 1 breakpoint remains', () => {
     loadSiteWithOneBreakpoint()
     render(<BreakpointsSection />)
-    const removeBtn = screen.getByRole('button', { name: /remove desktop breakpoint/i })
+    const removeBtn = screen.getByRole('button', { name: /remove desktop viewport/i })
     // Tooltip is shown on hover via the Tooltip primitive (not native title=)
     fireEvent.mouseEnter(removeBtn)
     const tooltip = screen.getByRole('tooltip')
     expect(tooltip).toBeDefined()
-    expect(tooltip.textContent!.toLowerCase()).toContain('last breakpoint')
+    expect(tooltip.textContent!.toLowerCase()).toContain('last viewport')
   })
 
   it('clicking the aria-disabled Remove button does NOT open the confirm UI', () => {
     loadSiteWithOneBreakpoint()
     render(<BreakpointsSection />)
-    const removeBtn = screen.getByRole('button', { name: /remove desktop breakpoint/i })
+    const removeBtn = screen.getByRole('button', { name: /remove desktop viewport/i })
     fireEvent.click(removeBtn)
     expect(screen.queryByRole('button', { name: /confirm remove/i })).toBeNull()
     expect(useEditorStore.getState().site!.breakpoints.length).toBe(1)
@@ -404,7 +425,7 @@ describe('BreakpointsSection — minimum breakpoint guard (Task #241)', () => {
   it('Remove button does NOT have aria-disabled when multiple breakpoints exist', () => {
     loadSiteWithBreakpoints() // loads default 2+ breakpoints
     render(<BreakpointsSection />)
-    const removeBtns = screen.getAllByRole('button', { name: /remove .* breakpoint/i })
+    const removeBtns = screen.getAllByRole('button', { name: /remove .* viewport/i })
     expect(removeBtns.length).toBeGreaterThan(0)
     for (const btn of removeBtns) {
       expect(btn.getAttribute('aria-disabled')).toBeNull()
@@ -437,7 +458,7 @@ describe('PreferencesSection — catalog-driven rendering', () => {
     expect(screen.getByRole('switch', { name: /show class names/i })).toBeDefined()
     expect(screen.getByRole('switch', { name: /auto-expand on selection/i })).toBeDefined()
     expect(screen.getByRole('switch', { name: /smooth scroll to selected/i })).toBeDefined()
-    expect(screen.getByRole('switch', { name: /dim inactive breakpoints/i })).toBeDefined()
+    expect(screen.getByRole('switch', { name: /dim inactive viewports/i })).toBeDefined()
     expect(screen.getByRole('switch', { name: /smooth scroll on tab change/i })).toBeDefined()
     expect(screen.getByRole('switch', { name: /track command usage/i })).toBeDefined()
     expect(screen.queryByRole('switch', { name: /snap to grid/i })).toBeNull()
@@ -451,7 +472,7 @@ describe('PreferencesSection — catalog-driven rendering', () => {
     expect(selects.length).toBe(3)
     expect(screen.getByRole('combobox', { name: /auto-save delay/i })).toBeDefined()
     expect(screen.getByRole('combobox', { name: /ui density/i })).toBeDefined()
-    expect(screen.getByRole('combobox', { name: /default breakpoint/i })).toBeDefined()
+    expect(screen.getByRole('combobox', { name: /default viewport/i })).toBeDefined()
   })
 })
 
@@ -542,7 +563,7 @@ describe('BreakpointsSection — inline confirm focus management (Task #256)', (
   it('Confirm button receives focus when confirmation state appears', () => {
     loadSiteWithBreakpoints()
     render(<BreakpointsSection />)
-    const removeBtns = screen.getAllByRole('button', { name: /remove .* breakpoint/i })
+    const removeBtns = screen.getAllByRole('button', { name: /remove .* viewport/i })
     fireEvent.click(removeBtns[0])
     const confirmBtn = screen.getByRole('button', { name: /confirm remove/i })
     expect(document.activeElement).toBe(confirmBtn)
@@ -552,7 +573,7 @@ describe('BreakpointsSection — inline confirm focus management (Task #256)', (
     loadSiteWithBreakpoints()
     render(<BreakpointsSection />)
     const bpCountBefore = useEditorStore.getState().site!.breakpoints.length
-    const removeBtns = screen.getAllByRole('button', { name: /remove .* breakpoint/i })
+    const removeBtns = screen.getAllByRole('button', { name: /remove .* viewport/i })
     fireEvent.click(removeBtns[0])
     const confirmBtn = screen.getByRole('button', { name: /confirm remove/i })
     fireEvent.keyDown(confirmBtn, { key: 'Escape' })
@@ -564,22 +585,22 @@ describe('BreakpointsSection — inline confirm focus management (Task #256)', (
   it('Escape key on Cancel button also dismisses the confirmation state', () => {
     loadSiteWithBreakpoints()
     render(<BreakpointsSection />)
-    const removeBtns = screen.getAllByRole('button', { name: /remove .* breakpoint/i })
+    const removeBtns = screen.getAllByRole('button', { name: /remove .* viewport/i })
     fireEvent.click(removeBtns[0])
     const cancelBtn = screen.getByRole('button', { name: /cancel remove/i })
     fireEvent.keyDown(cancelBtn, { key: 'Escape' })
     expect(screen.queryByRole('button', { name: /confirm remove/i })).toBeNull()
   })
 
-  it('Confirm button accessible name includes the breakpoint label (not just "Confirm")', () => {
+  it('Confirm button accessible name includes the viewport label (not just "Confirm")', () => {
     loadSiteWithBreakpoints()
     render(<BreakpointsSection />)
-    const removeBtns = screen.getAllByRole('button', { name: /remove .* breakpoint/i })
+    const removeBtns = screen.getAllByRole('button', { name: /remove .* viewport/i })
     fireEvent.click(removeBtns[0])
     const confirmBtn = screen.getByRole('button', { name: /confirm remove/i })
     const accessibleName = confirmBtn.getAttribute('aria-label') ?? confirmBtn.textContent ?? ''
-    // Must mention "breakpoint" — not just "Confirm" — for full screen reader context
-    expect(accessibleName.toLowerCase()).toContain('breakpoint')
+    // Must mention "viewport" — not just "Confirm" — for full screen reader context
+    expect(accessibleName.toLowerCase()).toContain('viewport')
   })
 })
 

@@ -1,15 +1,15 @@
-# Canvas: iframe-per-breakpoint rendering
+# Canvas: iframe-per-viewport rendering
 
-How the visual editor canvas renders page trees inside isolated per-breakpoint iframes, and how the design and live views are built on top of that foundation.
+How the visual editor canvas renders page trees inside isolated per-viewport iframes, and how the design and live views are built on top of that foundation.
 
-Each breakpoint frame runs in its own `<iframe>` with its own `<html><body>`. The page tree portals into the iframe body, so user CSS, combinators (`>`, `+`, `:nth-child()`), and viewport units behave exactly as on the published page — no selector rewriting, no scoping, no impedance mismatch.
+Each viewport frame runs in its own `<iframe>` with its own `<html><body>`. The page tree portals into the iframe body, so user CSS, combinators (`>`, `+`, `:nth-child()`), and viewport units behave exactly as on the published page — no selector rewriting, no scoping, no impedance mismatch.
 
 ---
 
 ## TL;DR
 
 - `IframeFrameSurface` is the iframe primitive. It boots from an empty `srcDoc`, captures the iframe document, and mounts children via `createPortal(tree, iframeDoc.body)`.
-- **Design mode** renders one `IframeFrameSurface` per breakpoint inside `CanvasTransformLayer` (pan/zoom). **Live mode** renders a single real-size `IframeFrameSurface` inside `CanvasLiveSurface` (normal scroll).
+- **Design mode** renders one `IframeFrameSurface` per framed viewport context inside `CanvasTransformLayer` (pan/zoom). **Live mode** renders a single real-size `IframeFrameSurface` inside `CanvasLiveSurface` (normal scroll).
 - Both modes are fully editable — click-to-select, properties panel, structural edits all work. Neither is a read-only preview.
 - CSS arrives in each iframe via three injectors: `EditorChromeInjector` (unlayered), `ClassStyleInjector` (`@layer user-authored`), `UserStylesheetInjector` (`@layer user-authored`).
 - Wheel events and pointer events are forwarded from inside the iframe to the parent's gesture / reorder-drag handlers.
@@ -19,7 +19,7 @@ Each breakpoint frame runs in its own `<iframe>` with its own `<html><body>`. Th
 
 ## Why iframes
 
-Without iframes, each breakpoint frame was a `<div>` inside the editor's document. Two structural mismatches made the canvas unreliable:
+Without iframes, each viewport frame was a `<div>` inside the editor's document. Two structural mismatches made the canvas unreliable:
 
 1. **`body` was the editor chrome.** `body { background: black }` painted the entire editor.
 2. **NodeWrapper divs between authored elements.** CSS combinators (`>`, `+`, `~`, `:nth-child()`) saw wrapper divs, not authored elements, so authored selectors didn't match.
@@ -62,21 +62,21 @@ The canvas frame grows to content height (so no inner scrollbar appears on the i
 
 Source: `src/admin/pages/site/canvas/CanvasTransformLayer.tsx`, `BreakpointFrame.tsx`
 
-`CanvasRoot` renders `CanvasTransformLayer` when `canvasView === 'design'`. The transform layer contains one `BreakpointFrame` per breakpoint (filtered to `bp.previewFrame !== false`). Each frame wraps an `IframeFrameSurface` in `interaction='canvas'` mode with a label button above it.
+`CanvasRoot` renders `CanvasTransformLayer` when `canvasView === 'design'`. The transform layer contains one `BreakpointFrame` per viewport context (filtered to `bp.previewFrame !== false`). Each frame wraps an `IframeFrameSurface` in `interaction='canvas'` mode with a label button above it.
 
-Breakpoints flagged `previewFrame: false` are frameless — they're still selectable editing contexts in the context selector (breakpoint overrides route to them) but don't render a canvas iframe.
+Viewport contexts flagged `previewFrame: false` are frameless — they're still selectable editing contexts in the context selector (overrides route to them) but don't render a canvas iframe.
 
-The active breakpoint (highlighted, drives style override routing) is tracked by `activeBreakpointId` in `canvasSlice`.
+The active viewport context (highlighted, drives style override routing) is tracked by `activeBreakpointId` in `canvasSlice`.
 
-### Breakpoint activation UX
+### Viewport Activation UX
 
 When a layer is selected **and** the Properties panel is open (`rightSidebarExpanded`), the design canvas enters a focused editing context that affects three behaviors:
 
-**Inactive frame dimming.** Non-active breakpoint frames are dimmed to 0.42 opacity via the `frameWrapperDimmed` CSS class, controlled by the `dimInactiveBreakpoints` user preference (Canvas category in Settings → Preferences). This visually focuses the author on the breakpoint they're styling. The preference is on by default.
+**Inactive frame dimming.** Non-active viewport frames are dimmed to 0.42 opacity via the `frameWrapperDimmed` CSS class, controlled by the `dimInactiveBreakpoints` user preference (Canvas category in Settings → Preferences). This visually focuses the author on the viewport context they're styling. The preference is on by default.
 
-**Cursor-following activation tooltip.** Moving the cursor over an inactive frame shows a `CursorTooltip` reading "Click to activate [Breakpoint] breakpoint". The cursor coordinate is bridged from inside the iframe to the parent document by `useIframeCursorBridge`, which attaches a native `mousemove` listener inside the iframe document and forwards `MouseEvent` objects to the parent callback. `BreakpointFrame` calls `clientPointToEditorDoc` to convert these events into editor-document coordinates that the `CursorTooltip` can position against.
+**Cursor-following activation tooltip.** Moving the cursor over an inactive frame shows a `CursorTooltip` reading "Click to activate [Viewport] viewport". The cursor coordinate is bridged from inside the iframe to the parent document by `useIframeCursorBridge`, which attaches a native `mousemove` listener inside the iframe document and forwards `MouseEvent` objects to the parent callback. `BreakpointFrame` calls `clientPointToEditorDoc` to convert these events into editor-document coordinates that the `CursorTooltip` can position against.
 
-**Selection preservation on click.** Clicking a node on an inactive frame while a layer is already selected activates the new breakpoint (updates `activeBreakpointId`) but preserves the current selection instead of switching to the clicked node. Focus shifts to `'canvas'` so the Properties panel continues editing the same layer. This lets the author switch breakpoints without losing their place in the Properties panel. Clicking a node on an inactive frame when the Properties panel is collapsed (or nothing is selected) behaves normally — it activates the breakpoint and selects the clicked node.
+**Selection preservation on click.** Clicking a node on an inactive frame while a layer is already selected activates the new viewport context (updates `activeBreakpointId`) but preserves the current selection instead of switching to the clicked node. Focus shifts to `'canvas'` so the Properties panel continues editing the same layer. This lets the author switch viewport contexts without losing their place in the Properties panel. Clicking a node on an inactive frame when the Properties panel is collapsed (or nothing is selected) behaves normally — it activates the viewport context and selects the clicked node.
 
 ---
 
@@ -86,11 +86,11 @@ Source: `src/admin/pages/site/canvas/CanvasLiveSurface.tsx`
 
 `CanvasRoot` renders `CanvasLiveSurface` when `canvasView === 'live'`. It shows one `IframeFrameSurface` in `interaction='live'` mode:
 
-- **Fluid + presets.** The frame fills available width by default. Selecting a narrower breakpoint in the toggle clamps the frame to `min(breakpoint.width, containerWidth)`.
-- **Side handle resizing.** Left and right `LiveResizeHandle` divs let the author drag the frame width continuously between 240 px and the breakpoint's natural width. Switching breakpoints invalidates any active override — the frame snaps to the new breakpoint's width automatically.
+- **Fluid + presets.** The frame fills available width by default. Selecting a narrower viewport context in the toggle clamps the frame to `min(breakpoint.width, containerWidth)`.
+- **Side handle resizing.** Left and right `LiveResizeHandle` divs let the author drag the frame width continuously between 240 px and the selected viewport context's natural width. Switching viewport contexts invalidates any active override — the frame snaps to the new context width automatically.
 - **Width badge.** A small `{N}px` indicator updates live while dragging.
 
-Pan/zoom gestures are disabled in live mode (`useCanvas({ enabled: !isLive })`). The `CanvasModeToggle` shows an inline breakpoint icon row when live is active.
+Pan/zoom gestures are disabled in live mode (`useCanvas({ enabled: !isLive })`). The `CanvasModeToggle` shows an inline viewport icon row when live is active.
 
 ---
 
@@ -131,7 +131,7 @@ Native events require explicit forwarding for two cases:
 - **Wheel events (design mode):** `IframeFrameSurface` listens for `wheel` inside the iframe document and re-dispatches a new `WheelEvent` on the iframe element (parent document) so `useCanvas`'s pan/zoom handler picks it up.
 - **Pointer events (design mode):** Middle-click pan, space+left-click pan, and active reorder drags (`data-instatic-canvas-dragging` on `<html>`) all need to cross the iframe boundary. `IframeFrameSurface` tracks `spaceHeld` and `panPointerId` state to identify when a pointerdown starts a pan, then forwards `pointerdown`/`pointermove`/`pointerup`/`pointercancel` to the parent document.
 
-Native mouse movement is also surfaced for editor chrome that must follow the cursor in the parent document, such as inactive-breakpoint activation hints. These events are not forwarded as new DOM events; `IframeFrameSurface` invokes callback props with the iframe-native `MouseEvent`, and callers translate the point with `clientPointToEditorDoc`.
+Native mouse movement is also surfaced for editor chrome that must follow the cursor in the parent document, such as inactive-viewport activation hints. These events are not forwarded as new DOM events; `IframeFrameSurface` invokes callback props with the iframe-native `MouseEvent`, and callers translate the point with `clientPointToEditorDoc`.
 
 Live frames skip all forwarding — they scroll natively and have no pan/zoom.
 
@@ -168,7 +168,7 @@ Tests that render the canvas and query nodes must use the `iframeCanvasQuery.ts`
 - Source-of-truth files:
   - `src/admin/pages/site/canvas/IframeFrameSurface.tsx` — iframe primitive
   - `src/admin/pages/site/canvas/CanvasLiveSurface.tsx` — live mode surface
-  - `src/admin/pages/site/canvas/BreakpointFrame.tsx` — design mode per-breakpoint frame
+  - `src/admin/pages/site/canvas/BreakpointFrame.tsx` — design mode per-viewport frame
   - `src/admin/pages/site/canvas/CanvasTransformLayer.tsx` — design mode pan/zoom container
   - `src/admin/pages/site/canvas/useIframeCursorBridge.ts` — surfaces iframe cursor movement to parent-doc callbacks
   - `src/admin/pages/site/canvas/EditorChromeInjector.tsx` — unlayered chrome CSS

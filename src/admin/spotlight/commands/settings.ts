@@ -25,7 +25,7 @@ const SECTION_COMMANDS: Command[] = [
   {
     id: 'settings.open',
     title: 'Open Settings',
-    subtitle: 'General, Pages, Breakpoints, Publishing, Preferences',
+    subtitle: 'General, Pages, Viewports, Publishing, Preferences',
     group: 'settings',
     iconName: 'settings-cog-solid',
     keywords: ['settings', 'preferences', 'config', 'configuration', 'options'],
@@ -54,8 +54,8 @@ const SECTION_COMMANDS: Command[] = [
   },
   {
     id: 'settings.openBreakpoints',
-    title: 'Open Settings → Breakpoints',
-    subtitle: 'Configure responsive breakpoints',
+    title: 'Open Settings → Viewports',
+    subtitle: 'Configure responsive viewport contexts',
     group: 'settings',
     iconName: 'arrows-horizontal',
     keywords: ['settings', 'breakpoints', 'responsive', 'mobile', 'desktop', 'viewport'],

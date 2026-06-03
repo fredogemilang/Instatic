@@ -57,9 +57,9 @@ interface LayoutSectionProps {
   onRemove: (property: keyof CSSPropertyBag) => void
   /**
    * Fully clear a property — removes it from base styles AND from every
-   * breakpoint override. Used by the X / clear affordances on the visual
-   * switchers so "clear" is unconditional regardless of which breakpoint
-   * tab the user is on. Without this, clearing a breakpoint-only override
+   * viewport-context override. Used by the X / clear affordances on the visual
+   * switchers so "clear" is unconditional regardless of which viewport
+   * tab the user is on. Without this, clearing a viewport-only override
    * would let the inherited base value bleed back through and the switcher
    * segment would stay pressed.
    */

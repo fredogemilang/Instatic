@@ -358,7 +358,7 @@ function normalizeRules(
 
     const newStyles = { ...rule.styles } as Record<string, unknown>
     // Clone every per-context override bag so url() rewrites don't mutate the
-    // source plan. Both width breakpoints and custom conditions live here.
+    // source plan. Both viewport contexts and custom conditions live here.
     const newContextStyles: Record<string, Record<string, unknown>> = {}
     for (const [contextId, bag] of Object.entries(rule.contextStyles ?? {})) {
       newContextStyles[contextId] = { ...(bag as Record<string, unknown>) }

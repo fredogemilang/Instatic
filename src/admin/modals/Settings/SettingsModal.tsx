@@ -37,7 +37,7 @@ import s from './SettingsModal.module.css'
 const NAV_ITEMS = [
   { id: 'general',     label: 'General',     icon: SettingsCogSolidIcon       },
   { id: 'pages',       label: 'Pages',       icon: FileTextSolidIcon          },
-  { id: 'breakpoints', label: 'Breakpoints', icon: SmartphoneSolidIcon        },
+  { id: 'breakpoints', label: 'Viewports',   icon: SmartphoneSolidIcon        },
   { id: 'conditions',  label: 'Conditions',  icon: LayoutSolidIcon            },
   { id: 'shortcuts',   label: 'Shortcuts',   icon: CommandIcon           },
   { id: 'publishing',  label: 'Publishing',  icon: UploadIcon            },

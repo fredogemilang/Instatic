@@ -49,21 +49,21 @@ describe('generateCanvasClassCSS', () => {
     expect(css).not.toMatch(/\[data-breakpoint-id\][^{]*\{[^}]*color:\s*#000/)
   })
 
-  it('scopes breakpoint class styles to their canvas frame instead of viewport media queries', () => {
+  it('uses the viewport context media query for canvas breakpoint styles', () => {
     const css = generateCanvasClassCSS(
       {
         title: makeClass('title', { fontSize: '64px' }, {
           mobile: { fontSize: '36px' },
         }),
       },
-      [{ id: 'mobile', width: 375 }],
+      [{ id: 'mobile', width: 375, mediaQuery: '(min-width: 375px)' }],
     )
 
     expect(css).toContain('.title')
     expect(css).toContain('font-size: 64px')
-    expect(css).toContain('[data-breakpoint-id="mobile"] .title')
+    expect(css).toContain('@media (min-width: 375px)')
     expect(css).toContain('font-size: 36px')
-    expect(css).not.toContain('@media')
+    expect(css).not.toContain('[data-breakpoint-id="mobile"] .title')
   })
 
   it('includes framework color variables for editor preview', () => {

@@ -1,7 +1,13 @@
-import { bagToCSS, conditionPrelude, PUBLISHER_RESET_CSS } from '@core/publisher'
+import {
+  bagToCSS,
+  compareViewportContextCascade,
+  conditionPrelude,
+  PUBLISHER_RESET_CSS,
+  type ViewportContext,
+} from '@core/publisher'
 import { generateFrameworkRootCss } from '@core/framework/generate'
 import { generateFontsCss } from '@core/fonts/css'
-import { styleRuleSelector } from '@core/page-tree'
+import { breakpointMediaQuery, styleRuleSelector } from '@core/page-tree'
 import type { StyleRule, Condition, ConditionDef } from '@core/page-tree'
 import type { SiteFontsSettings } from '@core/fonts/schemas'
 import type {
@@ -13,7 +19,7 @@ import type {
 
 export function generateCanvasClassCSS(
   classes: Record<string, StyleRule>,
-  breakpoints: Array<{ id: string; width: number }>,
+  breakpoints: ViewportContext[],
   conditions: ReadonlyArray<ConditionDef> = [],
   frameworkColors?: FrameworkColorSettings | null,
   frameworkTypography?: FrameworkTypographySettings | null,
@@ -55,7 +61,9 @@ export function generateCanvasClassCSS(
     return ao - bo
   })
 
-  const breakpointIds = new Set(breakpoints.map((bp) => bp.id))
+  const breakpointById = new Map<string, { breakpoint: ViewportContext; index: number }>(
+    breakpoints.map((bp, index) => [bp.id, { breakpoint: bp, index }]),
+  )
   // Condition id → (condition, registry index) for stable ordering.
   const conditionById = new Map<string, { condition: Condition; index: number }>(
     conditions.map((c, index) => [c.id, { condition: c.condition, index }]),
@@ -67,22 +75,19 @@ export function generateCanvasClassCSS(
       blocks.push(`${styleRuleSelector(cls)} {\n${baseDecls}\n}`)
     }
 
-    // Unified contextStyles: a key is either a width breakpoint (simulated via
-    // the [data-breakpoint-id] frame attribute) or a custom condition (emitted
-    // as a REAL @-rule wrapper, evaluated by the canvas frame's own engine
-    // against its actual viewport / container / support so the canvas matches
-    // published output). Keys matching neither registry are skipped.
+    // Unified contextStyles: a key is either a viewport context or a custom
+    // condition. Both emit real @-rule wrappers here so each iframe evaluates
+    // the same conditions as the published page.
     const conditionEntries: Array<{ bag: Record<string, unknown>; condition: Condition; index: number }> = []
+    const bpEntries: Array<{ bag: Record<string, unknown>; breakpoint: ViewportContext; index: number }> = []
     for (const [contextId, bag] of Object.entries(cls.contextStyles ?? {})) {
       const cond = conditionById.get(contextId)
       if (cond) {
         conditionEntries.push({ bag, condition: cond.condition, index: cond.index })
         continue
       }
-      if (!breakpointIds.has(contextId)) continue
-      const decls = bagToCSS(bag)
-      if (!decls) continue
-      blocks.push(`[data-breakpoint-id="${escapeCssAttribute(contextId)}"] ${styleRuleSelector(cls)} {\n${decls}\n}`)
+      const breakpointEntry = breakpointById.get(contextId)
+      if (breakpointEntry) bpEntries.push({ bag, ...breakpointEntry })
     }
 
     conditionEntries.sort((a, b) => a.index - b.index)
@@ -90,6 +95,15 @@ export function generateCanvasClassCSS(
       const decls = bagToCSS(bag)
       if (!decls) continue
       const prelude = conditionPrelude(condition)
+      if (!prelude) continue
+      blocks.push(`${prelude} {\n  ${styleRuleSelector(cls)} {\n${decls}\n  }\n}`)
+    }
+
+    bpEntries.sort(compareViewportContextCascade)
+    for (const { bag, breakpoint } of bpEntries) {
+      const decls = bagToCSS(bag)
+      if (!decls) continue
+      const prelude = conditionPrelude({ kind: 'media', query: breakpointMediaQuery(breakpoint) })
       if (!prelude) continue
       blocks.push(`${prelude} {\n  ${styleRuleSelector(cls)} {\n${decls}\n  }\n}`)
     }

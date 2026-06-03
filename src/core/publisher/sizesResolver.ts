@@ -13,11 +13,12 @@
  *     would need a parent-width context the publisher doesn't compute.
  *   - The **innermost** ancestor with a pixel-valued cap wins. Once one is
  *     found, traversal stops — outer ancestors can't loosen an inner cap.
- *   - The cap can shrink per-breakpoint via `class.contextStyles[breakpointId]`.
- *     Each defined breakpoint emits a separate tier in the output.
+ *   - The cap can change per viewport context via
+ *     `class.contextStyles[breakpointId]`. Each defined viewport override emits
+ *     a separate `sizes` candidate using that context's configured media query.
  *
  * Output: a `sizes` string emitted next to `srcset`, e.g.
- *   `(min-width: 769px) 1200px, (min-width: 376px) 600px, 100vw`
+ *   `(max-width: 375px) 320px, (max-width: 768px) 700px, 1200px`
  *
  * Returns `null` when no constraining ancestor is found — caller (the image
  * module) falls back to the simpler `'100vw'` default.
@@ -29,7 +30,8 @@
  * the image node itself first so authors who DO pin a width directly on
  * the image still benefit.
  */
-import type { Page, PageNode, SiteDocument } from '@core/page-tree'
+import { breakpointMediaQuery, type Page, type PageNode, type SiteDocument } from '@core/page-tree'
+import { compareViewportContextCascade } from './classCss'
 
 /** Effective pixel cap inferred from CSS. `null` means "no pixel constraint". */
 type WidthCap = number | null
@@ -65,8 +67,9 @@ function pixelOrNull(value: unknown): number | null {
 }
 
 /**
- * Per-breakpoint width cap for one node. Returns `null` for the base tier
- * (no constraint), and a number or `null` for each breakpoint id.
+ * Per-viewport width cap for one node. Returns `null` for the base tier
+ * (no constraint), and a number for each viewport context id that declares a
+ * pixel cap.
  *
  * Multi-class semantics: in v1, the **last classId** declaring a width is
  * authoritative — same direction as CSS source-order ties between
@@ -130,7 +133,7 @@ function ancestorChain(nodeId: string, page: Page): PageNode[] {
 
 /**
  * Find the innermost ancestor (inclusive of `nodeId` itself) whose CSS
- * declares any width cap (base or per-breakpoint). The result is that
+ * declares any width cap (base or per-viewport). The result is that
  * ancestor's per-tier caps — outer ancestors don't get inspected once a
  * constraint is found because outer ancestors cannot make an inner cap
  * looser.
@@ -155,7 +158,7 @@ function capToSize(cap: WidthCap): string {
 }
 
 /**
- * Resolve a per-breakpoint `sizes` string for the image at `nodeId`.
+ * Resolve a per-viewport `sizes` string for the image at `nodeId`.
  *
  * Returns `null` when nothing in the chain constrains the image — caller
  * falls back to `'100vw'`.
@@ -168,66 +171,26 @@ export function resolveAutoSizes(
   const caps = findConstrainingAncestor(nodeId, page, site)
   if (!caps) return null
 
-  // Sort breakpoints widest → narrowest. The CSS pipeline emits each
-  // `@media (max-width: N)` rule and narrower-overrides-wider, so for
-  // `sizes` (which uses `min-width`) we mirror the cascade in reverse:
-  // emit the widest viewport tier first.
-  const orderedBps = site.breakpoints.slice().sort((a, b) => b.width - a.width)
+  const viewportEntries = site.breakpoints
+    .map((breakpoint, index) => ({ breakpoint, index }))
+    .filter(({ breakpoint }) => caps.byBreakpoint.has(breakpoint.id))
+    .sort(compareViewportContextCascade)
+    .reverse()
 
-  // Build the raw per-tier cap sequence (widest → narrowest), applying the
-  // CSS cascade. Each tier's `minViewport` is the lower bound of the
-  // viewport range it covers:
-  //   - "above all breakpoints"   → base only,                 minViewport = widest_bp.width + 1
-  //   - "viewport ≤ widest_bp"    → + widest_bp override,      minViewport = next_narrower.width + 1
-  //   - "viewport ≤ narrower_bp"  → + that bp's override,      …
-  //
-  // Within a single class, narrower breakpoint overrides win because they're
-  // emitted later in CSS. Same here: once a breakpoint defines a cap, it
-  // shadows base for all narrower tiers until another breakpoint changes it.
-  type RawTier = { minViewport: number | null; cap: WidthCap }
-  const rawTiers: RawTier[] = []
-  let currentCap: WidthCap = caps.base
-  const widestBp = orderedBps[0]
-  rawTiers.push({
-    minViewport: widestBp ? widestBp.width + 1 : null,
-    cap: currentCap,
-  })
-
-  for (let i = 0; i < orderedBps.length; i++) {
-    const bp = orderedBps[i]
-    const bpCap = caps.byBreakpoint.get(bp.id)
-    if (bpCap !== undefined) currentCap = bpCap
-    const next = orderedBps[i + 1]
-    rawTiers.push({
-      minViewport: next ? next.width + 1 : null,
-      cap: currentCap,
-    })
+  const candidates: string[] = []
+  for (const { breakpoint } of viewportEntries) {
+    const cap = caps.byBreakpoint.get(breakpoint.id)
+    if (cap === undefined) continue
+    const query = breakpointMediaQuery(breakpoint)
+    if (!isSafeSizesMediaQuery(query)) continue
+    candidates.push(`${query} ${capToSize(cap)}`)
   }
 
-  // Collapse adjacent same-cap tiers — drop the WIDER one of each pair so
-  // the surviving (narrower / broader-coverage) `min-width` rule covers
-  // both viewport ranges. Dropping the narrower would create a gap
-  // because the catch-all default would take over too early.
-  //
-  // Concretely: tiers `[{1441, 1200}, {376, 1200}, {null, 320}]` collapse
-  // to `[{376, 1200}, {null, 320}]` → output `(min-width: 376px) 1200px, 320px`.
-  const collapsed: RawTier[] = []
-  for (let i = 0; i < rawTiers.length; i++) {
-    const tier = rawTiers[i]
-    const next = rawTiers[i + 1]
-    if (next && capToSize(next.cap) === capToSize(tier.cap)) continue
-    collapsed.push(tier)
-  }
+  if (caps.base === null && candidates.length === 0) return null
+  candidates.push(capToSize(caps.base))
+  return candidates.join(', ')
+}
 
-  // If every surviving tier is `100vw`, there's nothing useful to express.
-  if (collapsed.every((t) => t.cap === null)) return null
-
-  // Emit. The LAST tier (narrowest viewport) is the catch-all default and
-  // gets no media-query prefix.
-  const trailing = collapsed[collapsed.length - 1]
-  const head = collapsed
-    .slice(0, -1)
-    .map((t) => `(min-width: ${t.minViewport}px) ${capToSize(t.cap)}`)
-    .join(', ')
-  return head ? `${head}, ${capToSize(trailing.cap)}` : capToSize(trailing.cap)
+function isSafeSizesMediaQuery(query: string): boolean {
+  return !/[{}]/.test(query) && !/<\//.test(query) && !/;/.test(query)
 }

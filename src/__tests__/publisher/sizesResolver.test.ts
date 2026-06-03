@@ -6,8 +6,8 @@
  *   - Single max-width-constrained container wraps the image.
  *   - Constraint pinned directly on the image node itself.
  *   - Multiple ancestors with caps — innermost wins (outer can't loosen).
- *   - Per-breakpoint `contextStyles.maxWidth` shrinks `sizes` at narrower
- *     viewports.
+ *   - Per-viewport `contextStyles.maxWidth` emits `sizes` candidates using the
+ *     configured media queries.
  *   - Non-pixel units (%, vw, auto) ignored.
  *   - Multi-class on one node: latest declaration wins.
  */
@@ -154,13 +154,9 @@ describe('resolveAutoSizes — per-breakpoint overrides', () => {
         }),
       },
     })
-    // Expected tiers (widest → narrowest):
-    //   viewport > 1440 → 1200px
-    //   376 ≤ viewport ≤ 1440 → 1200px (no desktop override, cap unchanged)
-    //   viewport ≤ 375 → 320px
-    // Adjacent identical tiers collapse, so the output simplifies to:
-    //   (min-width: 376px) 1200px, 320px
-    expect(resolveAutoSizes('img', page, site)).toBe('(min-width: 376px) 1200px, 320px')
+    // `sizes` uses first-match semantics, so viewport candidates are emitted in
+    // the reverse of CSS cascade precedence.
+    expect(resolveAutoSizes('img', page, site)).toBe('(max-width: 375px) 320px, 1200px')
   })
 
   it('emits all three tiers when each breakpoint defines its own cap', () => {
@@ -187,7 +183,34 @@ describe('resolveAutoSizes — per-breakpoint overrides', () => {
       },
     })
     expect(resolveAutoSizes('img', page, site)).toBe(
-      '(min-width: 1441px) 1400px, (min-width: 769px) 1200px, (min-width: 376px) 700px, 320px',
+      '(max-width: 375px) 320px, (max-width: 768px) 700px, (max-width: 1440px) 1200px, 1400px',
+    )
+  })
+
+  it('uses configured min-width media queries for mobile-first viewport contexts', () => {
+    const page = makePage({
+      root: { moduleId: 'base.body', children: ['wrap'] },
+      wrap: { moduleId: 'base.container', classIds: ['responsive'], children: ['img'] },
+      img: { moduleId: 'base.image' },
+    })
+    const site = makeSite({
+      breakpoints: [
+        { id: 'mobile', label: 'Mobile', width: 375, mediaQuery: '(min-width: 375px)', icon: 'smartphone' },
+        { id: 'tablet', label: 'Tablet', width: 768, mediaQuery: '(min-width: 768px)', icon: 'tablet' },
+        { id: 'desktop', label: 'Desktop', width: 1440, mediaQuery: '(min-width: 1440px)', icon: 'monitor' },
+      ],
+      styleRules: {
+        responsive: makeClass('responsive', {
+          styles: { maxWidth: '320px' },
+          contextStyles: {
+            tablet: { maxWidth: '700px' },
+            desktop: { maxWidth: '1200px' },
+          },
+        }),
+      },
+    })
+    expect(resolveAutoSizes('img', page, site)).toBe(
+      '(min-width: 1440px) 1200px, (min-width: 768px) 700px, 320px',
     )
   })
 })

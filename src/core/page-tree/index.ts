@@ -47,13 +47,14 @@ export type {
 } from './siteExplorer'
 
 // Defaults
-export { DEFAULT_BREAKPOINTS } from './breakpoint'
+export { DEFAULT_BREAKPOINTS, breakpointMediaQuery, defaultBreakpointMediaQuery } from './breakpoint'
 export { DEFAULT_SITE_SETTINGS } from './siteSettings'
 
 // Condition helpers
 export { conditionId, conditionLabel, makeConditionDef } from './condition'
 
 // Tolerant parsers — boundary helpers for persisted data.
+export { parseBreakpoint } from './breakpoint'
 export { parsePage } from './page'
 export { parseSiteDocument } from './siteDocument'
 export {
@@ -63,10 +64,12 @@ export {
   deleteExplorerFolder,
   moveExplorerFolder,
   moveExplorerItem,
+  moveExplorerItems,
   parseSiteExplorerOrganization,
   reconcileSiteExplorerInPlace,
   reconcileSiteExplorerOrganization,
   renameExplorerFolder,
+  wrapExplorerItemsInFolder,
 } from './siteExplorer'
 
 // Slug → public path + internal page-reference links.

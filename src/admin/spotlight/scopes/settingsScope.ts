@@ -37,8 +37,8 @@ const SETTINGS_COMMANDS: Command[] = [
   },
   {
     id: 'scope.settings.breakpoints',
-    title: 'Breakpoints',
-    subtitle: 'Configure responsive breakpoints',
+    title: 'Viewports',
+    subtitle: 'Configure responsive viewport contexts',
     group: 'settings',
     iconName: 'arrows-horizontal',
     keywords: ['breakpoints', 'responsive', 'mobile', 'desktop', 'viewport'],

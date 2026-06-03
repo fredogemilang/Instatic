@@ -6,13 +6,13 @@
  * condition under which a style override applies. There are two kinds of
  * context id a `StyleRule.contextStyles` map can key on:
  *
- *   - a **breakpoint id** (from `site.breakpoints`) → emits
- *     `@media (max-width: Npx)`. The width presets that drive the canvas frame.
+ *   - a **viewport context id** (from `site.breakpoints`) → emits that
+ *     context's configured `mediaQuery`. The `width` drives the canvas frame.
  *   - a **condition id** (from `site.conditions`, defined here) → emits a custom
  *     `@media` / `@container` / `@supports` block.
  *
  * Conditions are *reusable*: defined once on the site, any class can carry an
- * override under one. This mirrors how breakpoints already work.
+ * override under one. This mirrors how viewport contexts already work.
  *
  * Constraint #269: no imports from editor / editor-store here.
  */
@@ -26,9 +26,9 @@ import { asPlainObject } from './parseHelpers'
 
 /**
  * The condition a custom editing context applies under. Discriminated by
- * `kind`. (Width breakpoints are NOT represented here — a breakpoint context is
+ * `kind`. (Viewport contexts are NOT represented here — a viewport context is
  * keyed by its `site.breakpoints` id directly. These are the conditions that
- * have no first-class breakpoint preset.)
+ * do not carry a first-class canvas frame width.)
  *
  *   - `media`:     any media query, stored verbatim (`(max-width: 860px)`,
  *                  `(orientation: landscape)`, `print`). Emits `@media <query>`.

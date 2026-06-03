@@ -1,8 +1,8 @@
 /**
- * Breakpoints scope — lists site breakpoints for selection.
+ * Viewports scope — lists site viewport contexts for selection.
  *
  * Returns synchronous commands from the editor store's current state.
- * Each command switches the active canvas breakpoint.
+ * Each command switches the active canvas viewport.
  */
 
 import type { Scope, Command } from '../types'
@@ -41,7 +41,7 @@ function getBreakpointCommands(): Command[] {
 
 export const breakpointsScope: Scope = {
   id: 'breakpoints',
-  title: 'Switch breakpoint',
-  placeholder: 'Search breakpoints…',
+  title: 'Switch viewport',
+  placeholder: 'Search viewports…',
   commands: getBreakpointCommands,
 }

@@ -11,8 +11,8 @@
     "scripts": { "folders": [], "items": [] }
   },
   "breakpoints": [
-    { "id": "mobile",  "label": "Mobile",  "width": 375,  "icon": "smartphone" },
-    { "id": "desktop", "label": "Desktop", "width": 1440, "icon": "monitor"    }
+    { "id": "mobile",  "label": "Mobile",  "width": 375,  "mediaQuery": "(max-width: 375px)",  "icon": "smartphone" },
+    { "id": "desktop", "label": "Desktop", "width": 1440, "mediaQuery": "(max-width: 1440px)", "icon": "monitor"    }
   ],
   "pages": [
     {

@@ -18,7 +18,7 @@ unless stated otherwise. Priority codes follow `docs/e2e/feature-matrix.md`.
 |---|---:|---|---|---|---|---|---|
 | SPOT-001 | P1 | Open/Close | Open palette with ⌘K, close with Esc | Logged in admin | Press ⌘K (or Ctrl+K on non-Mac) | Palette overlays the admin UI, focused input, backdrop visible. Esc dismisses. | Focus not trapped outside dialog; palette fails to open on first press |
 | SPOT-002 | P1 | Navigation | Type a query, press Enter, navigate to expected workspace | Logged in, Site workspace | Open palette, type "content", highlight "Go to Content", press Enter | Admin navigates to /admin/content | Wrong workspace navigated; no navigation at all |
-| SPOT-003 | P2 | Subcommand | Push a scope and pick an item | Logged in, Site workspace with breakpoints | Open palette, type "breakpoint", highlight "Switch breakpoint →", press Enter/Tab, pick a breakpoint | Active breakpoint changes in the editor canvas bar | Scope never pushes; picking returns to wrong breakpoint |
+| SPOT-003 | P2 | Subcommand | Push a scope and pick an item | Logged in, Site workspace with viewport contexts | Open palette, type "viewport", highlight "Switch viewport →", press Enter/Tab, pick a viewport | Active viewport changes in the editor canvas bar | Scope never pushes; picking returns to wrong viewport |
 | SPOT-004 | P1 | Destructive confirm | Run a destructive command — first Enter shows confirm, second runs | Logged in, multiple pages exist | Open palette, type "delete", highlight "Delete current page", press Enter once — confirm text appears; press Enter again — page deleted | Page is removed from the site tree | Confirm text not visible; double-Enter runs twice; confirm times out before second Enter |
 | SPOT-005 | P2 | Destructive timeout | Wait 6 seconds after first Enter; confirm collapses | Logged in, page with deletable sibling | Open palette, trigger destructive first Enter, wait >5 s | Confirm prompt disappears; row returns to normal destructive styling | Timer fires too early or not at all; row stuck in confirm state |
 | SPOT-006 | P1 | Empty state | Type a query with no matches; empty state shown | Logged in | Open palette, type "zzz-no-match-xkq" | Empty-state illustration and "No results for …" message are visible | Empty state appears for queries that should return results; empty state missing for truly unmatched queries |
@@ -53,7 +53,7 @@ unless stated otherwise. Priority codes follow `docs/e2e/feature-matrix.md`.
 
 ### SPOT-003 (Subcommand push)
 
-1. "Switch breakpoint →" appears in the result list.
+1. "Switch viewport →" appears in the result list.
 2. Pressing Enter/Tab on it replaces the results list with breakpoint options.
 3. A breadcrumb shows the current scope.
 4. Pressing ↑↓ navigates breakpoint options.

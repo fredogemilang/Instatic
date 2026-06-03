@@ -119,6 +119,17 @@ describe('cssToStyleRules — @media → contextStyles (matched)', () => {
     expect(warnings).toHaveLength(0)
   })
 
+  it('@media matching a configured viewport query is matched', () => {
+    const css = '.foo { color: red }\n@media (min-width: 768px) { .foo { color: blue } }'
+    const { rules, warnings, conditions } = cssToStyleRules(css, {
+      breakpoints: [{ id: 'tablet', width: 768, mediaQuery: '(min-width: 768px)' }],
+    })
+    expect(rules).toHaveLength(1)
+    expect(rules[0].contextStyles.tablet).toMatchObject({ color: 'blue' })
+    expect(conditions).toHaveLength(0)
+    expect(warnings).toHaveLength(0)
+  })
+
   it('@media creates a new rule if no base rule existed for the selector', () => {
     const css = '@media (max-width: 768px) { .foo { color: blue } }'
     const { rules } = cssToStyleRules(css, {

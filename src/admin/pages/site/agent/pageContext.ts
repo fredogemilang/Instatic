@@ -67,9 +67,9 @@ export function buildPageContext(
     .sort((a, b) => a.id.localeCompare(b.id))
     .map(moduleDefinitionToAgentContext)
 
-  // The agent works in terms of width breakpoints; surface only the
-  // breakpoint-keyed subset of the unified contextStyles map (custom @media /
-  // @container / @supports conditions are not part of the agent's model yet).
+  // The agent works in terms of viewport contexts; surface only the
+  // breakpoint-keyed subset of the unified contextStyles map. Custom @media /
+  // @container / @supports conditions are not part of the agent's model yet.
   const breakpointIds = new Set(state.site.breakpoints.map((bp) => bp.id))
   const classes = Object.values(state.site.styleRules ?? {}).map((c) => {
     const breakpointStyles: Record<string, Record<string, unknown>> = {}
@@ -102,6 +102,7 @@ export function buildPageContext(
       id: breakpoint.id,
       label: breakpoint.label,
       width: breakpoint.width,
+      mediaQuery: breakpoint.mediaQuery,
       icon: breakpoint.icon,
     })),
     nodes,

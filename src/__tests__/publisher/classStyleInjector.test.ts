@@ -387,6 +387,19 @@ describe('generateClassCSS', () => {
     expect(css).toContain('font-size: 12px;')
   })
 
+  it('uses a viewport context media query instead of forcing max-width', () => {
+    const classes = {
+      btn: makeClass('btn', { fontSize: '16px' }, {
+        tablet: { fontSize: '18px' },
+      }),
+    }
+    const css = generateClassCSS(classes, [
+      { id: 'tablet', width: 768, mediaQuery: '(min-width: 768px)' },
+    ])
+    expect(css).toContain('@media (min-width: 768px)')
+    expect(css).not.toContain('@media (max-width: 768px)')
+  })
+
   it('emits separate @media blocks for multiple breakpoints', () => {
     const classes = {
       hero: makeClass('hero', { fontSize: '24px' }, {
@@ -481,6 +494,28 @@ describe('generateClassCSS', () => {
     expect(desktopIdx).toBeGreaterThanOrEqual(0)
     expect(tabletIdx).toBeGreaterThan(desktopIdx)
     expect(mobileIdx).toBeGreaterThan(tabletIdx)
+  })
+
+  it('emits min-width viewport contexts from narrowest to widest', () => {
+    const breakpoints = [
+      { id: 'mobile', width: 375, mediaQuery: '(min-width: 375px)' },
+      { id: 'tablet', width: 768, mediaQuery: '(min-width: 768px)' },
+      { id: 'desktop', width: 1440, mediaQuery: '(min-width: 1440px)' },
+    ]
+    const classes = {
+      hero: makeClass('hero', { fontSize: '14px' }, {
+        mobile: { fontSize: '16px' },
+        desktop: { fontSize: '32px' },
+        tablet: { fontSize: '24px' },
+      }),
+    }
+    const css = generateClassCSS(classes, breakpoints)
+    const mobileIdx = css.indexOf('@media (min-width: 375px)')
+    const tabletIdx = css.indexOf('@media (min-width: 768px)')
+    const desktopIdx = css.indexOf('@media (min-width: 1440px)')
+    expect(mobileIdx).toBeGreaterThanOrEqual(0)
+    expect(tabletIdx).toBeGreaterThan(mobileIdx)
+    expect(desktopIdx).toBeGreaterThan(tabletIdx)
   })
 })
 

@@ -87,7 +87,8 @@ export const StyleRuleSchema = Type.Object({
    * Per-context overrides — same persistence semantics as `styles`. The unified
    * "editing context" model (docs/plans/2026-05-30-unified-condition-axis.md):
    * one flat map keyed by a context id, where a context id is EITHER
-   *   - a width breakpoint id (from `site.breakpoints`) → `@media (max-width:N)`,
+   *   - a viewport context id (from `site.breakpoints`) → that context's
+   *     configured `@media` query,
    *   - or a condition id (from `site.conditions`) → custom
    *     `@media` / `@container` / `@supports`.
    *

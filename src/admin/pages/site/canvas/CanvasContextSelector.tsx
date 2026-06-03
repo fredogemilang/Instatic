@@ -4,20 +4,19 @@
  *
  * One control for the whole condition axis (unified-condition-axis plan). A
  * dropdown lists, with one consistent row design (icon · name · detail):
- *   - width breakpoints (from `site.breakpoints`) — selecting one reframes the
- *     canvas AND targets that viewport's styles;
+ *   - viewport contexts (from `site.breakpoints`) — selecting one reframes the
+ *     canvas and targets that viewport's styles;
  *   - custom conditions (reusable @media / @container / @supports from
  *     `site.conditions`) — selecting one keeps the current frame but routes
  *     style-panel edits to that condition's `contextStyles` bag.
  * Each custom row carries an inline × to delete it; a footer offers
- * "Add condition…" and "Manage…". Adding a pure width media query creates a
- * real breakpoint instead of a look-alike condition — width lives in the
- * breakpoint model, conditions are the non-width cases.
+ * "Add context…" and "Manage…". A viewport context stores both a canvas frame
+ * width and the media query that publishes its class overrides.
  */
 import { useRef, useState, type FormEvent, type SyntheticEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
 import type { Breakpoint, Condition, ConditionDef } from '@core/page-tree'
-import { conditionLabel } from '@core/page-tree'
+import { breakpointMediaQuery, conditionLabel, defaultBreakpointMediaQuery } from '@core/page-tree'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@ui/components/ContextMenu'
 import { Dialog } from '@ui/components/Dialog'
 import { Input } from '@ui/components/Input'
@@ -200,7 +199,7 @@ export function CanvasContextSelector() {
             onClick={() => { closeMenu(); setDialog('add') }}
           >
             <PlusIcon size={12} aria-hidden="true" />
-            <span className={styles.rowLabel}>Add condition…</span>
+            <span className={styles.rowLabel}>Add context…</span>
           </ContextMenuItem>
           {conditions.length > 0 && (
             <ContextMenuItem
@@ -262,16 +261,16 @@ function BreakpointIcon({ name }: { name: string }) {
 // ContextDialog — one add/edit dialog for both breakpoints and conditions.
 // ---------------------------------------------------------------------------
 
-/** Dialog segments: a width breakpoint, or one of the three condition kinds. */
+/** Dialog segments: a viewport context, or one of the three condition kinds. */
 type SegmentKind = 'breakpoint' | ConditionKind
 
 const CONDITION_KIND_OPTIONS = [
-  { value: 'media', label: 'Media', ariaLabel: 'Media query' },
+  { value: 'media', label: 'Environment', ariaLabel: 'Environment media query' },
   { value: 'container', label: 'Container', ariaLabel: 'Container query' },
   { value: 'supports', label: 'Supports', ariaLabel: 'Feature query' },
 ] satisfies ReadonlyArray<{ value: SegmentKind; label: string; ariaLabel: string }>
 
-const BREAKPOINT_SEGMENT = { value: 'breakpoint', label: 'Breakpoint', ariaLabel: 'Width breakpoint' } as const
+const BREAKPOINT_SEGMENT = { value: 'breakpoint', label: 'Viewport', ariaLabel: 'Viewport context' } as const
 
 const ICON_OPTIONS = [
   { value: 'smartphone', label: 'Smartphone', icon: <SmartphoneSolidIcon size={13} /> },
@@ -283,13 +282,9 @@ const ICON_OPTIONS = [
 
 const CONDITION_FORM_ID = 'add-condition-form'
 
-/**
- * Detect a pure `(max-width: Npx)` media query (the only width shape that maps
- * cleanly to a breakpoint, which emits `@media (max-width: N)`). Returns the
- * pixel width, or null when the query is anything else.
- */
-function detectMaxWidthPx(query: string): number | null {
-  const m = query.trim().match(/^\(?\s*max-width\s*:\s*(\d+(?:\.\d+)?)\s*px\s*\)?$/i)
+/** Detect a pure width media query. Returns the pixel width, or null. */
+function detectWidthPx(query: string): number | null {
+  const m = query.trim().match(/^\(?\s*(?:min|max)-width\s*:\s*(\d+(?:\.\d+)?)\s*px\s*\)?$/i)
   if (!m) return null
   const n = Number(m[1])
   return Number.isFinite(n) && n > 0 ? n : null
@@ -335,7 +330,7 @@ function ContextDialog({ mode, onClose }: { mode: Exclude<DialogState, null>; on
   const editDef = mode !== 'add' && 'def' in mode ? mode.def : null
 
   const [segment, setSegment] = useState<SegmentKind>(
-    editBp ? 'breakpoint' : editDef ? editDef.condition.kind : 'media',
+    editBp ? 'breakpoint' : editDef ? editDef.condition.kind : 'breakpoint',
   )
   // Shared display name (breakpoint label / condition label).
   const [label, setLabel] = useState(editBp ? editBp.label : editDef ? editDef.label : '')
@@ -347,6 +342,9 @@ function ContextDialog({ mode, onClose }: { mode: Exclude<DialogState, null>; on
   const [range, setRange] = useState({ min: '', max: '', unit: 'px' })
   // Breakpoint fields.
   const [bpWidth, setBpWidth] = useState(editBp ? editBp.width : 768)
+  const [bpMediaQuery, setBpMediaQuery] = useState(
+    editBp ? breakpointMediaQuery(editBp) : defaultBreakpointMediaQuery(768),
+  )
   const [bpIcon, setBpIcon] = useState(editBp ? editBp.icon : 'tablet')
   const [bpPreview, setBpPreview] = useState(editBp ? editBp.previewFrame !== false : true)
   const [error, setError] = useState<string | null>(null)
@@ -362,16 +360,42 @@ function ContextDialog({ mode, onClose }: { mode: Exclude<DialogState, null>; on
       ? CONDITION_KIND_OPTIONS
       : [BREAKPOINT_SEGMENT, ...CONDITION_KIND_OPTIONS]
 
+  function handleViewportWidthChange(width: number) {
+    const previousDefault = defaultBreakpointMediaQuery(bpWidth)
+    setBpWidth(width)
+    setError(null)
+    if (bpMediaQuery === previousDefault) {
+      setBpMediaQuery(defaultBreakpointMediaQuery(width))
+    }
+  }
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
     if (onBreakpoint) {
       if (!(bpWidth > 0)) { setError('Enter a width in pixels.'); return }
-      const name = label.trim() || `≤ ${bpWidth}px`
+      const mediaQuery = bpMediaQuery.trim() || defaultBreakpointMediaQuery(bpWidth)
+      if (!isValidConditionQuery('media', mediaQuery)) {
+        setError('That media query is not valid CSS.')
+        return
+      }
+      const name = label.trim() || `${bpWidth}px`
       if (isEditBp && editBp) {
-        updateBreakpoint(editBp.id, { label: name, width: bpWidth, icon: bpIcon, previewFrame: bpPreview })
+        updateBreakpoint(editBp.id, {
+          label: name,
+          width: bpWidth,
+          mediaQuery,
+          icon: bpIcon,
+          previewFrame: bpPreview,
+        })
         setActiveBreakpoint(editBp.id)
       } else {
-        const bp = addBreakpoint({ label: name, width: bpWidth, icon: bpIcon, previewFrame: bpPreview })
+        const bp = addBreakpoint({
+          label: name,
+          width: bpWidth,
+          mediaQuery,
+          icon: bpIcon,
+          previewFrame: bpPreview,
+        })
         setActiveBreakpoint(bp.id)
       }
       onClose()
@@ -406,11 +430,11 @@ function ContextDialog({ mode, onClose }: { mode: Exclude<DialogState, null>; on
           : { kind: segment as ConditionKind, query: query.trim() },
       )
     : ''
-  // Nudge width media queries toward the Breakpoint segment.
-  const widthInMedia = segment === 'media' && detectMaxWidthPx(query) !== null
-  const title = isEditBp ? 'Edit breakpoint' : isEditDef ? 'Edit condition' : 'Add context'
-  const submitDisabled = onBreakpoint ? !(bpWidth > 0) : !query.trim()
-  const submitLabel = isEditBp || isEditDef ? 'Save' : onBreakpoint ? 'Add breakpoint' : 'Add'
+  // Nudge width media queries toward the Viewport segment.
+  const widthInMedia = segment === 'media' && detectWidthPx(query) !== null
+  const title = isEditBp ? 'Edit viewport' : isEditDef ? 'Edit condition' : 'Add context'
+  const submitDisabled = onBreakpoint ? !(bpWidth > 0) || !bpMediaQuery.trim() : !query.trim()
+  const submitLabel = isEditBp || isEditDef ? 'Save' : onBreakpoint ? 'Add viewport' : 'Add'
 
   return (
     <Dialog
@@ -444,7 +468,7 @@ function ContextDialog({ mode, onClose }: { mode: Exclude<DialogState, null>; on
           <Input
             fieldSize="sm"
             value={label}
-            placeholder={onBreakpoint ? `≤ ${bpWidth || 0}px` : 'e.g. Dark mode'}
+            placeholder={onBreakpoint ? `${bpWidth || 0}px viewport` : 'e.g. Dark mode'}
             autoComplete="off"
             spellCheck={false}
             aria-label="Display name"
@@ -455,23 +479,53 @@ function ContextDialog({ mode, onClose }: { mode: Exclude<DialogState, null>; on
         {onBreakpoint ? (
           <>
             <div className={styles.field}>
-              <span className={styles.label}>Width (px)</span>
+              <span className={styles.label}>Frame width (px)</span>
               <Input
                 fieldSize="sm"
                 type="number"
                 inputMode="numeric"
                 value={bpWidth}
                 min={1}
-                aria-label="Breakpoint width in pixels"
-                onChange={(e) => { setBpWidth(Number(e.target.value)); setError(null) }}
+                aria-label="Viewport frame width in pixels"
+                onChange={(e) => handleViewportWidthChange(Number(e.target.value))}
               />
+            </div>
+            <div className={styles.field}>
+              <span className={styles.label}>CSS media query</span>
+              <Input
+                fieldSize="sm"
+                value={bpMediaQuery}
+                placeholder="(min-width: 768px)"
+                autoComplete="off"
+                spellCheck={false}
+                aria-label="Viewport CSS media query"
+                onChange={(e) => { setBpMediaQuery(e.target.value); setError(null) }}
+              />
+              <div className={styles.chips}>
+                <Button
+                  type="button"
+                  size="micro"
+                  variant={bpMediaQuery.trim() === defaultBreakpointMediaQuery(bpWidth) ? 'primary' : 'secondary'}
+                  onClick={() => { setBpMediaQuery(defaultBreakpointMediaQuery(bpWidth)); setError(null) }}
+                >
+                  Max-width
+                </Button>
+                <Button
+                  type="button"
+                  size="micro"
+                  variant={bpMediaQuery.trim() === `(min-width: ${bpWidth}px)` ? 'primary' : 'secondary'}
+                  onClick={() => { setBpMediaQuery(`(min-width: ${bpWidth}px)`); setError(null) }}
+                >
+                  Min-width
+                </Button>
+              </div>
             </div>
             <div className={styles.field}>
               <span className={styles.label}>Icon</span>
               <Select
                 value={bpIcon}
                 fieldSize="sm"
-                aria-label="Breakpoint icon"
+                aria-label="Viewport icon"
                 options={ICON_OPTIONS}
                 onChange={(e) => setBpIcon(e.target.value)}
               />
@@ -498,7 +552,7 @@ function ContextDialog({ mode, onClose }: { mode: Exclude<DialogState, null>; on
             />
             {widthInMedia && (
               <p className={styles.hint} role="status">
-                Tip: for a viewport width, use the Breakpoint tab — it can reframe the canvas.
+                Tip: for viewport width, use the Viewport tab so the context gets a canvas frame.
               </p>
             )}
             {previewLabel && <p className={styles.hint} role="status">Saves as: {previewLabel}</p>}

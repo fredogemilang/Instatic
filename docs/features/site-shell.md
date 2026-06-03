@@ -1,6 +1,6 @@
 # Site Shell
 
-The site shell — the top-level persisted site config. Everything that's "the site" but **not** a page or a Visual Component lives here: name, breakpoints, settings (colors, typography, spacing), class registry, files, Site Explorer organization, dependencies, and runtime config.
+The site shell — the top-level persisted site config. Everything that's "the site" but **not** a page or a Visual Component lives here: name, viewport contexts (`breakpoints` in the persisted schema), settings (colors, typography, spacing), class registry, files, Site Explorer organization, dependencies, and runtime config.
 
 The shell is stored in a single `site` row. Pages and VCs live separately in `data_rows`. The adapter assembles a full `SiteDocument` (shell + pages + VCs) on load.
 
@@ -11,7 +11,7 @@ The shell is stored in a single `site` row. Pages and VCs live separately in `da
 - One row in the `site` table. Loaded as `SiteShell`; assembled at the client into `SiteDocument` (= `SiteShell & { pages, visualComponents }`).
 - Source-of-truth schema: `src/core/page-tree/siteDocument.ts` → `SiteShellSchema`.
 - Sub-schemas:
-  - `Breakpoint[]` — viewport sizes the editor renders
+  - `Breakpoint[]` — viewport contexts: canvas frame widths plus their published media queries
   - `SiteSettings` — color tokens, typography, spacing scale, framework tokens
   - `Record<string, StyleRule>` — the style rule registry (user-defined CSS rules)
   - `SiteFile[]` — arbitrary text/CSS/JS files attached to the site
@@ -68,28 +68,30 @@ The site shell schema **does not** include pages or VCs — gated by `no-vc-in-s
 
 ```ts
 type Breakpoint = {
-  id:       string     // 'mobile' | 'tablet' | 'desktop' | custom
-  label:    string
-  minWidth: number     // px
-  maxWidth: number | null
+  id:            string     // 'mobile' | 'tablet' | 'desktop' | custom
+  label:         string
+  width:         number     // canvas frame width in px
+  mediaQuery?:   string     // published CSS condition; defaults to `(max-width: ${width}px)`
+  icon:          string     // pixel-art-icons name
+  previewFrame?: boolean    // false keeps the context selectable without rendering a frame
 }
 ```
 
 The default set (`DEFAULT_BREAKPOINTS`):
 
-| id        | label   | minWidth | maxWidth |
-|-----------|---------|----------|----------|
-| `mobile`  | Mobile  | 0        | 767      |
-| `tablet`  | Tablet  | 768      | 1023     |
-| `desktop` | Desktop | 1024     | null     |
+| id        | label   | width | mediaQuery |
+|-----------|---------|-------|------------|
+| `mobile`  | Mobile  | 375   | `(max-width: 375px)` |
+| `tablet`  | Tablet  | 768   | `(max-width: 768px)` |
+| `desktop` | Desktop | 1440  | `(max-width: 1440px)` |
 
-Breakpoints power three things:
+Viewport contexts power three things:
 
-- The canvas's per-breakpoint iframes (the user sees their page rendered at each breakpoint width).
-- The `breakpointOverrides` on each `PageNode` (per-breakpoint prop overrides).
-- The publisher's framework CSS (`@media (min-width: ...)` queries derived from breakpoints).
+- The canvas's per-viewport iframes (the user sees their page rendered at each context's `width`).
+- The `breakpointOverrides` on each `PageNode` (per-viewport prop overrides).
+- The class registry's responsive CSS (`@media ...` queries from each context's `mediaQuery`).
 
-Breakpoints can be added / removed / reordered through the Settings → Breakpoints panel. Adding a breakpoint creates a new column in the editor's per-breakpoint canvas grid.
+Viewport contexts can be added / removed / reordered through Settings → Viewport contexts. Adding a context can create a new canvas frame when `previewFrame !== false`; frameless contexts remain selectable editing contexts for published CSS.
 
 ### `SiteSettings`
 
@@ -99,6 +101,7 @@ Breakpoints can be added / removed / reordered through the Settings → Breakpoi
 type SiteSettings = {
   colorTokens:        Record<string, string>     // 'primary' → '#ff7700', 'surface' → '#fff', etc.
   typographyTokens:   { fontFamily: ..., baseSize: ..., scale: ..., headingScale: ... }
+  fonts:              { items: FontEntry[], tokens: FontToken[] }
   spacingScale:       number[]                   // [0, 4, 8, 16, 24, 32, ...]
   framework:          FrameworkConfig            // generated utility classes (spacing utilities)
   containerWidth:     number                     // max-width for the publisher's `--container-width`
@@ -106,7 +109,9 @@ type SiteSettings = {
 }
 ```
 
-The `--container-width`, color, typography, and spacing values are emitted into the **framework CSS** by `buildSiteFrameworkCss(site)` in `src/core/publisher/frameworkCss.ts`.
+`settings.fonts.items` is the installed self-hosted font asset library (Google downloads and custom media-backed font files). `settings.fonts.tokens` is the editable builder-facing contract: each token owns a stable variable such as `font-primary`, an optional assigned `FontEntry` id, and a fallback stack. The publisher emits those as `:root { --font-primary: "Family", sans-serif; }`; editor controls should prefer `font-family: var(--font-primary)` over raw family names when the design should follow future font swaps.
+
+The `--container-width`, color, typography, font-token, and spacing values are emitted into the published CSS by `buildSiteFrameworkCss(site)` and the site font CSS bundle.
 
 Editing the colors / typography / spacing in the Site → Framework / Colors / Typography panels writes back to `settings_json` and republishes the affected pages.
 
@@ -123,7 +128,8 @@ type StyleRule = {
   order:        number             // cascade order; emitted ascending
   description?: string
   scope?:       { nodeId: string } // optional: a scope-anchored rule (one node only)
-  styles:       CSSPropertyBag     // per-breakpoint property map
+  styles:       CSSPropertyBag     // base property map
+  contextStyles: Record<string, CSSPropertyBag> // viewport/context overrides
   generated?:   { ... }
 }
 ```
@@ -344,15 +350,21 @@ const settings = useEditorStore((s) => s.site.settings)
 const colors   = settings.colorTokens
 ```
 
-### Add a new breakpoint
+### Add a new viewport context
 
-The editor's Breakpoints panel calls a `siteSlice` action:
+The editor's Viewport contexts panel calls a `siteSlice` action:
 
 ```ts
-addBreakpoint({ id: 'wide', label: 'Wide', minWidth: 1440, maxWidth: null })
+addBreakpoint({
+  label: 'Wide',
+  width: 1440,
+  mediaQuery: '(min-width: 1440px)',
+  icon: 'monitor',
+  previewFrame: true,
+})
 ```
 
-The panel rail's per-breakpoint canvas iframe shows up automatically. Existing nodes can target the new breakpoint via `setBreakpointOverride(nodeId, 'wide', propKey, value)`.
+The panel rail's per-viewport canvas iframe shows up automatically when `previewFrame` is enabled. Existing nodes can target the new context via `setBreakpointOverride(nodeId, breakpointId, propKey, value)`.
 
 ### Add a color token
 

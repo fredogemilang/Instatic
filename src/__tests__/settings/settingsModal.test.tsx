@@ -211,7 +211,7 @@ describe('SettingsModal — backdrop', () => {
 // ---------------------------------------------------------------------------
 
 describe('SettingsModal — section navigation', () => {
-  it('renders exactly 7 nav items (general, pages, breakpoints, conditions, shortcuts, publishing, preferences)', () => {
+  it('renders exactly 7 nav items (general, pages, viewports, conditions, shortcuts, publishing, preferences)', () => {
     openModal()
     render(<SettingsModal />)
     const nav = screen.getByRole('navigation', { name: /settings sections/i })
@@ -231,7 +231,7 @@ describe('SettingsModal — section navigation', () => {
     const nav = screen.getByRole('navigation', { name: /settings sections/i })
     expect(within(nav).getByText('General')).toBeDefined()
     expect(within(nav).getByText('Pages')).toBeDefined()
-    expect(within(nav).getByText('Breakpoints')).toBeDefined()
+    expect(within(nav).getByText('Viewports')).toBeDefined()
     expect(within(nav).getByText('Conditions')).toBeDefined()
     expect(within(nav).getByText('Publishing')).toBeDefined()
     expect(within(nav).getByText('Shortcuts')).toBeDefined()
@@ -253,7 +253,7 @@ describe('SettingsModal — section navigation', () => {
     openModal('pages')
     render(<SettingsModal />)
     const nav = screen.getByRole('navigation', { name: /settings sections/i })
-    const breakpointsBtn = within(nav).getByText('Breakpoints').closest('button')
+    const breakpointsBtn = within(nav).getByText('Viewports').closest('button')
     // Should not have aria-current when not active
     expect(breakpointsBtn!.hasAttribute('aria-current')).toBe(false)
   })
@@ -262,7 +262,7 @@ describe('SettingsModal — section navigation', () => {
     openModal('pages')
     render(<SettingsModal />)
     const nav = screen.getByRole('navigation', { name: /settings sections/i })
-    const breakpointsBtn = within(nav).getByText('Breakpoints').closest('button')!
+    const breakpointsBtn = within(nav).getByText('Viewports').closest('button')!
     fireEvent.click(breakpointsBtn)
     expect(breakpointsBtn.getAttribute('aria-current')).toBe('page')
 
@@ -278,13 +278,13 @@ describe('SettingsModal — section navigation', () => {
     let region = document.querySelector('[role="region"]')
     expect(region!.getAttribute('aria-label')).toBe('Pages')
 
-    // Click Breakpoints
+    // Click Viewports
     const nav = screen.getByRole('navigation', { name: /settings sections/i })
-    const breakpointsBtn = within(nav).getByText('Breakpoints').closest('button')!
+    const breakpointsBtn = within(nav).getByText('Viewports').closest('button')!
     fireEvent.click(breakpointsBtn)
 
     region = document.querySelector('[role="region"]')
-    expect(region!.getAttribute('aria-label')).toBe('Breakpoints')
+    expect(region!.getAttribute('aria-label')).toBe('Viewports')
   })
 })
 

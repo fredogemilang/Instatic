@@ -1,5 +1,5 @@
 import type { StyleRule, Condition, ConditionDef } from '@core/page-tree'
-import { styleRuleSelector } from '@core/page-tree'
+import { breakpointMediaQuery, styleRuleSelector } from '@core/page-tree'
 import { sanitiseCssValue } from './utils'
 
 /**
@@ -196,22 +196,60 @@ export function bagToInlineStyle(bag: Record<string, unknown>): string {
  * Generate the full CSS string for all classes in the registry.
  *
  * Each class has a base bag (`styles`) plus a unified `contextStyles` map keyed
- * by *context id*. A context id is either a width-breakpoint id (from
+ * by *context id*. A context id is either a viewport-context id (from
  * `breakpoints`) or a custom-condition id (from `conditions`).
  *
  * Cascade order (precedence Q-A): base → custom conditions (registry order) →
- * breakpoint @media (DESCENDING width: widest first, narrowest last). All
- * `@media (max-width:N)` blocks share specificity, so the narrowest ends up
- * last in source and wins as the viewport shrinks. Sorting by width — not the
- * user's editing order — keeps that deterministic.
+ * viewport @media contexts. Pure max-width contexts emit widest first so the
+ * narrowest matching query wins. Pure min-width contexts emit narrowest first
+ * so the widest matching query wins. Mixed/custom viewport queries keep the
+ * user's registry order.
  */
+export interface ViewportContext {
+  id: string
+  width: number
+  mediaQuery?: string
+}
+
+type ViewportQueryKind = 'max' | 'min' | 'other'
+
+interface ViewportQuerySort {
+  kind: ViewportQueryKind
+  width: number
+}
+
+const PURE_MAX_WIDTH_QUERY_RE = /^\(?\s*max-width\s*:\s*(\d+(?:\.\d+)?)\s*px\s*\)?$/i
+const PURE_MIN_WIDTH_QUERY_RE = /^\(?\s*min-width\s*:\s*(\d+(?:\.\d+)?)\s*px\s*\)?$/i
+
+function viewportQuerySort(breakpoint: ViewportContext): ViewportQuerySort {
+  const query = breakpointMediaQuery(breakpoint)
+  const max = query.match(PURE_MAX_WIDTH_QUERY_RE)
+  if (max) return { kind: 'max', width: Number(max[1]) }
+  const min = query.match(PURE_MIN_WIDTH_QUERY_RE)
+  if (min) return { kind: 'min', width: Number(min[1]) }
+  return { kind: 'other', width: breakpoint.width }
+}
+
+export function compareViewportContextCascade(
+  a: { breakpoint: ViewportContext; index: number },
+  b: { breakpoint: ViewportContext; index: number },
+): number {
+  const aQuery = viewportQuerySort(a.breakpoint)
+  const bQuery = viewportQuerySort(b.breakpoint)
+  if (aQuery.kind === 'max' && bQuery.kind === 'max') return bQuery.width - aQuery.width
+  if (aQuery.kind === 'min' && bQuery.kind === 'min') return aQuery.width - bQuery.width
+  return a.index - b.index
+}
+
 export function generateClassCSS(
   classes: Record<string, StyleRule>,
-  breakpoints: Array<{ id: string; width: number }>,
+  breakpoints: ViewportContext[],
   conditions: ReadonlyArray<ConditionDef> = [],
 ): string {
   const blocks: string[] = []
-  const widthById = new Map<string, number>(breakpoints.map((bp) => [bp.id, bp.width]))
+  const breakpointById = new Map<string, { breakpoint: ViewportContext; index: number }>(
+    breakpoints.map((bp, index) => [bp.id, { breakpoint: bp, index }]),
+  )
   // Condition id → (condition, registry index) so we can emit custom-condition
   // overrides in stable registry order.
   const conditionById = new Map<string, { condition: Condition; index: number }>(
@@ -235,22 +273,22 @@ export function generateClassCSS(
       blocks.push(`${selector} {\n${baseDecls}\n}`)
     }
 
-    // Partition contextStyles into custom-condition entries and width-breakpoint
+    // Partition contextStyles into custom-condition entries and viewport-context
     // entries. Keys matching neither registry are skipped (orphaned overrides).
     const conditionEntries: Array<{ bag: Record<string, unknown>; condition: Condition; index: number }> = []
-    const bpEntries: Array<{ bag: Record<string, unknown>; width: number }> = []
+    const bpEntries: Array<{ bag: Record<string, unknown>; breakpoint: ViewportContext; index: number }> = []
     for (const [contextId, bag] of Object.entries(cls.contextStyles ?? {})) {
       const cond = conditionById.get(contextId)
       if (cond) {
         conditionEntries.push({ bag, condition: cond.condition, index: cond.index })
         continue
       }
-      const width = widthById.get(contextId)
-      if (width !== undefined) bpEntries.push({ bag, width })
+      const breakpointEntry = breakpointById.get(contextId)
+      if (breakpointEntry) bpEntries.push({ bag, ...breakpointEntry })
     }
 
-    // Custom conditions emit AFTER base but BEFORE width breakpoints, so width
-    // breakpoints keep winning at their widths. Registry order is preserved.
+    // Custom conditions emit AFTER base but BEFORE viewport contexts, so
+    // viewport-specific overrides keep winning when both contexts match.
     conditionEntries.sort((a, b) => a.index - b.index)
     for (const { bag, condition } of conditionEntries) {
       const decls = bagToCSS(bag)
@@ -260,12 +298,13 @@ export function generateClassCSS(
       blocks.push(`${prelude} {\n  ${selector} {\n${decls}\n  }\n}`)
     }
 
-    // Widest first → narrowest last.
-    bpEntries.sort((a, b) => b.width - a.width)
-    for (const { bag, width } of bpEntries) {
+    bpEntries.sort(compareViewportContextCascade)
+    for (const { bag, breakpoint } of bpEntries) {
       const decls = bagToCSS(bag)
       if (!decls) continue
-      blocks.push(`@media (max-width: ${width}px) {\n  ${selector} {\n${decls}\n  }\n}`)
+      const prelude = conditionPrelude({ kind: 'media', query: breakpointMediaQuery(breakpoint) })
+      if (!prelude) continue
+      blocks.push(`${prelude} {\n  ${selector} {\n${decls}\n  }\n}`)
     }
   }
 
@@ -288,8 +327,8 @@ function isSafeConditionText(text: string): boolean {
 /**
  * Build the `@<kind> <query>` prelude for a custom condition. Returns null when
  * the query / container name fails the structural safety check (the override is
- * then dropped, not emitted). Width breakpoints are NOT handled here — they
- * emit `@media (max-width:N)` directly in `generateClassCSS`.
+ * then dropped, not emitted). Viewport contexts also call this helper after
+ * resolving their configured media query in `generateClassCSS`.
  */
 export function conditionPrelude(condition: Condition): string | null {
   switch (condition.kind) {

@@ -9,11 +9,11 @@ The static-site pipeline has two parts: a pure analysis function (`buildImportPl
 ## TL;DR
 
 - Entry: global admin-shell modal, opened from Spotlight or workspace actions. Drop files, a folder, a `.zip`, or a CMS-exported `.json` bundle. Static files use the four-stage modal (Drop → Review → Conflicts → Import, with completion shown inside the Import stage). CMS bundles use Drop → Review bundle → Import.
-- `buildImportPlan({ fileMap, currentSite })` — pure, synchronous — produces an `ImportPlan` with pages, style rules, media, color tokens, fonts, and scripts.
+- `buildImportPlan({ fileMap, currentSite })` — pure, synchronous — produces an `ImportPlan` with pages, style rules, media, color tokens, fonts, font tokens, and scripts.
 - `commitImportPlan(plan, adapter)` — uploads assets, then wraps all store writes in a single `adapter.commit` call → one Cmd+Z reverts the whole import.
 - Static imports load the current CMS draft into the editor store on demand when launched outside `/admin/site`; if no draft exists, the modal creates an empty site before analysis.
 - Conflict resolution: rename with a numeric suffix (default), overwrite, skip, or custom-rename — per page slug and per class name, with category-level bulk actions for rename / skip / overwrite.
-- What imports: pages, `kind:'class'` and `kind:'ambient'` style rules, images/fonts/binaries, root CSS color tokens, `@font-face` families, JS files as site-wide scripts.
+- What imports: pages, `kind:'class'` and `kind:'ambient'` style rules, images/fonts/binaries, root CSS color tokens, root CSS font tokens, `@font-face` families, JS files as site-wide scripts.
 - CMS bundle import preserves exported tables, rows, optional site shell, and embedded media using the same merge strategies as site transfer (`replace`, `merge-add`, `merge-overwrite`).
 - HTML forms import through the shared HTML importer as first-class form primitives (`base.form`, controls, labels, submit buttons), not as custom containers.
 - What cannot be modeled: `@keyframes`, `@supports`, `@container`, `@layer`, `@import` — surfaced as warnings, never silently dropped.
@@ -127,6 +127,7 @@ interface ImportPlan {
   styleRules:      NewStyleRule[]
   styleRuleSources: string[]   // index-aligned with styleRules: source CSS path per rule
   fonts:           ImportFontFamily[]
+  fontTokens:      ImportFontToken[]
   conditions:      ConditionDef[]
   assets:          { sourcePath: string; mimeType: string; bytes: Uint8Array }[]
   colors:          ImportColorToken[]
@@ -151,6 +152,7 @@ All URL-shaped values inside `pages[].nodeFragment` and style rule `styles`/`con
 | **Media** | Images, fonts, binaries — and any unreferenced files in the bundle | `buildAssetPlan` collects them; unreferenced files are swept up even if nothing in the HTML/CSS references them |
 | **Color tokens** | CSS custom properties on `:root` / `html` / `body` that look like colours | `extractRootColorTokens` pulls them into `ImportColorToken[]`; they become framework palette tokens |
 | **Fonts** | Self-hosted `@font-face` families with at least one bundled file | `buildFontFamilies` in `assetPlan.ts` picks the best format (woff2 → woff → ttf → otf); committed via `tx.addFonts` |
+| **Font tokens** | Root `--font-*` variables with font-family stacks | `extractRootFontTokens` pulls them into `ImportFontToken[]`; committed via `tx.addFontTokens` after fonts so matching imported families can be assigned |
 | **Scripts** | Every `.js` / `.mjs` / `.cjs` file | Decoded as UTF-8; committed via `tx.addScripts` as all-pages body-end scripts |
 
 ---
@@ -163,7 +165,7 @@ All URL-shaped values inside `pages[].nodeFragment` and style rule `styles`/`con
 |---|---|
 | `.foo { … }` (single class) | `StyleRule{ kind:'class', name:'foo', selector:'.foo' }` |
 | `h1`, `body`, `a:hover`, `.hero .title` | `StyleRule{ kind:'ambient', selector: verbatim }` |
-| `@media (max-width: Npx) { … }` | Merged into matched breakpoint's `contextStyles`; unmatched folds into base styles with a warning |
+| `@media ... { … }` | Merged into a matching viewport context's `contextStyles` when it matches a configured media query (or an older/default max-width threshold); otherwise preserved as a reusable media condition |
 | `@keyframes`, `@supports`, `@container`, `@layer`, `@import` | Dropped; source text added to `droppedAtRules`; a `dropped-at-rule` warning emitted |
 | `@font-face` | Captured as `ParsedFontFace`; resolved into `ImportFontFamily` by `buildAssetPlan` |
 
@@ -227,7 +229,7 @@ The modal is mounted once at the authenticated admin shell (`AuthenticatedAdmin.
 - **Style rules** — grouped by source stylesheet with a search bar and per-rule checkboxes. Groups up to 60 rules expanded; remaining are collapsed into "+N more".
 - **Media** — tiles grouped by MIME class (Images / SVG / GIF / Video / Other) with a per-group Switch.
 - **Color tokens** — read-only swatches; all colors always import.
-- **Fonts** — Switch per font family.
+- **Fonts** — Switch per font family; extracted root font variables are shown in the same category and follow the selected family when they reference one.
 - **Scripts** — Switch per JS file.
 - **Can't import** — list of `unusedCss` + `droppedAtRules` with reasons.
 
@@ -244,7 +246,7 @@ On success the same step switches to its **complete** state — a success mark, 
 | Kind | When emitted |
 |---|---|
 | `dropped-at-rule` | A `@keyframes`, `@supports`, `@container`, `@layer`, or `@import` was present but cannot be modelled |
-| `unmatched-media-query` | An `@media` max-width/min-width did not match any defined breakpoint within ±10 px; inner rules folded into base styles |
+| `unmatched-media-query` | Legacy warning kind retained for old import reports; current imports preserve unmatched `@media` blocks as reusable conditions |
 | `invalid-rule` | A CSS rule caused `replaceSync` to throw (sheet-level parse error) |
 | `blocked-property` | A CSS property name is on the security denylist (`behavior`, `-moz-binding`, …) — declaration dropped |
 | `duplicate-class` | Two `.foo {}` rules in the same file; later declarations win |

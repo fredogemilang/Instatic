@@ -132,6 +132,7 @@ describe('buildPageContext — dynamic module registry', () => {
       id: 'mobile',
       label: 'Mobile',
       width: 375,
+      mediaQuery: '(max-width: 375px)',
       icon: 'smartphone',
     })
   })

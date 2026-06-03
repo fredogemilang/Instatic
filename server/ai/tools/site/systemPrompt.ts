@@ -47,7 +47,9 @@ function buildDynamicSuffix(snap: SiteSnapshot): string {
   const selected = snap.selectedNodeId ?? 'none'
   const active = snap.activeBreakpointId || '(none)'
   const breakpoints = snap.breakpoints.length > 0
-    ? snap.breakpoints.map((bp) => `${bp.id}@${bp.width}px`).join(', ')
+    ? snap.breakpoints
+        .map((bp) => `${bp.id}@${bp.width}px${bp.mediaQuery ? `:${bp.mediaQuery}` : ''}`)
+        .join(', ')
     : '(none)'
   // Inline every page id + slug so the agent has a concrete handle for
   // duplicatePage / renamePage / deletePage without an extra list_pages

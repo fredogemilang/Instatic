@@ -31,9 +31,9 @@ export type NewStyleRule = Omit<StyleRule, 'id' | 'createdAt' | 'updatedAt'>
  * Phase 1 (CSS parser) kinds:
  * - `dropped-at-rule`: an @-rule that the engine can't model was silently
  *   dropped (@keyframes, @font-face, @supports, @container, @layer, etc.).
- * - `unmatched-media-query`: an @media query whose width couldn't be matched
- *   to any defined breakpoint within ±mediaTolerance. Inner declarations are
- *   folded into the base styles so nothing is silently lost.
+ * - `unmatched-media-query`: an @media query that could not be matched to any
+ *   defined viewport context. Inner declarations are still imported under a
+ *   reusable media condition so nothing is silently lost.
  * - `invalid-rule`: a rule that the CSS engine rejected (typically a sheet-
  *   level parse error that causes `replaceSync` to throw).
  * - `unknown-property`: legacy — retained for back-compat with any persisted
@@ -106,19 +106,22 @@ export interface ImportWarning {
 }
 
 // ---------------------------------------------------------------------------
-// BreakpointHint — how @media queries map to named breakpoints
+// BreakpointHint — how @media queries map to named viewport contexts
 // ---------------------------------------------------------------------------
 
 /**
- * A hint that maps a named breakpoint to its pixel width threshold.
- * Passed to `cssToStyleRules` so @media queries can be matched to existing
- * site breakpoints by width (±mediaTolerance).
+ * A hint that maps a named viewport context to its CSS media query and pixel
+ * frame width. Passed to `cssToStyleRules` so @media queries can be matched to
+ * existing site viewport contexts by configured query first, then by
+ * max-width threshold (±mediaTolerance) for older/default contexts.
  */
 export interface BreakpointHint {
-  /** Breakpoint identifier, matching a context key used in `StyleRule.contextStyles`. */
+  /** Viewport context identifier, matching a context key used in `StyleRule.contextStyles`. */
   id: string
-  /** The width threshold in CSS pixels (e.g. 768 for a tablet breakpoint). */
+  /** The frame width in CSS pixels (e.g. 768 for a tablet viewport). */
   width: number
+  /** The configured CSS media query for this viewport context. */
+  mediaQuery?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +143,7 @@ export interface AssetRef {
   /** Zero-based index into `CssToStyleRulesResult.rules`. */
   ruleIndex: number
   /**
-   * The editing-context id this declaration lives in (a width breakpoint id or
+   * The editing-context id this declaration lives in (a viewport context id or
    * a custom-condition id — both keys into `StyleRule.contextStyles`), or
    * `undefined` for the rule's base `styles` object. When set, the rewriters
    * target that context's override bag rather than base.
@@ -203,6 +206,22 @@ export interface ImportColorToken {
   slug: string
   /** The authored colour value, verbatim and trimmed (e.g. `#0a0a0a`). */
   value: string
+}
+
+/**
+ * A root-scope `--font-*` custom property pulled from imported CSS. Committed
+ * into `site.settings.fonts.tokens` so `font-family: var(--font-primary)` keeps
+ * resolving through the builder's editable font-token model.
+ */
+export interface ImportFontToken {
+  /** User-facing token name derived from the variable, e.g. `font-display` → `Display`. */
+  name: string
+  /** CSS-variable name without leading dashes, normalized to `font-*`. */
+  variable: string
+  /** First concrete family in the source stack, if present. */
+  family?: string
+  /** Remaining fallback stack, or the whole stack for system/generic tokens. */
+  fallback: string
 }
 
 /**
@@ -364,6 +383,11 @@ export interface ImportPlan {
    */
   colors: ImportColorToken[]
   /**
+   * Root `--font-*` variables pulled from imported CSS, ready to commit into
+   * `site.settings.fonts.tokens`.
+   */
+  fontTokens: ImportFontToken[]
+  /**
    * JavaScript files from the bundle, committed as all-pages site scripts.
    * Replaces the old `droppedJs` — JS is now imported, not dropped.
    */
@@ -393,6 +417,8 @@ export interface ImportResult {
   assets: { sourcePath: string; mediaUrl: string }[]
   /** Colour tokens committed into the framework colours system. */
   colors: { slug: string; value: string }[]
+  /** Font tokens committed into `site.settings.fonts.tokens`. */
+  fontTokens: { id: string; name: string; variable: string }[]
   /** Site scripts committed from imported JS files. */
   scripts: { id: string; path: string }[]
   /** Resolved conflicts (mirrors ImportPlan.conflicts with final actions). */

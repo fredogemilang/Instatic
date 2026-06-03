@@ -95,7 +95,7 @@ export function ConditionBuilder({
   const nameId = useId()
 
   const presets = kind === 'media' ? MEDIA_PRESETS : kind === 'supports' ? SUPPORTS_PRESETS : []
-  // Viewport width is the breakpoint model's job, not a condition — so the
+  // Viewport width is the viewport-context model's job, not a condition — so the
   // range builder only applies to @container (which queries its own size).
   const showRange = kind === 'container'
 
@@ -189,7 +189,7 @@ export function ConditionBuilder({
           id={queryId}
           fieldSize="sm"
           value={query}
-          placeholder={kind === 'media' ? '(max-width: 860px)' : kind === 'container' ? 'min-width: 400px' : 'display: grid'}
+          placeholder={kind === 'media' ? '(orientation: landscape)' : kind === 'container' ? 'min-width: 400px' : 'display: grid'}
           autoComplete="off"
           spellCheck={false}
           onChange={(e) => onQueryChange(e.target.value)}

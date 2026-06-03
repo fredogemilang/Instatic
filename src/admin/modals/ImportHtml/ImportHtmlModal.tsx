@@ -241,7 +241,11 @@ export function ImportHtmlModal() {
     try {
       // Parse any <style> CSS into registry rules using the site's breakpoints
       // so @media folds into the matching breakpoint's contextStyles.
-      const bpHints = (breakpoints ?? []).map((b) => ({ id: b.id, width: b.width }))
+      const bpHints = (breakpoints ?? []).map((b) => ({
+        id: b.id,
+        width: b.width,
+        mediaQuery: b.mediaQuery,
+      }))
       const { rules, conditions } = result.styleCss.trim()
         ? cssToStyleRules(result.styleCss, { breakpoints: bpHints })
         : { rules: [], conditions: [] }

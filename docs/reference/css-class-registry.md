@@ -49,7 +49,7 @@ interface StyleRule {
 
 `contextStyles` is the **unified editing-context map** (see [docs/plans/2026-05-30-unified-condition-axis.md](../plans/2026-05-30-unified-condition-axis.md)). Each key is a *context id* that is **either**:
 
-- a **width breakpoint id** (from `site.breakpoints`) → the publisher emits `@media (max-width: Npx)`; **or**
+- a **viewport context id** (from `site.breakpoints`) → the publisher emits the context's configured `@media` query; **or**
 - a **custom condition id** (from `site.conditions`, the reusable `@media`/`@container`/`@supports` registry) → the publisher emits that condition's `@`-prelude.
 
 `parseStyleRule` reads only the current `contextStyles` shape. Obsolete per-rule context fields are ignored rather than migrated.
@@ -118,14 +118,14 @@ For each rule in registry (sorted by order):
   for each (contextId, bag) in rule.contextStyles:
     if contextId is a custom condition (site.conditions):  // emitted first
       prelude = '@media <query>' | '@container [name] (<query>)' | '@supports (<query>)'
-    else if contextId is a width breakpoint (site.breakpoints):  // emitted after, width-sorted
-      prelude = '@media (max-width: ${width}px)'
+    else if contextId is a viewport context (site.breakpoints):  // emitted after, media-query sorted
+      prelude = '@media ${breakpoint.mediaQuery ?? `(max-width: ${width}px)`}'
     else:  // orphaned key — skipped
       continue
     emit: '${prelude} { ${selector} { ${bagToCSS(bag)} } }'
 ```
 
-Cascade order within a rule: base → custom conditions (registry order) → width breakpoints (widest first, narrowest last).
+Cascade order within a rule: base → custom conditions (registry order) → viewport contexts. Pure max-width contexts emit widest first so narrower queries win; pure min-width contexts emit narrowest first so wider queries win; mixed/custom viewport queries keep registry order.
 
 The compiled string is part of the per-page CSS bundle (see [docs/features/publisher.md](../features/publisher.md) → CSS pipeline).
 
@@ -248,7 +248,7 @@ useEditorStore.getState().setNodeClassIds(nodeId, [rule.id])
 
 The class names appear on the rendered element via `classNamesForClassIds`.
 
-### Per-context styles (breakpoints + custom conditions)
+### Per-context styles (viewport contexts + custom conditions)
 
 ```ts
 {
@@ -259,14 +259,14 @@ The class names appear on the rendered element via `classNamesForClassIds`.
   order: 0,
   styles:        { padding: 16, 'border-radius': 8 },
   contextStyles: {
-    mobile:  { padding: 8 },                       // width breakpoint id
-    desktop: { padding: 24 },                      // width breakpoint id
+    mobile:  { padding: 8 },                       // viewport context id
+    desktop: { padding: 24 },                      // viewport context id
     'media:(orientation: landscape)': { padding: 12 },  // custom condition id (site.conditions)
   },
 }
 ```
 
-The publisher wraps each context block in the matching `@media (max-width: …)` (width breakpoint) or the custom condition's `@media`/`@container`/`@supports` prelude.
+The publisher wraps each viewport context block in that context's configured media query. Custom conditions use their stored `@media`/`@container`/`@supports` prelude.
 
 ### Scoped rule for one node
 

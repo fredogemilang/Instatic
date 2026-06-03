@@ -149,7 +149,7 @@ function rewriteRule(rule: NewStyleRule, rewriteMap: Record<string, string>): Ne
     rewriteMap,
   )
 
-  // Every per-context override (width breakpoints AND custom conditions) lives
+  // Every per-context override (viewport contexts AND custom conditions) lives
   // in one map now and can carry url() backgrounds — rewrite each bag to the
   // uploaded media URLs just like base styles.
   const newContextStyles: Record<string, Record<string, unknown>> = {}

@@ -1,5 +1,5 @@
 /**
- * BreakpointsSection — add / edit / remove canvas breakpoints.
+ * BreakpointsSection — add / edit / remove viewport contexts.
  *
  * Changes reflect on the canvas immediately because CanvasRoot reads
  * `site.breakpoints` from the store.
@@ -18,6 +18,7 @@ import { Select } from '@ui/components/Select'
 import { Switch } from '@ui/components/Switch'
 import { SkeletonBlock } from '@ui/components/Skeleton'
 import type { Breakpoint } from '@core/page-tree'
+import { breakpointMediaQuery, defaultBreakpointMediaQuery } from '@core/page-tree'
 import s from '../SettingsModal.module.css'
 
 const ICON_OPTIONS = [
@@ -39,6 +40,7 @@ export function BreakpointsSection() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editLabel, setEditLabel] = useState('')
   const [editWidth, setEditWidth] = useState(0)
+  const [editMediaQuery, setEditMediaQuery] = useState('')
   const [editIcon, setEditIcon] = useState('monitor')
   const [editPreviewFrame, setEditPreviewFrame] = useState(true)
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
@@ -53,6 +55,7 @@ export function BreakpointsSection() {
 
   const [newLabel, setNewLabel] = useState('')
   const [newWidth, setNewWidth] = useState(375)
+  const [newMediaQuery, setNewMediaQuery] = useState(defaultBreakpointMediaQuery(375))
   const [newIcon, setNewIcon] = useState('smartphone')
   const [newPreviewFrame, setNewPreviewFrame] = useState(true)
 
@@ -60,6 +63,7 @@ export function BreakpointsSection() {
     setEditingId(bp.id)
     setEditLabel(bp.label)
     setEditWidth(bp.width)
+    setEditMediaQuery(breakpointMediaQuery(bp))
     setEditIcon(bp.icon)
     setEditPreviewFrame(bp.previewFrame !== false)
   }
@@ -67,7 +71,13 @@ export function BreakpointsSection() {
   const handleSaveEdit = () => {
     if (!editingId) return
     if (editLabel.trim() && editWidth > 0) {
-      updateBreakpoint(editingId, { label: editLabel.trim(), width: editWidth, icon: editIcon, previewFrame: editPreviewFrame })
+      updateBreakpoint(editingId, {
+        label: editLabel.trim(),
+        width: editWidth,
+        mediaQuery: editMediaQuery.trim() || defaultBreakpointMediaQuery(editWidth),
+        icon: editIcon,
+        previewFrame: editPreviewFrame,
+      })
     }
     setEditingId(null)
   }
@@ -75,11 +85,34 @@ export function BreakpointsSection() {
   const handleAdd = () => {
     const label = newLabel.trim()
     if (!label || newWidth <= 0) return
-    addBreakpoint({ label, width: newWidth, icon: newIcon, previewFrame: newPreviewFrame })
+    addBreakpoint({
+      label,
+      width: newWidth,
+      mediaQuery: newMediaQuery.trim() || defaultBreakpointMediaQuery(newWidth),
+      icon: newIcon,
+      previewFrame: newPreviewFrame,
+    })
     setNewLabel('')
     setNewWidth(375)
+    setNewMediaQuery(defaultBreakpointMediaQuery(375))
     setNewIcon('smartphone')
     setNewPreviewFrame(true)
+  }
+
+  const handleEditWidthChange = (nextWidth: number) => {
+    const previousDefault = defaultBreakpointMediaQuery(editWidth)
+    setEditWidth(nextWidth)
+    if (editMediaQuery === previousDefault) {
+      setEditMediaQuery(defaultBreakpointMediaQuery(nextWidth))
+    }
+  }
+
+  const handleNewWidthChange = (nextWidth: number) => {
+    const previousDefault = defaultBreakpointMediaQuery(newWidth)
+    setNewWidth(nextWidth)
+    if (newMediaQuery === previousDefault) {
+      setNewMediaQuery(defaultBreakpointMediaQuery(nextWidth))
+    }
   }
 
   const handleRemove = (id: string) => {
@@ -93,10 +126,10 @@ export function BreakpointsSection() {
 
   return (
     <div>
-      <h3 className={s.sectionHeading}>Breakpoints</h3>
+      <h3 className={s.sectionHeading}>Viewport contexts</h3>
       <p className={s.sectionDescription}>
-        Define viewport widths for responsive design. The active breakpoint shows a coloured
-        frame on the canvas and can have per-breakpoint prop overrides.
+        Define responsive viewport contexts. Frame width controls the canvas preview;
+        the CSS media query controls when class overrides publish.
       </p>
 
       <ul role="list" className={s.list}>
@@ -111,18 +144,25 @@ export function BreakpointsSection() {
                     onChange={(e) => setEditLabel(e.target.value)}
                     placeholder="Label (e.g. Mobile)"
                     autoFocus
-                    aria-label="Breakpoint label"
+                    aria-label="Viewport label"
                     className={s.fieldFlex}
                   />
                   <Input
                     type="number"
                     value={editWidth}
-                    onChange={(e) => setEditWidth(Number(e.target.value))}
+                    onChange={(e) => handleEditWidthChange(Number(e.target.value))}
                     min={320}
                     max={3840}
-                    aria-label="Width in pixels"
+                    aria-label="Frame width in pixels"
                   />
                 </div>
+                <Input
+                  type="text"
+                  value={editMediaQuery}
+                  onChange={(e) => setEditMediaQuery(e.target.value)}
+                  placeholder="(min-width: 768px)"
+                  aria-label="CSS media query"
+                />
                 <Select
                   value={editIcon}
                   onChange={(e) => setEditIcon(e.target.value)}
@@ -157,7 +197,9 @@ export function BreakpointsSection() {
                         <span className={s.activeBadge}>active</span>
                       )}
                     </div>
-                    <div className={s.listItemSubtitle}>{bp.width}px</div>
+                    <div className={s.listItemSubtitle}>
+                      {bp.width}px frame · {breakpointMediaQuery(bp)}
+                    </div>
                   </div>
                 </div>
 
@@ -170,8 +212,8 @@ export function BreakpointsSection() {
                     size="md"
                     onClick={bp.id === activeBreakpointId ? undefined : () => setActiveBreakpoint(bp.id)}
                     aria-disabled={bp.id === activeBreakpointId ? 'true' : undefined}
-                    aria-label={`Set ${bp.label} as active breakpoint`}
-                    tooltip={bp.id === activeBreakpointId ? 'Already the active breakpoint' : undefined}
+                    aria-label={`Set ${bp.label} as active viewport`}
+                    tooltip={bp.id === activeBreakpointId ? 'Already the active viewport' : undefined}
                   >
                     Activate
                   </Button>
@@ -179,7 +221,7 @@ export function BreakpointsSection() {
                     variant="secondary"
                     size="md"
                     onClick={() => handleStartEdit(bp)}
-                    aria-label={`Edit ${bp.label} breakpoint`}
+                    aria-label={`Edit ${bp.label} viewport`}
                   >
                     Edit
                   </Button>
@@ -190,7 +232,7 @@ export function BreakpointsSection() {
                         variant="destructive"
                         size="sm"
                         onClick={() => handleRemove(bp.id)}
-                        aria-label={`Confirm remove ${bp.label} breakpoint`}
+                        aria-label={`Confirm remove ${bp.label} viewport`}
                       >
                         Delete
                       </Button>
@@ -209,8 +251,8 @@ export function BreakpointsSection() {
                       size="md"
                       onClick={site.breakpoints.length <= 1 ? undefined : () => setConfirmRemoveId(bp.id)}
                       aria-disabled={site.breakpoints.length <= 1 ? 'true' : undefined}
-                      aria-label={`Remove ${bp.label} breakpoint`}
-                      tooltip={site.breakpoints.length <= 1 ? 'Cannot remove the last breakpoint' : undefined}
+                      aria-label={`Remove ${bp.label} viewport`}
+                      tooltip={site.breakpoints.length <= 1 ? 'Cannot remove the last viewport' : undefined}
                     >
                       Remove
                     </Button>
@@ -222,32 +264,39 @@ export function BreakpointsSection() {
         ))}
       </ul>
 
-      {/* Add new breakpoint */}
+      {/* Add new viewport context */}
       <div className={s.bpAddForm}>
-        <h4 className={s.subHeading}>Add Breakpoint</h4>
+        <h4 className={s.subHeading}>Add Viewport</h4>
         <div className={s.bpEditRow}>
           <Input
             type="text"
             value={newLabel}
             onChange={(e) => setNewLabel(e.target.value)}
             placeholder="Label"
-            aria-label="New breakpoint label"
+            aria-label="New viewport label"
             className={s.fieldFlex}
           />
           <Input
             type="number"
             value={newWidth}
-            onChange={(e) => setNewWidth(Number(e.target.value))}
+            onChange={(e) => handleNewWidthChange(Number(e.target.value))}
             min={320}
             max={3840}
-            aria-label="Width in pixels"
+            aria-label="Frame width in pixels"
           />
         </div>
+        <Input
+          type="text"
+          value={newMediaQuery}
+          onChange={(e) => setNewMediaQuery(e.target.value)}
+          placeholder="(min-width: 768px)"
+          aria-label="New CSS media query"
+        />
         <div className={s.row}>
           <Select
             value={newIcon}
             onChange={(e) => setNewIcon(e.target.value)}
-            aria-label="Breakpoint icon"
+            aria-label="Viewport icon"
             className={s.fieldFlex}
             options={ICON_OPTIONS}
           />
@@ -267,7 +316,7 @@ export function BreakpointsSection() {
             id={newFrameId}
             checked={newPreviewFrame}
             onCheckedChange={setNewPreviewFrame}
-            aria-label="Show preview frame on canvas for new breakpoint"
+            aria-label="Show preview frame on canvas for new viewport"
           />
         </div>
       </div>

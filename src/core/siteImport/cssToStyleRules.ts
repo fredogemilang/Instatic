@@ -7,8 +7,8 @@
  *
  * ## @media policy
  *
- * Matched @media (within ±mediaTolerance of a known breakpoint width):
- *   inner declarations are folded into `contextStyles[matchedBreakpointId]`.
+ * Matched @media (configured viewport query, or within ±mediaTolerance of a known max-width):
+ *   inner declarations are folded into `contextStyles[matchedViewportId]`.
  *
  * Unmatched @media / every @container / every @supports:
  *   inner declarations are stored as a faithful per-context override keyed by a
@@ -41,6 +41,7 @@ import { isEmittableProperty } from '@core/publisher'
 import type { StyleRuleKind, Condition, ConditionDef } from '@core/page-tree'
 import { conditionId, makeConditionDef } from '@core/page-tree'
 import { formatVariant } from '@core/fonts/variants'
+import { matchMediaQueryToViewport } from './mediaQueryMatch'
 import type {
   ImportWarning,
   BreakpointHint,
@@ -55,14 +56,14 @@ import type {
 
 export interface CssToStyleRulesOptions {
   /**
-   * Site breakpoints used to match `@media (max-width: Npx)` queries.
+   * Site viewport contexts used to match `@media` queries.
    * Defaults to `[]` (all @media queries are treated as unmatched).
    */
   breakpoints?: BreakpointHint[]
   /**
-   * Tolerance in CSS pixels for matching a media query width to a breakpoint.
-   * A media query `(max-width: 768px)` matches a breakpoint of width 775px
-   * if `mediaTolerance >= 7`. Defaults to 10.
+   * Tolerance in CSS pixels for matching an older/default max-width media query
+   * to a viewport context by frame width. A query `(max-width: 768px)` matches a
+   * context with width 775px if `mediaTolerance >= 7`. Defaults to 10.
    */
   mediaTolerance?: number
 }
@@ -160,33 +161,6 @@ function getSheetConstructor(): typeof CSSStyleSheet | null {
       ? (window as unknown as Record<string, unknown>)
       : null
   if (w?.CSSStyleSheet) return w.CSSStyleSheet as typeof CSSStyleSheet
-  return null
-}
-
-/**
- * Extract the first `max-width: Npx` value from a CSS condition text.
- * Returns null if the condition doesn't match the expected form.
- */
-function extractMaxWidthPx(conditionText: string): number | null {
-  const m = conditionText.match(/\(\s*max-width\s*:\s*(\d+(?:\.\d+)?)\s*px\s*\)/i)
-  if (!m) return null
-  return parseFloat(m[1])
-}
-
-/**
- * Match a media query condition text to a breakpoint within tolerance.
- * Currently handles `(max-width: Npx)` only.
- */
-function matchBreakpoint(
-  conditionText: string,
-  breakpoints: BreakpointHint[],
-  tolerance: number,
-): BreakpointHint | null {
-  const width = extractMaxWidthPx(conditionText)
-  if (width === null) return null
-  for (const bp of breakpoints) {
-    if (Math.abs(bp.width - width) <= tolerance) return bp
-  }
   return null
 }
 
@@ -728,7 +702,7 @@ function processMediaRule(
     (mediaRule as CSSMediaRule & { conditionText?: string }).conditionText
     ?? mediaRule.media.mediaText
 
-  const matched = matchBreakpoint(conditionText, breakpoints, mediaTolerance)
+  const matched = matchMediaQueryToViewport(conditionText, breakpoints, mediaTolerance)
 
   if (matched !== null) {
     // Matched breakpoint: merge inner rules into contextStyles[matched.id].

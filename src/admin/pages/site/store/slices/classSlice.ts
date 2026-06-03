@@ -118,10 +118,10 @@ export interface ClassSlice {
   /** Shallow-merge a style patch into a class's base styles. */
   updateClassStyles(classId: string, patch: Partial<CSSPropertyBag>): void
 
-  // ── Per-context overrides (unified width-breakpoint + custom-condition axis) ─
+  // ── Per-context overrides (unified viewport-context + custom-condition axis) ─
   /**
    * Shallow-merge a style patch into a class's override bag for one editing
-   * context. `contextId` is either a width-breakpoint id (`site.breakpoints`)
+   * context. `contextId` is either a viewport-context id (`site.breakpoints`)
    * or a custom-condition id (`site.conditions`). Keys set to undefined/null
    * are removed. Replaces the old `setClassBreakpointStyles` +
    * `updateConditionalLayerStyles` (they were the same operation twice).
@@ -668,7 +668,7 @@ export const createClassSlice: EditorStoreSliceCreator<ClassSlice> = (set, get) 
 
     const propKey = property as string
     const isInBase = propKey in cls.styles
-    // Every per-context override (width breakpoints AND custom conditions) lives
+    // Every per-context override (viewport contexts AND custom conditions) lives
     // in one map now — "clear everywhere" iterates it uniformly.
     const contextIdsWithProperty = Object.entries(cls.contextStyles)
       .filter(([, bag]) => propKey in (bag ?? {}))

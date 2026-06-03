@@ -1,19 +1,19 @@
 /**
- * Breakpoints commands — §4.5 of the Command Spotlight master plan.
+ * Viewport commands — §4.5 of the Command Spotlight master plan.
  *
- * - Switch breakpoint → pushes 'breakpoints' scope
- * - Open breakpoints settings → opens settings modal at breakpoints tab
+ * - Switch viewport → pushes 'breakpoints' scope
+ * - Open viewport settings → opens settings modal at breakpoints tab
  */
 
 import type { Command } from '../types'
 
 export function getBreakpointsCommands(): Command[] {
   return [
-    // ── Switch breakpoint ────────────────────────────────────────────────────
+    // ── Switch viewport ──────────────────────────────────────────────────────
     {
       id: 'breakpoints.switch',
-      title: 'Switch breakpoint…',
-      subtitle: 'Change the active canvas breakpoint',
+      title: 'Switch viewport…',
+      subtitle: 'Change the active canvas viewport',
       group: 'editor',
       iconName: 'arrows-horizontal',
       keywords: ['breakpoint', 'switch', 'responsive', 'viewport', 'mobile', 'desktop', 'tablet'],
@@ -24,11 +24,11 @@ export function getBreakpointsCommands(): Command[] {
       },
     },
 
-    // ── Open breakpoints settings ────────────────────────────────────────────
+    // ── Open viewport settings ───────────────────────────────────────────────
     {
       id: 'breakpoints.openSettings',
-      title: 'Manage breakpoints',
-      subtitle: 'Open Settings → Breakpoints',
+      title: 'Manage viewports',
+      subtitle: 'Open Settings → Viewports',
       group: 'editor',
       iconName: 'settings-cog-solid',
       keywords: ['breakpoint', 'settings', 'add', 'manage', 'responsive', 'viewport'],

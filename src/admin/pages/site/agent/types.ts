@@ -229,6 +229,7 @@ export interface AgentBreakpointContext {
   id: string
   label: string
   width: number
+  mediaQuery?: string
   icon: string
 }
 

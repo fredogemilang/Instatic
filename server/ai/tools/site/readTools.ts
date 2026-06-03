@@ -88,7 +88,7 @@ const listBreakpointsTool: AiTool = {
   scope: 'site',
   execution: 'server',
   description:
-    'List configured breakpoints (id, label, width px, icon) plus the active id. Same info is already in the system suffix; only call if you lost track.',
+    'List configured breakpoints (id, label, frame width px, media query, icon) plus the active id. Same info is already in the system suffix; only call if you lost track.',
   inputSchema: ListBreakpointsInput,
   handler: async (_input, ctx) => {
     const snap = asSnap(ctx.snapshot)
