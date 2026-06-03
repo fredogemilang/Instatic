@@ -4,6 +4,7 @@
  * outside the Media page's main canvas so it persists across folder
  * navigation.
  */
+import { useEffect, useState } from 'react'
 import { Button } from '@ui/components/Button'
 import { EmptyState } from '@ui/components/EmptyState'
 import { CheckIcon } from 'pixel-art-icons/icons/check'
@@ -110,10 +111,17 @@ interface UploadRowProps {
 }
 
 function UploadRow({ item, onRetry, onRemove, onReveal }: UploadRowProps) {
-  const isImage = item.file.type.startsWith('image/')
-  // Generated only once per row via useMemo would help, but UploadRow is
-  // already keyed by item.id so this URL stays stable across re-renders.
-  const previewUrl = isImage ? URL.createObjectURL(item.file) : null
+  // Mint the preview blob URL once via a lazy initializer — NOT in the render
+  // body, which re-runs on every progress tick (patchItem replaces the item
+  // object) and would leak a fresh URL each render. A row's item.file is fixed
+  // for its mounted lifetime (patchItem spreads ...item, never reassigning
+  // file), so one URL per row is correct; the effect revokes it on unmount.
+  const [previewUrl] = useState<string | null>(() =>
+    item.file.type.startsWith('image/') ? URL.createObjectURL(item.file) : null,
+  )
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+  }, [previewUrl])
 
   const pct = item.status === 'uploading'
     ? Math.round(item.progress * 100)
