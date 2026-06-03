@@ -285,7 +285,7 @@ See [docs/features/plugin-system.md](features/plugin-system.md) for the full fea
 The browser bundle is a single Vite-built React 19 SPA, mounted at `/admin`. Inside it:
 
 - `src/admin/` — the **admin shell**: routing, sessions, top-level navigation, the workspaces for content / media / plugins / users / dashboard, and the plugin host UI.
-- `src/admin/pages/site/` — the **visual editor**: the canvas, panels, toolbar, picker, property controls, and the editor store (Zustand + Immer). This is the editor itself.
+- `src/admin/pages/site/` — the **visual editor**: the canvas, panels, toolbar, picker, property controls, and the editor store (Zustand + Mutative). This is the editor itself.
 
 The split exists because the editor is a self-contained app with its own state and lifecycle, but it shares the admin's auth, routing, and theming.
 
@@ -296,7 +296,7 @@ In-house router at `src/admin/lib/routing/`. Replaces `react-router-dom` for the
 ### State
 
 - Admin shell: small contexts in `src/admin/state/` and `src/admin/sessionContext.ts`.
-- Editor: Zustand store at `src/admin/pages/site/store/`, mutating page tree state via Immer. The store routes mutations to the active tree (page or VC) through `mutateActiveTree(fn)`.
+- Editor: Zustand store at `src/admin/pages/site/store/`, mutating page tree state via Mutative (`zustand-mutative`). The store routes mutations to the active tree (page or VC) through `mutateActiveTree(fn)`. Undo/redo is patch-based — O(change) per step.
 
 ### Styling
 
@@ -324,7 +324,7 @@ The codebase enforces "validate, then trust": every untyped input goes through a
 
 Domain types come from `Static<typeof Schema>`. There is no parallel `interface Foo` next to `FooSchema`. **Schemas are the source of truth.**
 
-`zod` is banned from app and core code. The only legitimate `zod` usage is inside `server/ai/drivers/` (`typeboxToZod.ts`, `anthropic.ts`, and `openrouter.ts`), where the Anthropic and OpenRouter drivers translate TypeBox schemas to Zod before passing them to their respective SDKs. Gated by `ai-driver-isolation.test.ts`.
+`zod` is banned from app and core code. The AI drivers now talk directly to each provider's REST API and pass TypeBox schemas straight through as JSON Schema (TypeBox schemas ARE JSON Schema), so no driver imports Zod — the package is unused pending its removal in the deps-cleanup phase. The `ai-driver-isolation.test.ts` gate still permits `zod` inside `server/ai/drivers/` (a vestigial exemption) and bans it everywhere else.
 
 See [docs/reference/typebox-patterns.md](reference/typebox-patterns.md) for the cookbook.
 

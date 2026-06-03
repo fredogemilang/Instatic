@@ -56,7 +56,8 @@ docs/
 │   ├── capabilities.md             ← full capability matrix
 │   ├── persistence-keys.md         ← localStorage / server prefs catalog
 │   ├── error-boundaries.md         ← boundary placements + error reporting
-│   └── architecture-tests.md       ← catalog of every architecture gate
+│   ├── architecture-tests.md       ← catalog of every architecture gate
+│   └── editor-history.md           ← patch-based undo/redo history
 │
 ├── deployment/                 ← operator docs (running the thing)
 ├── e2e/                        ← agent-run browser test protocols
@@ -179,6 +180,7 @@ Plans (`docs/plans/` and `docs/superpowers/`) describe in-flight work. Plans are
 | [reference/persistence-keys.md](reference/persistence-keys.md)   | All localStorage / sessionStorage / server-prefs keys           |
 | [reference/error-boundaries.md](reference/error-boundaries.md)   | `<ErrorBoundary>` placements + reporting                        |
 | [reference/architecture-tests.md](reference/architecture-tests.md) | Catalog of every architecture gate test                       |
+| [reference/editor-history.md](reference/editor-history.md)       | Patch-based undo/redo history: `HistoryEntry`, `mutate*` helpers, coalescing |
 
 ### Operations
 

@@ -210,7 +210,7 @@ The conflict wizard renders bulk controls in each conflict category. Page slug c
 | Phase | Guarantee |
 |---|---|
 | Asset uploads (Step A) | Network, not reversible. Per-asset failures are caught, recorded as `asset-upload-failed` warnings, and the import continues. Orphaned uploads are harmless — left in the media library for manual cleanup. |
-| Store mutation (Step C) | Single `adapter.commit` call. The admin adapter wraps it in one Immer history snapshot. Cmd+Z reverts pages, style rules, fonts, color tokens, and scripts together in one step. |
+| Store mutation (Step C) | Single `adapter.commit` call. The admin adapter wraps it in one `mutateAllPagesAndSite` call — one patch-based undo entry. Cmd+Z reverts pages, style rules, fonts, color tokens, and scripts together in one step. |
 
 ---
 

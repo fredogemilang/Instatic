@@ -12,7 +12,7 @@ The frontend is a single React 19 + Vite SPA mounted at `/admin`. Inside it, two
 - **Router:** `src/admin/lib/routing/` — in-house router replacing `react-router-dom`. 10 routes, all wrapped in a per-route `<ErrorBoundary>` and `<Suspense>`.
 - **Cold path:** entry chunk is tiny. `AuthenticatedAdmin` is `React.lazy` and only loads post-login. Each workspace page is wrapped in `prewarmedLazy(...)`: the active page fires its import at module evaluation; the remaining pages pre-warm via `requestIdleCallback` after first paint so subsequent nav is synchronous (no Suspense flicker).
 - **Workspaces:** `dashboard`, `site` (the editor), `content`, `data`, `media`, `plugins`, `users`, `ai`, `account`, `pluginPage`. Capability-gated by `canAccessWorkspace`.
-- **Editor store** lives at `src/admin/pages/site/store/`. Zustand + Immer + `subscribeWithSelector`. 11 slices, one source of truth for the page tree.
+- **Editor store** lives at `src/admin/pages/site/store/`. Zustand + Mutative (`zustand-mutative`) + `subscribeWithSelector`. 11 slices, one source of truth for the page tree. Undo/redo uses patch-based history (O(change) per step, not O(site)).
 - **Active tree routing:** `mutateActiveTree(fn)` in `siteSlice` is the **only** place that branches on page-mode vs. VC-mode. The 11 named mutation actions are one-liners that delegate to it.
 - **Canvas:** `src/admin/pages/site/canvas/` renders the page tree into per-breakpoint `IframeFrameSurface` iframes. Two views: **design** (multiple breakpoints side-by-side with pan/zoom) and **live** (single real-size editable frame with normal scrolling). Design mode paints iframe shells with detailed skeletons first, mounts the active breakpoint's node tree after the first paint, then fills inactive breakpoint frames on idle time. Three canvas ring tokens: `--canvas-selection-ring` (neon green, selected node), `--canvas-hover-ring` (neon pink, hovered node), `--canvas-selector-ring` (neon orange, selector-panel match sweep).
 - **Spotlight:** Cmd+K palette at `src/admin/spotlight/`. Always available across workspaces. Owns its own command registry, providers, and scopes.
@@ -257,7 +257,7 @@ src/admin/pages/site/
 ├── SitePage.tsx                ← editor mount point
 ├── EditorPermissionsProvider.tsx, editorPermissionsContext.ts
 │
-├── store/                      ← Zustand + Immer store (see below)
+├── store/                      ← Zustand + Mutative store (see below)
 │   ├── store.ts                ← root store assembly
 │   ├── types.ts                ← EditorStore type union
 │   ├── slices/                 ← one file per slice
@@ -304,7 +304,9 @@ Organization is persisted in `site.explorer` on the site shell. Folders are deco
 
 ### Editor store
 
-`src/admin/pages/site/store/` is the central state for the editor. Zustand with the `immer` middleware (mutations are written as direct mutation; Immer produces structural sharing) and `subscribeWithSelector` (granular subscriptions without React context re-renders).
+`src/admin/pages/site/store/` is the central state for the editor. Zustand with the `mutative` middleware from `zustand-mutative` (mutations are written as direct draft-mutation; Mutative produces structural sharing) and `subscribeWithSelector` (granular subscriptions without React context re-renders). `enableAutoFreeze: true` mirrors Immer's dev guard against accidental external mutation.
+
+**Undo/redo** uses patch-based history: every undoable mutation captures Mutative `[next, forward, inverse]` patch pairs scoped to the `SiteDocument`. Undo applies `entry.inverse`, redo applies `entry.forward` — O(change) in both time and memory, not O(site). A 50-deep history holds kilobytes of patches instead of hundreds of megabytes of full-site clones. See [`docs/reference/editor-history.md`](../reference/editor-history.md).
 
 The store is composed of **11 slices**, each created by a factory in `store/slices/`:
 

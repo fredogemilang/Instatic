@@ -37,7 +37,7 @@ export const NodeTreeSchema = Type.Object({
 Why a flat map plus a root id:
 
 - **O(1) lookup** by id — no recursive search to find a node.
-- **Cheap structural sharing** in Immer — mutating one node only invalidates that key.
+- **Cheap structural sharing** in Mutative — mutating one node only invalidates that key.
 - **Stable references in props** — any prop that points at a node uses its id (`children: string[]`), so reordering / moving nodes doesn't break references.
 
 ### `BaseNode` — the shared structural base
@@ -90,7 +90,7 @@ Page and Visual Component persistence runs the same invariant check before accep
 
 ## The mutation API
 
-All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<PageNode>` (or sometimes a `SiteDocument` for cross-page operations) and mutate it in place — they're written for use inside Immer drafts.
+All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<PageNode>` (or sometimes a `SiteDocument` for cross-page operations) and mutate it in place — they're written for use inside Mutative drafts.
 
 ### Node mutations (operate on a single `NodeTree`)
 
