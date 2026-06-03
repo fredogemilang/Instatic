@@ -100,7 +100,6 @@ export function ModuleInserterItemButton({
         aria-pressed={favorite}
         tooltip={favoriteLabel}
         disabled={favoriteDisabled}
-        data-favorite={favorite ? 'true' : undefined}
       >
         <StarSolidIcon size={13} aria-hidden="true" />
       </Button>

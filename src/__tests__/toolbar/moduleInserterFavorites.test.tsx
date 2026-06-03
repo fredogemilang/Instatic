@@ -59,6 +59,58 @@ function loadSite() {
 }
 
 describe('ModuleInserterDialog favorites', () => {
+  it('renders a favorite toggle for every visible module tile', async () => {
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (!init?.method) return jsonResponse({ value: { favorites: [] } })
+      return jsonResponse({ value: JSON.parse(String(init.body)).value })
+    }) as typeof fetch
+
+    loadSite()
+    render(<ModulePickerDropdown />)
+
+    fireEvent.click(screen.getByTestId('toolbar-add-module-btn'))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: 'Add Text to notch favorites' }),
+      ).toBeTruthy()
+    })
+
+    for (const name of ['Container', 'Loop', 'Text', 'List', 'Content Body', 'Image']) {
+      const toggle = screen.getByRole('button', {
+        name: `Add ${name} to notch favorites`,
+      })
+      expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    }
+  })
+
+  it('uses aria-pressed and the label to expose active favorite state', async () => {
+    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (!init?.method) {
+        return jsonResponse({
+          value: { favorites: [{ kind: 'module', id: 'base.text' }] },
+        })
+      }
+      return jsonResponse({ value: JSON.parse(String(init.body)).value })
+    }) as typeof fetch
+
+    loadSite()
+    render(<ModulePickerDropdown />)
+
+    fireEvent.click(screen.getByTestId('toolbar-add-module-btn'))
+    const activeToggle = await screen.findByRole('button', {
+      name: 'Remove Text from notch favorites',
+    })
+    expect(activeToggle.getAttribute('aria-pressed')).toBe('true')
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getByRole('button', { name: 'Add Container to notch favorites' })
+          .getAttribute('aria-pressed'),
+      ).toBe('false')
+    })
+  })
+
   it('toggles a module favorite without inserting or closing the dialog', async () => {
     const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {

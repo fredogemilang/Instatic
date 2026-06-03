@@ -375,6 +375,20 @@
 }
 
 .itemShell {
+    --moduleInserterItemRadius: var(--card-radius);
+    --moduleInserterTilePadding: 6px;
+    --moduleInserterTileStageHeight: 100px;
+    --moduleInserterTileControlSize: 22px;
+    --moduleInserterTileControlInset: calc(
+        var(--moduleInserterTilePadding) + 4px
+    );
+    --moduleInserterTileInnerRadius: calc(
+        var(--moduleInserterItemRadius) - var(--moduleInserterTilePadding)
+    );
+    --moduleInserterTileControlRadius: calc(
+        var(--moduleInserterTileInnerRadius) - var(--editor-radius-sm)
+    );
+
     position: relative;
     min-width: 0;
 }
@@ -382,6 +396,10 @@
 .grid .itemShell,
 .grid .tileItem {
     height: 100%;
+}
+
+.list .itemShell {
+    --moduleInserterItemRadius: var(--panel-radius);
 }
 
 .tileItem,
@@ -392,17 +410,6 @@
 .tileItem,
 .rowItem {
     --button-bg-hover: var(--editor-surface-4);
-    --moduleInserterItemRadius: var(--card-radius);
-    --moduleInserterTilePadding: 6px;
-    --moduleInserterTileInnerRadius: calc(
-        var(--moduleInserterItemRadius) - var(--moduleInserterTilePadding)
-    );
-    --moduleInserterTileControlInset: calc(
-        var(--moduleInserterTilePadding) + 4px
-    );
-    --moduleInserterTileControlRadius: calc(
-        var(--moduleInserterTileInnerRadius) - var(--editor-radius-sm)
-    );
 
     position: relative;
     border: 0;
@@ -441,8 +448,6 @@
 }
 
 .rowItem {
-    --moduleInserterItemRadius: var(--panel-radius);
-
     min-height: 60px;
     padding: var(--moduleInserterTilePadding) 42px var(--moduleInserterTilePadding) 10px;
     display: flex;
@@ -489,14 +494,17 @@
 
 .tileItem:hover .dragGrip,
 .tileItem:focus-visible .dragGrip,
+.tileItem[data-selected="true"] .dragGrip,
 .rowItem:hover .rowGrip,
+.rowItem:focus-visible .rowGrip,
 .rowItem[data-selected="true"] .rowGrip {
     opacity: 0.85;
     transform: none;
 }
 
 .tileItem:hover .tileAdd,
-.tileItem:focus-visible .tileAdd {
+.tileItem:focus-visible .tileAdd,
+.tileItem[data-selected="true"] .tileAdd {
     opacity: 1;
     transform: scale(1);
 }
@@ -507,58 +515,53 @@
 }
 
 .tileAdd {
-    right: calc(var(--moduleInserterTileControlInset) + 24px);
+    right: var(--moduleInserterTileControlInset);
     top: var(--moduleInserterTileControlInset);
 }
 
 .favoriteButton.favoriteButton {
     position: absolute;
     z-index: 4;
-    right: var(--moduleInserterTileControlInset);
-    top: var(--moduleInserterTileControlInset);
-    width: 22px;
-    min-width: 22px;
-    height: 22px;
-    min-height: 22px;
+    left: var(--moduleInserterTileControlInset);
+    top: calc(
+        var(--moduleInserterTilePadding) + var(--moduleInserterTileStageHeight) -
+        var(--moduleInserterTileControlSize) - 4px
+    );
+    width: var(--moduleInserterTileControlSize);
+    min-width: var(--moduleInserterTileControlSize);
+    height: var(--moduleInserterTileControlSize);
+    min-height: var(--moduleInserterTileControlSize);
     padding: 0;
     border-radius: var(--moduleInserterTileControlRadius);
     color: var(--editor-text-muted);
     background: color-mix(in srgb, var(--editor-bg) 72%, transparent);
-    opacity: 0;
-    transform: scale(0.9);
+    opacity: 1;
+    transform: none;
     transition:
-        opacity 140ms ease,
-        transform 140ms ease,
         color 140ms ease,
         background-color 140ms ease;
 }
 
 .rowItem + .favoriteButton {
+    left: auto;
+    right: var(--moduleInserterTileControlInset);
     top: 50%;
-    transform: translateY(-50%) scale(0.9);
+    transform: translateY(-50%);
 }
 
-.itemShell:hover .favoriteButton,
-.itemShell:focus-within .favoriteButton,
-.favoriteButton[data-favorite="true"] {
-    opacity: 1;
-    transform: scale(1);
+.favoriteButton:hover {
+    color: var(--editor-text-bright);
+    background: var(--editor-surface-5);
 }
 
-.itemShell:hover .rowItem + .favoriteButton,
-.itemShell:focus-within .rowItem + .favoriteButton,
-.rowItem + .favoriteButton[data-favorite="true"] {
-    transform: translateY(-50%) scale(1);
+.favoriteButton[aria-pressed="true"] {
+    color: var(--editor-bg);
+    background: var(--editor-accent);
 }
 
-.favoriteButton:hover,
-.favoriteButton[data-favorite="true"] {
-    color: var(--moduleInserterAccent);
-    background: color-mix(
-        in srgb,
-        var(--moduleInserterAccent) 18%,
-        var(--editor-bg)
-    );
+.favoriteButton[aria-pressed="true"]:hover {
+    color: var(--editor-bg);
+    background: var(--editor-text-bright);
 }
 
 .tileStage,
@@ -577,7 +580,7 @@
 }
 
 .tileStage {
-    height: 100px;
+    height: var(--moduleInserterTileStageHeight);
     padding: 12px;
 }
 
