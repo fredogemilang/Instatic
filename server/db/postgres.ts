@@ -21,13 +21,29 @@ function normalizeRowDates<Row>(row: Row): Row {
   return result as Row
 }
 
+/**
+ * Affected-or-returned row count for a Bun SQL result.
+ *
+ * Bun exposes the command's row count on the result array's `.count` property:
+ * for SELECT / RETURNING it equals the number of returned rows, and for a
+ * non-RETURNING UPDATE / DELETE / INSERT it is the number of *affected* rows
+ * (which PostgreSQL streams as a CommandComplete tag, not as data rows — so
+ * `result.length` is 0 there). Using `.count` makes `rowCount` mean the same
+ * thing as the SQLite adapter's `info.changes`. Falls back to `length` if the
+ * property is ever absent.
+ */
+function resultRowCount<Row>(result: Row[]): number {
+  const count = (result as { count?: unknown }).count
+  return typeof count === 'number' ? count : result.length
+}
+
 function wrapSql(sql: SQL): DbClient {
   const fn = (async <Row = Record<string, unknown>>(
     strings: TemplateStringsArray,
     ...values: unknown[]
   ): Promise<DbResult<Row>> => {
     const rows = await sql<Row[]>(strings, ...values)
-    return { rows: rows.map(normalizeRowDates), rowCount: rows.length }
+    return { rows: rows.map(normalizeRowDates), rowCount: resultRowCount(rows) }
   }) as DbClient
 
   fn.unsafe = async <Row = Record<string, unknown>>(
@@ -37,7 +53,7 @@ function wrapSql(sql: SQL): DbClient {
     const rows = params !== undefined
       ? await sql.unsafe<Row[]>(rawSql, params as unknown[])
       : await sql.unsafe<Row[]>(rawSql)
-    return { rows: rows.map(normalizeRowDates), rowCount: rows.length }
+    return { rows: rows.map(normalizeRowDates), rowCount: resultRowCount(rows) }
   }
 
   fn.transaction = async <T>(cb: (tx: DbClient) => Promise<T>): Promise<T> => {
