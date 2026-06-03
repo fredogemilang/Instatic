@@ -1,12 +1,12 @@
 /**
- * Smoke tests for the hole runtime JavaScript string.
+ * Smoke tests for the hole runtime JavaScript source.
  *
  * The test environment preloads `happy-dom` (via `bunfig.toml` → `setup.ts`),
  * which provides `IntersectionObserver`, `document`, and `fetch` globals.
  *
  * These tests verify:
  *   1. The runtime source contains the expected IntersectionObserver API calls.
- *   2. The runtime function compiles (no SyntaxError).
+ *   2. The runtime source parses (no SyntaxError).
  *   3. The runtime registers an observer for every `<instatic-hole[data-instatic-hole]>` element.
  *   4. When an IntersectionObserver callback fires with isIntersecting=true,
  *      the runtime calls `fetch` with the correct URL and swaps `el.outerHTML`.
@@ -16,11 +16,16 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { HOLE_RUNTIME_JS } from '../../../server/publish/holeRuntime'
+import {
+  HOLE_RUNTIME_JS,
+  runInstaticHoleRuntime,
+} from '../../../server/publish/holeRuntime'
 
 describe('HOLE_RUNTIME_JS — static source content', () => {
-  it('compiles and keeps the non-behavioral runtime constants wired', () => {
-    expect(() => new Function(HOLE_RUNTIME_JS)).not.toThrow()
+  it('parses and keeps the non-behavioral runtime constants wired', () => {
+    expect(() => {
+      new Bun.Transpiler({ loader: 'js' }).transformSync(HOLE_RUNTIME_JS)
+    }).not.toThrow()
     expect(HOLE_RUNTIME_JS).toContain('IntersectionObserver')
     expect(HOLE_RUNTIME_JS).toContain('200px')
     expect(HOLE_RUNTIME_JS).toContain('encodeURIComponent')
@@ -65,7 +70,7 @@ describe('HOLE_RUNTIME_JS — runtime behaviour with mock IntersectionObserver',
     } as unknown as typeof IntersectionObserver
 
     try {
-      new Function(HOLE_RUNTIME_JS)()
+      runInstaticHoleRuntime()
 
       // Two placeholder children observed — NOT the instatic-hole elements themselves.
       expect(observedElements.length).toBe(2)
@@ -107,7 +112,7 @@ describe('HOLE_RUNTIME_JS — runtime behaviour with mock IntersectionObserver',
     } as unknown as typeof IntersectionObserver
 
     try {
-      new Function(HOLE_RUNTIME_JS)()
+      runInstaticHoleRuntime()
 
       const child = document.querySelector('#hole-c .sk')!
 
@@ -163,7 +168,7 @@ describe('HOLE_RUNTIME_JS — runtime behaviour with mock IntersectionObserver',
     } as unknown as typeof IntersectionObserver
 
     try {
-      new Function(HOLE_RUNTIME_JS)()
+      runInstaticHoleRuntime()
       await Promise.resolve()
       await Promise.resolve()
 
@@ -204,7 +209,7 @@ describe('HOLE_RUNTIME_JS — runtime behaviour with mock IntersectionObserver',
     } as unknown as typeof IntersectionObserver
 
     try {
-      new Function(HOLE_RUNTIME_JS)()
+      runInstaticHoleRuntime()
 
       const child = document.querySelector('#hole-d .sk')!
       capturedCallback?.([{ isIntersecting: false, target: child } as IntersectionObserverEntry])

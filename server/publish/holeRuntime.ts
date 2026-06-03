@@ -31,8 +31,9 @@
  * placeholder continues to show as a meaningful fallback.
  */
 
-export const HOLE_RUNTIME_JS = `function instaticFetchHole(el) {
-  var id = el.dataset.instaticHole;
+export function runInstaticHoleRuntime(): void {
+  function instaticFetchHole(el: HTMLElement): void {
+  var id = el.dataset.instaticHole || '';
   var version = el.dataset.instaticVersion || '';
   var u = location.pathname + location.search;
   fetch('/_instatic/hole/' + encodeURIComponent(id) + '?v=' + encodeURIComponent(version) + '&u=' + encodeURIComponent(u))
@@ -45,16 +46,18 @@ var io = new IntersectionObserver(function(entries) {
     var e = entries[i];
     if (!e.isIntersecting) continue;
     io.unobserve(e.target);
-    var hole = e.target.closest('instatic-hole[data-instatic-hole]');
+    var hole = e.target.closest('instatic-hole[data-instatic-hole]') as HTMLElement | null;
     if (hole) instaticFetchHole(hole);
   }
 }, { rootMargin: '200px 0px' });
 var holes = document.querySelectorAll('instatic-hole[data-instatic-hole]');
 for (var i = 0; i < holes.length; i++) {
-  var el = holes[i];
+  var el = holes[i] as HTMLElement;
   // <instatic-hole> is display:contents (no box) — observe its placeholder child,
   // which has a box. Holes without a placeholder are fetched eagerly.
   var box = el.firstElementChild;
   if (box) { io.observe(box); } else { instaticFetchHole(el); }
 }
-`
+}
+
+export const HOLE_RUNTIME_JS = `(${runInstaticHoleRuntime.toString()})();`
