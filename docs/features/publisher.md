@@ -95,10 +95,9 @@ For each node, bottom-up:
   5. attachResolvedMediaByKey(safeProps, def, ...)       ← attach <picture>/<srcset>
   6. attachAutoSizes(safeProps, def, ...)                ← auto <img sizes>
   7. { html, css } = def.render(safeProps, children)                  ← MODULE BOUNDARY
-  8. css = sanitizeModuleCSS(css)                        ← DOMPurify
-  9. cssCollector.add(moduleId, css)                     ← dedup by moduleId
- 10. html = injectNodeClassIds(html, node, site)         ← splice classIds into root tag
- 11. return html
+  8. cssMap.set(moduleId, sanitizeModuleCSS(css))        ← neutralise </style (Constraint #228), dedup by moduleId
+  9. html = injectNodeClassIds(html, node, site)         ← splice classIds into root tag
+ 10. return html
 ```
 
 The walker is recursive, but every step is local — there's no global state mutation, no cross-node coupling. Each node's output is a function of its node + its already-rendered children.
@@ -191,7 +190,12 @@ This is what shrinks published CSS by ~60–80% on typical pages (Decision #308)
 
 ### CSS sanitization
 
-`sanitizeModuleCSS(css)` runs DOMPurify-style filtering at the module boundary — modules can't smuggle `@import` of arbitrary URLs, `expression()` IE leftovers, or `javascript:` URLs into the published bundle.
+`sanitizeModuleCSS(css)` (`src/core/publisher/cssCollector.ts`) neutralises the `</style` sequence in CSS before injection into a `<style>` block. The substitution replaces `</style` with `<\/style` — the HTML5 RAWTEXT tokenizer never recognises the end tag regardless of the trailer character, and CSS string literals resolve `\/` back to `/` so URL values round-trip correctly. This prevents stored XSS via user stylesheets or module CSS that would otherwise close the `<style>` element early and inject script (CWE-79, Constraint #228).
+
+Two passes run at publish time (inline mode):
+
+1. **Per-module pass** — inside `renderStandardNode` when storing module CSS in `cssMap`. Module CSS is sanitised before dedup storage.
+2. **Full-assembly pass** — in `buildStyleHead` after concatenating reset + framework + module + class + user stylesheets into the final `<style>` block. This pass protects user-authored stylesheets, which are the higher-risk vector (stored user content). The second pass is idempotent on already-sanitised module CSS.
 
 ### Hashed bundle filenames
 
@@ -410,7 +414,7 @@ This is rare and requires architectural review — most "new behavior" fits with
 | Hardcoding `<link>` to a CSS file the publisher didn't emit   | Add a CSS string to the module's `render()` return — collected and deduped automatically. |
 | Bypassing `escapeProps` by reading `node.props` directly inside `render()` | Read from the `props` argument — it's already escaped. |
 | Hand-writing `<picture>` / `<img srcset>` in a module         | Set `props.<key>` to a media URL; `mediaPresentation.ts` materializes the markup. |
-| Adding `@import url(...)` to module CSS                       | DOMPurify-style filter strips it. Add it to the site's user stylesheets instead. |
+| Adding `@import url(...)` to module CSS                       | The final document passes through DOMPurify in `publishedHtmlPipeline.ts`, which strips dangerous CSS constructs. Add it to the site's user stylesheets instead (where it is intentional). |
 | Editing the CSP meta tag string manually                      | Edit the CSP source list — the tag is derived.             |
 
 ---
