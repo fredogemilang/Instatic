@@ -381,6 +381,8 @@ Each `IframeFrameSurface` boots with an empty `srcDoc` skeleton and portals the 
 
 Selection isn't a React overlay — it's a `box-shadow: var(--canvas-selection-ring)` applied to the selected node inside the iframe. Same for hover (`--canvas-hover-ring`). The two ring colors (neon green and neon pink) are the only chromatic UI on the canvas; they're bright enough to be visible against any user content.
 
+`BreakpointSelectionOverlay` also owns the canvas-local action chrome that must escape iframe overflow: the selected-layer toolbar and the Alt/Option inspect ladder. Holding Alt/Option while hovering a canvas element opens a momentary tree-shaped target picker in the parent canvas root, anchored above or below the hovered element and clamped to the visible canvas. The picker is built from the active `NodeTree`, not raw DOM parents: ancestors appear above the hovered node, the hovered node is the current row, and the first visible child appears below it. ArrowUp/ArrowDown move the highlighted target, Enter commits selection, clicking a row commits immediately, and releasing Alt/Option or pressing Escape dismisses the ladder. Committing through the ladder changes the selected node without taking focus from the current side panel, so the Properties panel stays open while users retarget parent or child layers.
+
 ### CSS injection into the iframe
 
 Each iframe `<head>` receives three `<style>` elements, in this order:
@@ -425,6 +427,7 @@ Why this matters: selection rings and the floating selection toolbar are portale
 | CanvasContextSelector                 | 25                |
 | PluginCanvasOverlayLayer              | 50                |
 | Selection ring, hover ring, selection toolbar | 51        |
+| Alt/Option inspect ladder             | 52                |
 | Drop-indicator inside iframe          | 2147483647 (max)  |
 
 Canvas-internal values are not CSS tokens — they are raw integers intentionally scoped to the canvas stacking context and isolated from the layout stacking context by the `z-index: 0` on `CanvasRoot`.
@@ -449,6 +452,7 @@ Canvas-internal values are not CSS tokens — they are raw integers intentionall
 | `canvasDnd.ts`                  | Drag-and-drop (insert / move / wrap)                            |
 | `canvasDomGeometry.ts`          | Cross-iframe DOM measurement                                    |
 | `canvasSelectionUtils.ts`       | Selection helpers                                               |
+| `canvasTreeLadder.ts`           | Alt/Option inspect ladder tree model                            |
 | `useCanvasKeyboardShortcuts.ts` | Editor keyboard shortcuts (delete, duplicate, wrap, …)          |
 | `useRuntimeScriptBuild.ts`      | Builds the bundled runtime scripts for the Run-scripts toggle    |
 | `useIframeCursorBridge.ts`      | Bridges iframe-native cursor movement to parent-doc callbacks (used by breakpoint activation tooltip) |

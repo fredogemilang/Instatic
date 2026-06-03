@@ -71,6 +71,11 @@ import { HandGrabSolidIcon } from 'pixel-art-icons/icons/hand-grab-solid'
 import { CanvasViewportActionsContext } from './CanvasContexts'
 import { useCanvasReorderDrag } from './useCanvasReorderDrag'
 import { measureCanvasNodeClientUnionRect } from './canvasDomGeometry'
+import { useCanvasTreeLadderOverlay } from './CanvasTreeLadderOverlay'
+import {
+  escapeCanvasAttributeValue,
+  measureCanvasElementRect,
+} from './canvasOverlayGeometry'
 import type {
   CanvasDropAxis,
   CanvasDropTarget,
@@ -105,6 +110,20 @@ interface BreakpointSelectionOverlayProps {
   iframeElement: HTMLIFrameElement | null
 }
 
+function duplicateSelectedLayers() {
+  const ids = useEditorStore.getState().selectedNodeIds
+  if (ids.length === 0) return
+  useEditorStore.getState().duplicateNodes(ids)
+}
+
+function deleteSelectedLayers() {
+  const ids = useEditorStore.getState().selectedNodeIds
+  if (ids.length === 0) return
+  const state = useEditorStore.getState()
+  state.deleteNodes(ids)
+  state.clearSelection()
+}
+
 export function BreakpointSelectionOverlay({
   breakpointId,
   viewportRef,
@@ -126,6 +145,7 @@ export function BreakpointSelectionOverlay({
       ? s.hoveredNodeId
       : null,
   )
+  const hoveredBreakpointOrigin = useEditorStore((s) => s.hoveredBreakpointId)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
 
   // Selector-affinity highlight: the CSS selector of the rule currently hovered
@@ -139,11 +159,11 @@ export function BreakpointSelectionOverlay({
     const rule = s.site?.styleRules[classId]
     return rule ? styleRuleSelector(rule) : null
   })
-
   // One ref per selected node, keyed by id. Stable across renders while the
   // id stays in the selection — when an id is removed, its ring entry is
   // dropped from the map; when added, a fresh ref is allocated.
-  const ringRefs = useRef<Map<string, HTMLDivElement | null>>(new Map())
+  const ringRefs = useRef<Map<string, HTMLDivElement | null> | null>(null)
+  if (ringRefs.current === null) ringRefs.current = new Map()
   const hoverRef = useRef<HTMLDivElement>(null)
   // Container whose children are the orange selector-affinity rings. Their
   // count is driven by the live DOM (how many elements match the selector), so
@@ -152,11 +172,6 @@ export function BreakpointSelectionOverlay({
   const selectorHighlightRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
   const viewportActions = use(CanvasViewportActionsContext)
-
-  // Hover only renders when the hovered node isn't already part of the
-  // selection — otherwise the two rings would stack and the hover ring
-  // would mask the selection ring.
-  const showHover = Boolean(hoveredNodeId) && !selectedNodeIds.includes(hoveredNodeId ?? '')
 
   // Stable string for the deps array — re-runs the RAF loop only when the
   // selection identity actually changes (not on every store mutation).
@@ -178,6 +193,29 @@ export function BreakpointSelectionOverlay({
     permissions.canEditStructure &&
     selectedNodeIds.length > 0 &&
     activeBreakpointId === breakpointId
+
+  // Prefer the canvas root as the portal target so overlay chrome sits inside
+  // the canvas's stacking + clipping context. Fall back to document.body for
+  // tests or transient mount races where the ref isn't ready yet.
+  const canvasRoot = viewportActions?.canvasRootRef.current ?? null
+  const portalTarget = canvasRoot ?? document.body
+  const toolbarMode = canvasRoot ? 'scoped' : 'fixed'
+  const treeLadder = useCanvasTreeLadderOverlay({
+    breakpointId,
+    iframeElement,
+    canvasRoot,
+    portalTarget,
+    portalMode: toolbarMode,
+    show: showRings,
+    hoveredNodeId,
+    hoveredBreakpointOrigin,
+  })
+  // Hover only renders when the hovered node isn't already part of the
+  // selection — otherwise the two rings would stack and the hover ring
+  // would mask the selection ring. In Alt/Option inspect mode, the ladder
+  // highlight becomes the hover ring target so keyboard navigation is visible.
+  const hoverRingNodeId = treeLadder.hoverNodeId ?? hoveredNodeId
+  const showHover = Boolean(hoverRingNodeId) && !selectedNodeIds.includes(hoverRingNodeId ?? '')
   const reorderDrag = useCanvasReorderDrag({
     viewportRef,
     iframeElement,
@@ -186,20 +224,6 @@ export function BreakpointSelectionOverlay({
     panBy: viewportActions?.panBy,
     canvasRootRef: viewportActions?.canvasRootRef,
   })
-
-  const duplicateSelectedLayers = () => {
-    const ids = useEditorStore.getState().selectedNodeIds
-    if (ids.length === 0) return
-    useEditorStore.getState().duplicateNodes(ids)
-  }
-
-  const deleteSelectedLayers = () => {
-    const ids = useEditorStore.getState().selectedNodeIds
-    if (ids.length === 0) return
-    const state = useEditorStore.getState()
-    state.deleteNodes(ids)
-    state.clearSelection()
-  }
 
   // Each RAF tick reads the freshest selection / hover / toolbar inputs from
   // the latest render closure via useEffectEvent. The effect itself only
@@ -222,9 +246,9 @@ export function BreakpointSelectionOverlay({
   const tickOnce = useEffectEvent((viewport: HTMLElement, iframe: HTMLIFrameElement | null) => {
     const canvasRoot = viewportActions?.canvasRootRef.current ?? null
     for (const id of selectedNodeIds) {
-      positionRing(ringRefs.current.get(id) ?? null, id, iframe, canvasRoot)
+      positionRing(ringRefs.current?.get(id) ?? null, id, iframe, canvasRoot)
     }
-    positionRing(hoverRef.current, showHover ? hoveredNodeId : null, iframe, canvasRoot)
+    positionRing(hoverRef.current, showHover ? hoverRingNodeId : null, iframe, canvasRoot)
     syncSelectorHighlightRings(
       selectorHighlightRef.current,
       showSelectorHighlight ? highlightedSelector : null,
@@ -258,15 +282,7 @@ export function BreakpointSelectionOverlay({
       cancelled = true
       cancelAnimationFrame(frame)
     }
-  }, [selectionKey, hoveredNodeId, showHover, showToolbar, viewportRef, iframeElement])
-
-  // Prefer the canvas root as the portal target so the toolbar sits inside
-  // the canvas's stacking + clipping context (below sidebars / dialogs /
-  // modals, clipped by canvas overflow). Fall back to document.body for
-  // tests or transient mount races where the ref isn't ready yet.
-  const canvasRoot = viewportActions?.canvasRootRef.current ?? null
-  const portalTarget = canvasRoot ?? document.body
-  const toolbarMode = canvasRoot ? 'scoped' : 'fixed'
+  }, [selectionKey, hoverRingNodeId, showHover, showToolbar, viewportRef, iframeElement])
 
   const toolbar = showToolbar ? (
     <div
@@ -319,7 +335,7 @@ export function BreakpointSelectionOverlay({
   // transform-scaled), so their 1px border stays exactly 1px at every zoom
   // level. Position alone tracks the selected/hovered element — same
   // pattern as the toolbar.
-  const rings = showRings && (selectedNodeIds.length > 0 || (showHover && hoveredNodeId) || showSelectorHighlight) ? (
+  const rings = showRings && (selectedNodeIds.length > 0 || (showHover && hoverRingNodeId) || showSelectorHighlight) ? (
     <div
       className={styles.ringLayer}
       data-canvas-ring-layer-mode={toolbarMode}
@@ -334,20 +350,20 @@ export function BreakpointSelectionOverlay({
         <div
           key={id}
           ref={(el) => {
-            if (el) ringRefs.current.set(id, el)
-            else ringRefs.current.delete(id)
+            if (el) ringRefs.current?.set(id, el)
+            else ringRefs.current?.delete(id)
           }}
           className={cn(styles.ring, styles.selection)}
           data-canvas-selection-ring="true"
           data-node-id={id}
         />
       ))}
-      {showHover && hoveredNodeId && (
+      {showHover && hoverRingNodeId && (
         <div
           ref={hoverRef}
           className={cn(styles.ring, styles.hover)}
           data-canvas-hover-ring="true"
-          data-node-id={hoveredNodeId}
+          data-node-id={hoverRingNodeId}
         />
       )}
     </div>
@@ -380,6 +396,7 @@ export function BreakpointSelectionOverlay({
       </div>
       {rings && createPortal(rings, portalTarget)}
       {toolbar && createPortal(toolbar, portalTarget)}
+      {treeLadder.portal}
     </>
   )
 }
@@ -436,7 +453,7 @@ function positionRing(
     return
   }
   const target = iframeDoc.querySelector<HTMLElement>(
-    `[data-node-id="${escapeAttribute(nodeId)}"]`,
+    `[data-node-id="${escapeCanvasAttributeValue(nodeId)}"]`,
   )
 
   const rect = measureCanvasElementRect(target, iframe, canvasRoot)
@@ -445,73 +462,7 @@ function positionRing(
     return
   }
 
-  // transform/width/height so the browser can promote the ring to its own
-  // compositing layer.
-  ring.style.display = ''
-  ring.style.transform = `translate(${rect.x}px, ${rect.y}px)`
-  ring.style.width = `${rect.width}px`
-  ring.style.height = `${rect.height}px`
-}
-
-/**
- * Translate an element measured inside the breakpoint iframe into the ring
- * layer's coordinate space (canvas-root-local screen-px when scoped, viewport
- * screen-px in the fixed fallback). Returns null when the element isn't a
- * measurable, laid-out element — the caller then hides its ring.
- *
- * Shared by the node-id selection/hover rings and the selector-affinity rings.
- *
- * `getBoundingClientRect()` inside the iframe returns un-transformed coords
- * (the iframe document is its own viewport, never transformed). The iframe
- * ELEMENT in the parent doc IS scaled by the canvas transform layer, so we
- * recover the canvas zoom from the iframe (clientRect.width / offsetWidth),
- * scale the inner rect by it, add the iframe's outer offset, then subtract the
- * canvas-root origin.
- */
-function measureCanvasElementRect(
-  target: HTMLElement | null,
-  iframe: HTMLIFrameElement,
-  canvasRoot: HTMLElement | null,
-): { x: number; y: number; width: number; height: number } | null {
-  // Use a duck-type check (`getBoundingClientRect` is callable) rather than
-  // `instanceof Element` — the iframe document has its OWN Element
-  // constructor, and `target instanceof Element` (where `Element` resolves
-  // to the parent window's class) returns false for any node inside the
-  // iframe. That false-negative is what was hiding every selection ring.
-  if (!target || typeof (target as { getBoundingClientRect?: unknown }).getBoundingClientRect !== 'function') {
-    return null
-  }
-
-  const elementRectInIframe = target.getBoundingClientRect()
-  if (elementRectInIframe.width === 0 && elementRectInIframe.height === 0) {
-    return null
-  }
-  const iframeRect = iframe.getBoundingClientRect()
-  const iframeScale = iframe.offsetWidth > 0 ? iframeRect.width / iframe.offsetWidth : 1
-  const editorDocRect = {
-    left: iframeRect.left + elementRectInIframe.left * iframeScale,
-    top: iframeRect.top + elementRectInIframe.top * iframeScale,
-    width: elementRectInIframe.width * iframeScale,
-    height: elementRectInIframe.height * iframeScale,
-  }
-
-  // Scoped path: ring is portaled into the canvas root (position: absolute),
-  // so coordinates are canvas-root-local screen-px.
-  // Fixed path (fallback): ring is portaled into document.body
-  // (position: fixed), so coordinates are screen-px directly.
-  let originLeft = 0
-  let originTop = 0
-  if (canvasRoot) {
-    const canvasRect = canvasRoot.getBoundingClientRect()
-    originLeft = canvasRect.left
-    originTop = canvasRect.top
-  }
-  return {
-    x: editorDocRect.left - originLeft,
-    y: editorDocRect.top - originTop,
-    width: editorDocRect.width,
-    height: editorDocRect.height,
-  }
+  applyOverlayRectStyle(ring, rect)
 }
 
 /**
@@ -571,12 +522,21 @@ function syncSelectorHighlightRings(
       ring.style.display = 'none'
       continue
     }
-    ring.style.display = ''
-    ring.style.transform = `translate(${rect.x}px, ${rect.y}px)`
-    ring.style.width = `${rect.width}px`
-    ring.style.height = `${rect.height}px`
+    applyOverlayRectStyle(ring, rect)
   }
   hideSurplusRings(container, count)
+}
+
+function applyOverlayRectStyle(
+  element: HTMLElement,
+  rect: { x: number; y: number; width: number; height: number },
+): void {
+  Object.assign(element.style, {
+    display: '',
+    transform: `translate(${rect.x}px, ${rect.y}px)`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+  })
 }
 
 /** Hide every pooled ring from index `keep` onward (they're reused, not removed). */
@@ -689,14 +649,4 @@ function indicatorVars(x: number, y: number, width: number, height: number): CSS
     '--canvas-drop-w': `${width}px`,
     '--canvas-drop-h': `${height}px`,
   } as CSSProperties
-}
-
-/**
- * Escape an attribute value for safe inclusion in a CSS attribute selector.
- * `nodeId` is generated server-side / by the editor so the alphabet is
- * controlled, but escaping `"` and `\` is cheap insurance and matches the
- * defensive pattern used elsewhere in canvasClassCss.ts.
- */
-function escapeAttribute(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
