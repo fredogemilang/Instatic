@@ -16,7 +16,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import React from 'react'
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { DndContext } from '@dnd-kit/core'
 import { useEditorStore } from '@site/store/store'
 import { queryCanvasElement } from './iframeCanvasQuery'
@@ -54,6 +54,12 @@ function makeAnnotatedNode(
 /** Renders the CanvasRoot (which requires a DndContext). */
 function renderCanvas() {
   return render(<DndContext><CanvasRoot /></DndContext>)
+}
+
+async function flushProgressiveCanvasFrames() {
+  await act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 90))
+  })
 }
 
 /**
@@ -141,9 +147,10 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('B3 — NodeRenderer lock-down: click routing for inlined VC body nodes', () => {
-  it('clicking a VC body node (isInsideSlotContent=false) selects the enclosing ref', () => {
+  it('clicking a VC body node (isInsideSlotContent=false) selects the enclosing ref', async () => {
     setupAnnotatedPage()
     renderCanvas()
+    await flushProgressiveCanvasFrames()
 
     const vcBodyEl = queryCanvasElement('[data-node-id="vc-body"]')
     expect(vcBodyEl).toBeTruthy()
@@ -155,9 +162,10 @@ describe('B3 — NodeRenderer lock-down: click routing for inlined VC body nodes
     expect(state.selectedNodeId).toBe('ref1')
   })
 
-  it('clicking a slot-content node (isInsideSlotContent=true) selects that node directly', () => {
+  it('clicking a slot-content node (isInsideSlotContent=true) selects that node directly', async () => {
     setupAnnotatedPage()
     renderCanvas()
+    await flushProgressiveCanvasFrames()
 
     const slotChildEl = queryCanvasElement('[data-node-id="slot-child"]')
     expect(slotChildEl).toBeTruthy()
@@ -169,9 +177,10 @@ describe('B3 — NodeRenderer lock-down: click routing for inlined VC body nodes
     expect(state.selectedNodeId).toBe('slot-child')
   })
 
-  it('clicking a plain page node (no _owningRefId) selects that node directly', () => {
+  it('clicking a plain page node (no _owningRefId) selects that node directly', async () => {
     setupAnnotatedPage()
     renderCanvas()
+    await flushProgressiveCanvasFrames()
 
     const ref1El = queryCanvasElement('[data-node-id="ref1"]')
     expect(ref1El).toBeTruthy()
@@ -183,9 +192,10 @@ describe('B3 — NodeRenderer lock-down: click routing for inlined VC body nodes
     expect(state.selectedNodeId).toBe('ref1')
   })
 
-  it('hovering a VC body node clamps the hover ring to the enclosing ref', () => {
+  it('hovering a VC body node clamps the hover ring to the enclosing ref', async () => {
     setupAnnotatedPage()
     renderCanvas()
+    await flushProgressiveCanvasFrames()
 
     const vcBodyEl = queryCanvasElement('[data-node-id="vc-body"]')
     const ref1El = queryCanvasElement('[data-node-id="ref1"]')
@@ -199,9 +209,10 @@ describe('B3 — NodeRenderer lock-down: click routing for inlined VC body nodes
     expect(vcBodyEl!.hasAttribute('data-hovered')).toBe(false)
   })
 
-  it('hovering a slot-content node hovers that node directly (no redirect)', () => {
+  it('hovering a slot-content node hovers that node directly (no redirect)', async () => {
     setupAnnotatedPage()
     renderCanvas()
+    await flushProgressiveCanvasFrames()
 
     const slotChildEl = queryCanvasElement('[data-node-id="slot-child"]')
     const ref1El = queryCanvasElement('[data-node-id="ref1"]')

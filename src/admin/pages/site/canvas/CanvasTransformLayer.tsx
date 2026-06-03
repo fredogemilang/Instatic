@@ -14,6 +14,7 @@ import type { Page, Breakpoint } from '@core/page-tree'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { BreakpointFrame } from './BreakpointFrame'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
+import { useProgressiveCanvasFrameLoading } from './useProgressiveCanvasFrameLoading'
 import styles from './CanvasTransformLayer.module.css'
 
 interface CanvasTransformLayerProps {
@@ -45,6 +46,13 @@ export function CanvasTransformLayer({
   for (const breakpoint of breakpoints) {
     if (breakpoint.previewFrame !== false) framedBreakpoints.push(breakpoint)
   }
+  const framedBreakpointIds = framedBreakpoints.map((breakpoint) => breakpoint.id)
+  const readyFrameIds = useProgressiveCanvasFrameLoading({
+    loadKey: page ? `${page.id}:${page.rootNodeId}` : 'no-page',
+    frameIds: framedBreakpointIds,
+    activeFrameId: activeBreakpointId,
+    enabled: page !== null,
+  })
 
   return (
     <div
@@ -73,6 +81,7 @@ export function CanvasTransformLayer({
             onActivate={onBreakpointActivate}
             templateContext={templateContext}
             runtimeScripts={runtimeScripts}
+            renderTree={readyFrameIds.has(bp.id)}
           />
         ))
       ) : (

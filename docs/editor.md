@@ -14,7 +14,7 @@ The frontend is a single React 19 + Vite SPA mounted at `/admin`. Inside it, two
 - **Workspaces:** `dashboard`, `site` (the editor), `content`, `data`, `media`, `plugins`, `users`, `ai`, `account`, `pluginPage`. Capability-gated by `canAccessWorkspace`.
 - **Editor store** lives at `src/admin/pages/site/store/`. Zustand + Immer + `subscribeWithSelector`. 11 slices, one source of truth for the page tree.
 - **Active tree routing:** `mutateActiveTree(fn)` in `siteSlice` is the **only** place that branches on page-mode vs. VC-mode. The 11 named mutation actions are one-liners that delegate to it.
-- **Canvas:** `src/admin/pages/site/canvas/` renders the page tree into per-breakpoint `IframeFrameSurface` iframes. Two views: **design** (multiple breakpoints side-by-side with pan/zoom) and **live** (single real-size editable frame with normal scrolling). Three canvas ring tokens: `--canvas-selection-ring` (neon green, selected node), `--canvas-hover-ring` (neon pink, hovered node), `--canvas-selector-ring` (neon orange, selector-panel match sweep).
+- **Canvas:** `src/admin/pages/site/canvas/` renders the page tree into per-breakpoint `IframeFrameSurface` iframes. Two views: **design** (multiple breakpoints side-by-side with pan/zoom) and **live** (single real-size editable frame with normal scrolling). Design mode paints iframe shells with detailed skeletons first, mounts the active breakpoint's node tree after the first paint, then fills inactive breakpoint frames on idle time. Three canvas ring tokens: `--canvas-selection-ring` (neon green, selected node), `--canvas-hover-ring` (neon pink, hovered node), `--canvas-selector-ring` (neon orange, selector-panel match sweep).
 - **Spotlight:** Cmd+K palette at `src/admin/spotlight/`. Always available across workspaces. Owns its own command registry, providers, and scopes.
 
 ---
@@ -172,6 +172,8 @@ Every admin page picks one of three root layouts from `src/admin/layouts/`. Impo
 | `AdminCanvasLayout` | Site editor (`SitePage`) | Heavy — includes canvas, floating panels, DnD, the full editor store. |
 | `AdminWorkspaceCanvasLayout` | Content, Data, Media | Canvas chrome (toolbar, sidebar, full-height canvas) WITHOUT site-only modules (no PropertiesPanel, no DnD, no CodeMirror). |
 | `AdminPageLayout` | Plugins, Users, Account, plugin admin pages | Lightweight — toolbar + centered scrollable page body. **Must not import the editor store.** Site name and favicon come from `useSiteSummary` + the `adminUi` Zustand store. |
+
+`AdminCanvasLayout` renders `AdminCanvasLayoutSkeleton` while `usePersistence()` is loading the draft site document. The skeleton preserves the final editor regions — toolbar, rail, layers panel, canvas artboards, properties panel — instead of falling back to the global app spinner, so `/admin/site` has immediate shape even before the full site document is available.
 
 The `adminUi` store (`src/admin/state/adminUi.ts`) is the small cross-shell state store: settings-modal open flag, site-import modal open flag, site name/favicon for the toolbar, and the active live-page path. It lives outside `@site/` so `AdminPageLayout` can subscribe without pulling in the 165 KB editor graph. The editor's `settingsSlice` mirrors its state into `adminUi` via a registered bridge so both are always in sync.
 
@@ -370,6 +372,8 @@ Selectors are pure reads. Mutations go through actions (`useEditorStore.getState
 - **Live mode** (`canvasView === 'live'`): `CanvasRoot` → `CanvasLiveSurface` → `IframeFrameSurface` → `NodeRenderer`. A single real-size frame at 100% width (optionally clamped to a selected breakpoint's width) scrolls normally. Resizable with side handles.
 
 Both modes use the same `IframeFrameSurface` and the same `NodeRenderer` — they are fully editable (click-to-select, properties panel, structural edits all work). The only difference is the layout wrapper.
+
+Design mode uses `useProgressiveCanvasFrameLoading` so large pages do not mount every breakpoint copy of the node tree in the same commit. `BreakpointFrame` always mounts the lightweight iframe shell and `CanvasFrameSkeleton`; the active breakpoint's `NodeRenderer` tree is revealed first, and inactive breakpoint trees are revealed one at a time after idle pauses. Direct `BreakpointFrame` usage still renders immediately unless its `renderTree` prop is explicitly disabled.
 
 Each `IframeFrameSurface` boots with an empty `srcDoc` skeleton and portals the React node tree into the iframe's `<body>` via `createPortal`. Why iframes:
 

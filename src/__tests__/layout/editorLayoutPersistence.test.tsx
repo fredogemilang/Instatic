@@ -52,8 +52,22 @@ function installAmbientFetch() {
         headers: { 'content-type': 'application/json' },
       })
     }
-    if (url.endsWith('/admin/api/cms/site/publish-status')) {
-      return new Response(JSON.stringify({ ok: false }), { status: 404 })
+    if (url.endsWith('/admin/api/cms/publish/status')) {
+      return new Response(JSON.stringify({
+        hasPublishedVersion: false,
+        draftMatchesPublished: false,
+        draftPages: 0,
+        publishedPages: 0,
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    if (url.endsWith('/admin/api/cms/me/preferences/module-inserter')) {
+      return new Response(JSON.stringify({ error: 'no saved preference' }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      })
     }
     return new Response(JSON.stringify({ error: `Unhandled ${url}` }), { status: 500 })
   }) as typeof fetch
@@ -204,10 +218,10 @@ beforeEach(() => {
 })
 
 describe('AdminCanvasLayout — CMS site hydration gate', () => {
-  it('does not render editor chrome with an empty store while the CMS site hydrates', async () => {
+  it('renders the editor shell skeleton without mounting live editor chrome while the CMS site hydrates', async () => {
     const loaded = makeSite({ name: 'Hydrated Site' })
     const originalFetch = globalThis.fetch
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const { pages, ...shell } = loaded
       if (url.includes('/admin/api/cms/pages')) {
@@ -233,18 +247,29 @@ describe('AdminCanvasLayout — CMS site hydration gate', () => {
         }))
         return new Response(JSON.stringify({ rows }), { status: 200 })
       }
-      return new Response(JSON.stringify({ site: shell }), { status: 200 })
+      if (url.includes('/admin/api/cms/components')) {
+        return new Response(JSON.stringify({ rows: [] }), { status: 200 })
+      }
+      if (url.includes('/admin/api/cms/site')) {
+        return new Response(JSON.stringify({ site: shell }), { status: 200 })
+      }
+      return originalFetch(input, init)
     }) as typeof fetch
 
     try {
       renderEditorLayout({ preloadSite: false })
 
-      expect(screen.getByRole('status', { name: /loading instatic/i })).toBeDefined()
-      expect(document.querySelector('[data-editor-skeleton="true"]')).toBeNull()
+      expect(screen.getByRole('status', { name: /loading site editor/i })).toBeDefined()
+      expect(screen.getByTestId('admin-site-loading-toolbar')).toBeDefined()
+      expect(screen.getByTestId('admin-site-loading-left-panel')).toBeDefined()
+      expect(screen.getByTestId('admin-site-loading-canvas')).toBeDefined()
+      expect(screen.getByTestId('admin-site-loading-right-panel')).toBeDefined()
+      expect(document.querySelector('[data-editor-skeleton="true"]')).toBeDefined()
       expect(screen.queryByTestId('toolbar')).toBeNull()
       expect(screen.queryByText(/loading site/i)).toBeNull()
 
       expect(await screen.findByText('Hydrated Site')).toBeDefined()
+      expect(screen.queryByRole('status', { name: /loading site editor/i })).toBeNull()
       expect(screen.queryByText(/loading site/i)).toBeNull()
     } finally {
       globalThis.fetch = originalFetch
@@ -260,9 +285,12 @@ describe('AdminCanvasLayout — CMS site hydration gate', () => {
 
     let siteFetchCalls = 0
     const originalFetch = globalThis.fetch
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      if (String(input).includes('/admin/api/cms/site')) siteFetchCalls += 1
-      return new Response(JSON.stringify({ error: 'draft site not found' }), { status: 404 })
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/admin/api/cms/site')) {
+        siteFetchCalls += 1
+        return new Response(JSON.stringify({ error: 'draft site not found' }), { status: 404 })
+      }
+      return originalFetch(input, init)
     }) as typeof fetch
 
     try {

@@ -9,7 +9,7 @@ Each viewport frame runs in its own `<iframe>` with its own `<html><body>`. The 
 ## TL;DR
 
 - `IframeFrameSurface` is the iframe primitive. It boots from an empty `srcDoc`, captures the iframe document, and mounts children via `createPortal(tree, iframeDoc.body)`.
-- **Design mode** renders one `IframeFrameSurface` per framed viewport context inside `CanvasTransformLayer` (pan/zoom). **Live mode** renders a single real-size `IframeFrameSurface` inside `CanvasLiveSurface` (normal scroll).
+- **Design mode** renders one `IframeFrameSurface` per framed viewport context inside `CanvasTransformLayer` (pan/zoom), but it progressive-loads frame contents: iframe shells and skeletons paint first, the active frame's node tree mounts first, and inactive frame node trees mount during idle tasks. **Live mode** renders a single real-size `IframeFrameSurface` inside `CanvasLiveSurface` (normal scroll).
 - Both modes are fully editable — click-to-select, properties panel, structural edits all work. Neither is a read-only preview.
 - CSS arrives in each iframe via three injectors: `EditorChromeInjector` (unlayered), `ClassStyleInjector` (`@layer user-authored`), `UserStylesheetInjector` (`@layer user-authored`).
 - Wheel events and pointer events are forwarded from inside the iframe to the parent's gesture / reorder-drag handlers.
@@ -65,6 +65,8 @@ Source: `src/admin/pages/site/canvas/CanvasTransformLayer.tsx`, `BreakpointFrame
 `CanvasRoot` renders `CanvasTransformLayer` when `canvasView === 'design'`. The transform layer contains one `BreakpointFrame` per viewport context (filtered to `bp.previewFrame !== false`). Each frame wraps an `IframeFrameSurface` in `interaction='canvas'` mode with a label button above it.
 
 Viewport contexts flagged `previewFrame: false` are frameless — they're still selectable editing contexts in the context selector (overrides route to them) but don't render a canvas iframe.
+
+Large pages are staged by `useProgressiveCanvasFrameLoading`. `BreakpointFrame` mounts the iframe and a parent-document `CanvasFrameSkeleton` immediately, but `NodeRenderer` is gated by `renderTree`. The active breakpoint is revealed after the shell has painted; inactive breakpoints are revealed one at a time through idle scheduling. This keeps `/admin/site` responsive when a page has many nodes and multiple preview frames would otherwise duplicate the full render work in one commit.
 
 The active viewport context (highlighted, drives style override routing) is tracked by `activeBreakpointId` in `canvasSlice`.
 

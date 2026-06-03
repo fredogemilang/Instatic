@@ -11,6 +11,12 @@ function renderCanvas() {
   return render(<DndContext><CanvasRoot /></DndContext>)
 }
 
+async function flushProgressiveCanvasFrames() {
+  await act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 90))
+  })
+}
+
 beforeEach(() => {
   cleanup()
   useEditorStore.setState({
@@ -52,6 +58,7 @@ describe('canvas form controls', () => {
     }, formId)
 
     renderCanvas()
+    await flushProgressiveCanvasFrames()
 
     const input = queryCanvasNodeInFrame<HTMLInputElement>('desktop', inputId)
     const select = queryCanvasNodeInFrame<HTMLSelectElement>('desktop', selectId)
