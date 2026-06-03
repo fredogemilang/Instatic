@@ -135,7 +135,7 @@ For SQLite, the parent directory of the DB file is created automatically.
 
 ### Adapter behaviors at the boundary
 
-**`server/db/sqlite.ts` does three things the Postgres adapter doesn't need to:**
+**`server/db/sqlite.ts` does four things the Postgres adapter doesn't need to:**
 
 1. `toBindable(value)` converts JS values for SQLite parameter binding:
    - Plain object / array → `JSON.stringify` (stored as `TEXT`)
@@ -146,6 +146,7 @@ For SQLite, the parent directory of the DB file is created automatically.
    - Everything else → pass through
 2. On read, columns ending in `_json` whose value is a non-empty string are auto-`JSON.parse`d.
 3. Pragmas set at boot: `journal_mode = WAL`, `foreign_keys = ON`, `synchronous = NORMAL`, `busy_timeout = 5000`.
+4. **Transaction serialization.** `bun:sqlite` uses one shared synchronous connection, but a transaction callback can `await` async work while its `BEGIN` is still open. Two concurrent `db.transaction()` calls would cause the second `BEGIN` to throw "cannot start a transaction within a transaction", and the implied `ROLLBACK` would silently abort the first transaction's writes. The adapter prevents this with a promise chain (`txChain`): each `.transaction()` call queues behind the previous one and only issues `BEGIN` after the prior transaction has fully settled. Callers don't need to do anything — it's automatic.
 
 The Postgres adapter relies on `Bun.sql`'s native handling of `jsonb` columns and parameter binding — JS objects sent to `jsonb` columns are stored as JSONB and read back as `Record<string, unknown>` automatically.
 
