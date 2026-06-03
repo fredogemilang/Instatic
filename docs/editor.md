@@ -14,7 +14,7 @@ The frontend is a single React 19 + Vite SPA mounted at `/admin`. Inside it, two
 - **Workspaces:** `dashboard`, `site` (the editor), `content`, `data`, `media`, `plugins`, `users`, `ai`, `account`, `pluginPage`. Capability-gated by `canAccessWorkspace`.
 - **Editor store** lives at `src/admin/pages/site/store/`. Zustand + Immer + `subscribeWithSelector`. 11 slices, one source of truth for the page tree.
 - **Active tree routing:** `mutateActiveTree(fn)` in `siteSlice` is the **only** place that branches on page-mode vs. VC-mode. The 11 named mutation actions are one-liners that delegate to it.
-- **Canvas:** `src/admin/pages/site/canvas/` renders the page tree into per-breakpoint `IframeFrameSurface` iframes. Two views: **design** (multiple breakpoints side-by-side with pan/zoom) and **live** (single real-size editable frame with normal scrolling). Selection / hover ring colors come from `--canvas-selection-ring` / `--canvas-hover-ring`.
+- **Canvas:** `src/admin/pages/site/canvas/` renders the page tree into per-breakpoint `IframeFrameSurface` iframes. Two views: **design** (multiple breakpoints side-by-side with pan/zoom) and **live** (single real-size editable frame with normal scrolling). Three canvas ring tokens: `--canvas-selection-ring` (neon green, selected node), `--canvas-hover-ring` (neon pink, hovered node), `--canvas-selector-ring` (neon orange, selector-panel match sweep).
 - **Spotlight:** Cmd+K palette at `src/admin/spotlight/`. Always available across workspaces. Owns its own command registry, providers, and scopes.
 
 ---

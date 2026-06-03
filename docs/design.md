@@ -104,10 +104,11 @@ Rail tints don't live in `src/styles/globals.css` to be decorative — they're p
 
 ### 7. The canvas owns its own palette
 
-The canvas — where the user's page renders — has two and only two chromatic rings used purely as affordance:
+The canvas — where the user's page renders — has three chromatic rings used purely as affordance:
 
 - `--canvas-selection-ring` (neon green `#39ff14`) — node selected by the user
 - `--canvas-hover-ring` (neon pink `#ff2bd6`) — node hovered
+- `--canvas-selector-ring` (neon orange `#ff8800`) — match sweep when hovering a selector rule in the Selectors panel
 
 These are bright on purpose so they read against any user content, including content that itself uses the chrome palette.
 
