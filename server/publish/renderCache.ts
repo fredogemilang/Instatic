@@ -18,6 +18,13 @@
  * `null` factory returns are not cached — subsequent calls re-invoke the
  * factory. Factory errors propagate to all concurrent callers sharing the
  * in-flight promise.
+ *
+ * Version is captured at render START: an entry is stored tagged with the
+ * publishVersion that was current when the factory began, and ONLY if the
+ * version is unchanged when the factory resolves. A publish that lands
+ * mid-render (bumping the version) means the rendered HTML reflects a
+ * superseded snapshot, so it is discarded rather than cached as current —
+ * the next request re-renders against the fresh snapshot.
  */
 
 export interface RenderCacheKey {
@@ -151,11 +158,20 @@ export async function getOrRender(
     return inflight
   }
 
+  // Capture the publish version at render START. The factory renders the
+  // snapshot that was current now; if a publish bumps the version while the
+  // render is in flight, the result is stale and must NOT be cached as the new
+  // version (that would serve old HTML as current until the next publish).
+  const versionAtStart = publishVersion
+
   // Start a new factory and register it as in-flight.
   const promise: Promise<CachedResponse | null> = (async () => {
     try {
       const result = await factory()
-      if (result !== null) {
+      // Only cache when a publish did NOT happen mid-render. A version change
+      // means `result` reflects a now-superseded snapshot — drop it and let the
+      // next request re-render against the fresh snapshot.
+      if (result !== null && publishVersion === versionAtStart) {
         // Remove any stale entry for this key so the new one lands at the
         // most-recent (tail) position in the Map's insertion order.
         map.delete(k)
@@ -164,7 +180,7 @@ export async function getOrRender(
           const firstKey = map.keys().next().value
           if (firstKey !== undefined) map.delete(firstKey)
         }
-        map.set(k, { publishVersion, response: result })
+        map.set(k, { publishVersion: versionAtStart, response: result })
       }
       return result
     } finally {

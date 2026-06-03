@@ -6,6 +6,8 @@
  *   - LRU recency: a read promotes an entry so it survives the next eviction
  *   - Hit/miss semantics
  *   - publishVersion invalidation via bumpPublishVersion()
+ *   - Publish mid-render race: a version bump while a render is in flight
+ *     discards the stale result instead of caching it as current
  *   - Single-flight: concurrent callers share one factory invocation
  *   - null factory return is not cached
  *   - Factory throws: error propagates and in-flight slot is cleared
@@ -101,6 +103,64 @@ describe('publishVersion invalidation', () => {
     // Third call: should be a hit with resp2
     const third = await getOrRender(key, factory(makeResponse('stale')))
     expect(third).toEqual(resp2)
+    expect(getStats().hits).toBe(1)
+  })
+})
+
+describe('publish mid-render race', () => {
+  it('does not cache a render whose version was bumped while it was in flight', async () => {
+    const key = makeKey('/race')
+    let resolveFactory!: (v: CachedResponse) => void
+
+    // A slow factory that resolves with the snapshot captured at render START.
+    const slowFactory = () =>
+      new Promise<CachedResponse>((resolve) => {
+        resolveFactory = resolve
+      })
+
+    // Start the render (version 0). It is now in-flight.
+    const inFlight = getOrRender(key, slowFactory)
+
+    // A publish lands mid-render: bump the version, then the render finishes
+    // with the now-stale (version-0) HTML.
+    bumpPublishVersion() // version 0 -> 1
+    resolveFactory(makeResponse('stale-v0'))
+
+    const staleResult = await inFlight
+    // The caller still receives the result it rendered...
+    expect(staleResult).toEqual(makeResponse('stale-v0'))
+    // ...but it must NOT have been cached as the current (v1) entry.
+    expect(getStats().size).toBe(0)
+
+    // The next request re-renders against the fresh snapshot and caches that.
+    const fresh = makeResponse('fresh-v1')
+    const result = await getOrRender(key, factory(fresh))
+    expect(result).toEqual(fresh)
+    expect(getStats().size).toBe(1)
+
+    // And it is now a hit at the current version.
+    const hit = await getOrRender(key, factory(makeResponse('ignored')))
+    expect(hit).toEqual(fresh)
+    expect(getStats().hits).toBe(1)
+  })
+
+  it('caches normally when no publish happens during the render', async () => {
+    const key = makeKey('/no-race')
+    let resolveFactory!: (v: CachedResponse) => void
+    const slowFactory = () =>
+      new Promise<CachedResponse>((resolve) => {
+        resolveFactory = resolve
+      })
+
+    const inFlight = getOrRender(key, slowFactory)
+    const resp = makeResponse('rendered')
+    resolveFactory(resp)
+    await inFlight
+
+    // No bump occurred, so the entry is cached and served on the next read.
+    expect(getStats().size).toBe(1)
+    const hit = await getOrRender(key, factory(makeResponse('ignored')))
+    expect(hit).toEqual(resp)
     expect(getStats().hits).toBe(1)
   })
 })
