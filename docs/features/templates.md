@@ -221,6 +221,54 @@ When editing a template page, the canvas needs a `currentEntry` without a publis
 - **`postTypes` target:** fetches the table schema by `target.tableSlugs[0]` and synthesizes a preview row via `dataTablePreviewToLoopItem(table)`.
 - **`everywhere` target:** no current entry — `base.outlet` renders as a placeholder in the canvas.
 
+Preview values are generic placeholders: `'Example Post Title'` for the `title` field, `null` for `media` fields. Modules must handle `null` media gracefully — the canvas shows "No image selected" for an unbound or null image source.
+
+### Dynamic binding picker
+
+The Properties panel wraps every bindable control in `DynamicBindingControl` (`src/admin/pages/site/property-controls/DynamicBindingControl/`). Two interaction modes:
+
+- **Insert mode** (text / string controls): clicking the `{}` affordance opens a picker popover. Clicking a field row inserts a `{source.field}` token into the text value at the caret. The popover **stays open** so authors can insert multiple tokens in one session without re-opening.
+- **Bind mode** (image / media controls): clicking the affordance opens the picker. Clicking a field commits a structured entry to `node.dynamicBindings[propKey]` and the picker **closes immediately**.
+
+Neither mode has a Confirm step — a single click is the action.
+
+**Auto-scope:** when the active page is a `postTypes` template, the picker auto-scopes to the first targeted table. Field rows appear directly under a `"<TableName> fields"` group header with a chip labelled `"Current row — <TableName>"`. No source-selection step is shown.
+
+**Unscoped state:** when the node is outside a loop or template context, table fields are not offered. A footer hint reads: *"Wrap in a Loop or open a postType template to bind to row fields."*
+
+Loop nodes supply `availableFields` / `sourceLabel` props to show loop-specific synthetic fields in a `"<SourceLabel> fields"` group in the same single-pane layout.
+
+DataMeta is fetched once from `/data/_meta` and cached module-level in `cache.ts`; import `clearDataMetaCache()` in tests to reset between cases.
+
+---
+
+## Template management in the editor
+
+The **Site Explorer** panel (`src/admin/pages/site/panels/SiteExplorerPanel/`) shows **Pages** and **Templates** in separate labelled sections. Clicking a template row opens it in the canvas like a page; the canvas preview uses the synthetic entry from `useTemplatePreviewContext`.
+
+### Converting a page to a template
+
+Right-click a page row → **Use as template** → the **Template settings** dialog opens:
+
+| Field | Description |
+|---|---|
+| Applies to | `Everywhere` (outer layout for all pages and entries) or `Post types` (entry template for ≥1 post-type tables) |
+| Post types | Checkbox list of all post-type tables — visible when "Post types" is selected |
+| Priority | Higher number wins when multiple templates match the same breadth level |
+
+The dialog validates that the page contains exactly one `base.outlet` before saving — it shows a blocking alert if the count is not 1.
+
+Store action: `convertPageToTemplate(pageId, { target, priority })` in `siteSlice`.
+
+### Converting a template back to a page
+
+Right-click a template row → **Convert to page**. This:
+
+1. Clears `page.template` (removes the template config entirely).
+2. Strips `dynamicBindings` from every node in the page tree (bindings are meaningless without a template context).
+
+Store action: `convertTemplateToPage(pageId)` in `siteSlice`.
+
 ---
 
 ## Seeding — default entry templates
@@ -254,7 +302,7 @@ When a postType is created, the system seeds a default entry template automatica
 
 ### Share a layout across post types
 
-Set `targetKind: 'postTypes'` and check multiple post types in the Template settings dialog. A single template can list several `tableSlugs`.
+In the Template settings dialog, set **Applies to** to "Post types" and check multiple post-type tables. A single template can list several `tableSlugs`: `{ kind: 'postTypes', tableSlugs: ['posts', 'news'] }`.
 
 ### Custom token in text
 
@@ -297,5 +345,8 @@ node.props.text = 'Posted by {currentEntry.author.displayName} on {currentEntry.
   - `src/core/templates/dynamicBindings.ts` — `TemplateRenderDataContext`, `resolveDynamicProps`
   - `src/core/templates/tokenInterpolation.ts` — `parseTokenString`, `interpolateTokens`
   - `src/modules/base/outlet/index.ts` — `base.outlet` module
+  - `src/admin/pages/site/property-controls/DynamicBindingControl/` — binding affordance + picker popover
+  - `src/admin/pages/site/hooks/useTemplatePreviewContext.ts` — synthetic preview context for the canvas
+  - `src/core/templates/templatePreviewData.ts` — `buildPreviewCells`, `dataTablePreviewToLoopItem`
   - `server/repositories/data/templateSeeding.ts` — default-template seeding
   - `server/publish/publicRenderer.ts` — chain-aware render paths

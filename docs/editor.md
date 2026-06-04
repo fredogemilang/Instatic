@@ -306,6 +306,8 @@ Organization is persisted in `site.explorer` on the site shell. Folders are deco
 | `moveExplorerFolder(sectionId, folderId, nextIndex)` | Reorders a folder within the root level |
 | `moveExplorerItem(sectionId, itemId, parentFolderId, nextIndex)` | Moves an item to a folder or the root; the homepage cannot be moved |
 | `setPageAsHomepage(pageId)` | Promotes a page to `slug='index'`, demotes the previous homepage to a generated slug, pins the new homepage at the section root |
+| `convertPageToTemplate(pageId, payload)` | Sets `page.template` config; moves the row from Pages to Templates section in the explorer |
+| `convertTemplateToPage(pageId)` | Clears `page.template` and strips `dynamicBindings` from all nodes; moves the row back to Pages |
 
 **DnD architecture:** Organization drag-and-drop (`useSiteExplorerDnd`) uses `useDndMonitor` to hook into the outer `DndContext` that lives in `AdminCanvasEditorBody`. The explorer DnD hook only reacts to `siteExplorerItem` / `siteExplorerFolder` drags, which keeps Site Explorer focused on opening and organizing site artifacts rather than inserting components onto the canvas.
 
@@ -698,6 +700,7 @@ See [docs/features/plugin-system.md](features/plugin-system.md) for the plugin S
   - `src/admin/pages/site/panels/SiteExplorerPanel/useSiteExplorerDnd.ts` — DnD monitor for explorer organization drag-and-drop
   - `src/admin/pages/site/store/slices/site/explorerActions.ts` — 6 explorer store actions wired to `mutateSite`
   - `src/admin/pages/site/hooks/useInsertInserterItem.ts` — shared `onInsertItem` handler for `ModuleInserterDialog` (toolbar `+` and canvas selection toolbar both use it)
+  - `src/admin/pages/site/property-controls/DynamicBindingControl/` — binding affordance wrapper + single-pane picker popover; `cache.ts` holds the DataMeta fetch + module-level cache
 - Gate tests:
   - `src/__tests__/architecture/admin-router-usage.test.ts`
   - `src/__tests__/architecture/admin-startup-imports.test.ts` — pre-auth code must not import the full `@core/persistence` barrel
