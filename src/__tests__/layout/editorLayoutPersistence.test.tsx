@@ -218,7 +218,7 @@ beforeEach(() => {
 })
 
 describe('AdminCanvasLayout — CMS site hydration gate', () => {
-  it('renders the editor shell skeleton without mounting live editor chrome while the CMS site hydrates', async () => {
+  it('keeps the editor shell mounted while the CMS site hydrates', async () => {
     const loaded = makeSite({ name: 'Hydrated Site' })
     const originalFetch = globalThis.fetch
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -259,14 +259,16 @@ describe('AdminCanvasLayout — CMS site hydration gate', () => {
     try {
       renderEditorLayout({ preloadSite: false })
 
-      expect(screen.getByRole('status', { name: /loading site editor/i })).toBeDefined()
-      expect(screen.getByTestId('admin-site-loading-toolbar')).toBeDefined()
-      expect(screen.getByTestId('admin-site-loading-left-panel')).toBeDefined()
-      expect(screen.getByTestId('admin-site-loading-canvas')).toBeDefined()
-      expect(screen.getByTestId('admin-site-loading-right-panel')).toBeDefined()
-      expect(document.querySelector('[data-editor-skeleton="true"]')).toBeDefined()
-      expect(screen.queryByTestId('toolbar')).toBeNull()
-      expect(screen.queryByText(/loading site/i)).toBeNull()
+      expect(screen.getByTestId('toolbar')).toBeDefined()
+      expect(screen.getByTestId('left-sidebar')).toBeDefined()
+      expect(screen.getByTestId('canvas-root')).toBeDefined()
+      expect(screen.getByTestId('right-sidebar')).toBeDefined()
+      expect(screen.queryByRole('status', { name: /loading site editor/i })).toBeNull()
+      expect(screen.queryByTestId('admin-site-loading-toolbar')).toBeNull()
+      expect(screen.queryByTestId('admin-site-loading-left-panel')).toBeNull()
+      expect(screen.queryByTestId('admin-site-loading-canvas')).toBeNull()
+      expect(screen.queryByTestId('admin-site-loading-right-panel')).toBeNull()
+      expect(screen.getAllByText(/loading site/i).length).toBeGreaterThan(0)
 
       expect(await screen.findByText('Hydrated Site')).toBeDefined()
       expect(screen.queryByRole('status', { name: /loading site editor/i })).toBeNull()

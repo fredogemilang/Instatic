@@ -30,6 +30,33 @@
   min-height: 0;
 }
 
+.canvasBootstrapError {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  place-content: center;
+  gap: 10px;
+  padding: 32px;
+  background: var(--editor-bg);
+  color: var(--editor-text);
+  text-align: center;
+}
+
+.canvasBootstrapError h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.canvasBootstrapError p {
+  max-width: 460px;
+  margin: 0;
+  color: var(--editor-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .canvasStageRightSidebarOpen {
   border-top-right-radius: 12px;
 }
@@ -41,150 +68,6 @@
 :global(::view-transition-new(root)) {
   animation-duration: 100ms;
   animation-timing-function: ease;
-}
-
-.bootstrapError {
-  display: grid;
-  min-height: 100vh;
-  place-content: center;
-  gap: 10px;
-  padding: 32px;
-  background: var(--editor-bg);
-  color: var(--editor-text);
-  text-align: center;
-}
-
-.bootstrapError h1 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 650;
-}
-
-.bootstrapError p {
-  max-width: 460px;
-  margin: 0;
-  color: var(--editor-text-muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.loadingShell {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
-  background: var(--editor-bg);
-  color: var(--editor-text);
-}
-
-.loadingToolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 18px;
-  min-height: 52px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--editor-border);
-  background: var(--editor-surface);
-}
-
-.loadingBrand,
-.loadingToolbarGroup,
-.loadingToolbarActions,
-.loadingFrameNav {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.loadingToolbarGroup {
-  justify-content: center;
-}
-
-.loadingToolbarActions {
-  justify-content: flex-end;
-}
-
-.loadingBody {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.loadingRail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  width: 48px;
-  padding: 12px 8px;
-  border-right: 1px solid var(--editor-border);
-  background: var(--editor-surface);
-}
-
-.loadingLeftPanel,
-.loadingRightPanel {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  width: 300px;
-  min-width: 300px;
-  padding: 14px;
-  background: var(--editor-surface-2);
-}
-
-.loadingLeftPanel {
-  border-right: 1px solid var(--editor-border);
-}
-
-.loadingRightPanel {
-  border-left: 1px solid var(--editor-border);
-}
-
-.loadingCanvas {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  background: var(--editor-surface);
-}
-
-.loadingFrames {
-  position: absolute;
-  top: 80px;
-  left: 80px;
-  display: flex;
-  align-items: flex-start;
-  gap: 40px;
-}
-
-.loadingCanvasFrame {
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-  width: 360px;
-  min-height: 620px;
-  padding: 22px;
-  border-radius: var(--editor-radius);
-  background: var(--editor-surface-2);
-}
-
-.loadingCanvasFrameWide {
-  width: 540px;
-}
-
-.loadingFrameHero,
-.loadingInspectorBlock {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.loadingFrameCards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {

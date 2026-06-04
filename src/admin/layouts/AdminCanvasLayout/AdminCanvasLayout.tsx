@@ -66,7 +66,6 @@ import { cn } from '@ui/cn'
 import { useInstalledEditorPlugins } from '@admin/pages/plugins/hooks/useInstalledEditorPlugins'
 import { usePluginEventBridge } from '@admin/pages/plugins/hooks/usePluginEventBridge'
 import { AdminSectionNavigation } from '@admin/shared/AdminSectionNavigation'
-import { Skeleton, SkeletonCircle, SkeletonRows } from '@ui/components/Skeleton'
 import styles from './AdminCanvasLayout.module.css'
 import { lazy, Suspense, useEffect } from 'react'
 import { useCurrentAdminUser } from '@admin/sessionContext'
@@ -213,18 +212,9 @@ export function AdminCanvasLayout() {
   // on every render).
   const density = useEditorSelectPreference('density')
 
-  if (!site) {
-    if (persistence.saveStatus.state === 'error') {
-      return (
-        <main className={styles.bootstrapError} role="alert">
-          <h1>Could not load CMS site</h1>
-          <p>{persistence.saveStatus.message ?? 'Reload the admin page and try again.'}</p>
-        </main>
-      )
-    }
-
-    return <AdminCanvasLayoutSkeleton />
-  }
+  const loadError = !site && persistence.saveStatus.state === 'error'
+    ? persistence.saveStatus.message ?? 'Reload the admin page and try again.'
+    : null
 
   return (
     <EditorPermissionsProvider value={permissions}>
@@ -289,7 +279,11 @@ export function AdminCanvasLayout() {
         >
           <div className={styles.canvasContent} key="site">
             {/* Canvas — fills the remaining space between sidebars */}
-            <CanvasRoot editable={canEditDraftSite} />
+            {loadError ? (
+              <SiteEditorLoadError message={loadError} />
+            ) : (
+              <CanvasRoot editable={canEditDraftSite} />
+            )}
             {/* Properties can be unpinned into the floating draggable overlay. */}
             {canSaveSite && propertiesPanelMode === 'floating' && <PropertiesPanel variant="floating" />}
           </div>
@@ -332,99 +326,11 @@ export function AdminCanvasLayout() {
   )
 }
 
-export function AdminCanvasLayoutSkeleton() {
+function SiteEditorLoadError({ message }: { message: string }) {
   return (
-    <output
-      className={styles.loadingShell}
-      aria-busy="true"
-      aria-label="Loading site editor"
-    >
-      <div
-        className={styles.loadingToolbar}
-        data-testid="admin-site-loading-toolbar"
-        aria-hidden="true"
-      >
-        <div className={styles.loadingBrand}>
-          <SkeletonCircle size={22} />
-          <Skeleton width={132} height={14} />
-        </div>
-        <div className={styles.loadingToolbarGroup}>
-          <Skeleton width={68} height={26} radius="var(--input-radius)" />
-          <Skeleton width={74} height={26} radius="var(--input-radius)" />
-          <Skeleton width={58} height={26} radius="var(--input-radius)" />
-        </div>
-        <div className={styles.loadingToolbarActions}>
-          <Skeleton width={82} height={28} radius="var(--input-radius)" />
-          <Skeleton width={96} height={28} radius="var(--input-radius)" />
-          <SkeletonCircle size={28} />
-        </div>
-      </div>
-
-      <div className={styles.loadingBody} aria-hidden="true">
-        <div className={styles.loadingRail}>
-          {Array.from({ length: 7 }, (_, index) => (
-            <Skeleton key={index} width={28} height={28} radius="var(--editor-radius)" />
-          ))}
-        </div>
-
-        <div
-          className={styles.loadingLeftPanel}
-          data-testid="admin-site-loading-left-panel"
-        >
-          <Skeleton width="48%" height={14} />
-          <SkeletonRows count={11} rowHeight={22} />
-        </div>
-
-        <div
-          className={styles.loadingCanvas}
-          data-testid="admin-site-loading-canvas"
-        >
-          <div className={styles.loadingFrames}>
-            <LoadingCanvasFrame size="narrow" />
-            <LoadingCanvasFrame size="wide" />
-          </div>
-        </div>
-
-        <div
-          className={styles.loadingRightPanel}
-          data-testid="admin-site-loading-right-panel"
-        >
-          <Skeleton width="44%" height={14} />
-          <SkeletonRows count={4} rowHeight={24} />
-          <div className={styles.loadingInspectorBlock}>
-            <Skeleton width="38%" height={12} />
-            <Skeleton height={34} radius="var(--editor-radius)" />
-            <Skeleton height={34} radius="var(--editor-radius)" />
-          </div>
-        </div>
-      </div>
-    </output>
-  )
-}
-
-function LoadingCanvasFrame({ size }: { size: 'narrow' | 'wide' }) {
-  return (
-    <div
-      className={cn(
-        styles.loadingCanvasFrame,
-        size === 'wide' && styles.loadingCanvasFrameWide,
-      )}
-    >
-      <div className={styles.loadingFrameNav}>
-        <SkeletonCircle size={18} />
-        <Skeleton width="22%" height={10} />
-        <Skeleton width="16%" height={10} />
-      </div>
-      <div className={styles.loadingFrameHero}>
-        <Skeleton width="54%" height={24} />
-        <Skeleton width="72%" height={11} />
-        <Skeleton width="64%" height={11} />
-      </div>
-      <div className={styles.loadingFrameCards}>
-        <Skeleton height={68} radius="var(--editor-radius)" />
-        <Skeleton height={68} radius="var(--editor-radius)" />
-      </div>
-      <SkeletonRows count={3} rowHeight={10} />
-    </div>
+    <section className={styles.canvasBootstrapError} role="alert">
+      <h1>Could not load CMS site</h1>
+      <p>{message}</p>
+    </section>
   )
 }
