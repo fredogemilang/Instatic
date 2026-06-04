@@ -5,39 +5,17 @@ import {
   useReducer,
   useRef,
   useEffect,
-  useId,
   useImperativeHandle,
-  type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
   type Ref,
 } from 'react'
-import { createPortal } from 'react-dom'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
-import { Button } from '@ui/components/Button'
-import {
-  ContextMenu,
-  ContextMenuItem,
-  ContextMenuSeparator,
-} from '@ui/components/ContextMenu'
-import { Dialog } from '@ui/components/Dialog'
-import { Input } from '@ui/components/Input'
-import { ChevronUpIcon } from 'pixel-art-icons/icons/chevron-up'
-import { ChevronDownIcon } from 'pixel-art-icons/icons/chevron-down'
-import { CloseIcon } from 'pixel-art-icons/icons/close'
-import { EditSolidIcon } from 'pixel-art-icons/icons/edit-solid'
-import {
-  isGeneratedClassLocked,
-  isUserVisibleClass,
-  classifySelectorCreateInput,
-  type PageNode,
-  type StyleRule,
-} from '@core/page-tree'
+import { classifySelectorCreateInput } from '@core/page-tree'
 import { recordClassUsage } from '@site/preferences/classUsage'
 import { getErrorMessage } from '@core/utils/errorMessage'
-import { useClassPickerSuggestions } from './useClassPickerSuggestions'
 import {
   deriveSelectorPickerModel,
   type SelectorSuggestionItem,
@@ -48,97 +26,15 @@ import {
   SelectorSuggestionsPortal,
   UnmatchedSelectorNotice,
 } from './ClassPickerParts'
-import dialogStyles from '../../../../shared/dialogs/SiteCreateDialog/SiteCreateDialog.module.css'
+import { classPickerUiReducer, initialClassPickerUiState } from './classPickerUiState'
+import { useClassPickerDerivedState, cssAttrSelectorValue } from './useClassPickerDerivedState'
+import { PillContextMenuPortal } from './ClassPillContextMenu'
+import { ClassRenameDialog } from './ClassRenameDialog'
 import styles from './ClassPicker.module.css'
-
-interface ClassContextMenuState {
-  x: number
-  y: number
-  classId: string
-}
 
 interface UnmatchedSelectorNoticeState {
   ruleId: string
   selector: string
-}
-
-interface ClassPickerUiState {
-  query: string
-  showSuggestions: boolean
-  contextMenu: ClassContextMenuState | null
-  renameTarget: StyleRule | null
-  createError: string | null
-  highlightedIndex: number
-}
-
-type ClassPickerUiAction =
-  | { type: 'inputChanged'; query: string }
-  | { type: 'openSuggestions' }
-  | { type: 'closeSuggestions' }
-  | { type: 'resetAfterSubmit' }
-  | { type: 'setContextMenu'; contextMenu: ClassContextMenuState | null }
-  | { type: 'setRenameTarget'; renameTarget: StyleRule | null }
-  | { type: 'setCreateError'; message: string | null }
-  | { type: 'moveHighlight'; direction: 'next' | 'previous'; count: number }
-
-const initialClassPickerUiState: ClassPickerUiState = {
-  query: '',
-  showSuggestions: false,
-  contextMenu: null,
-  renameTarget: null,
-  createError: null,
-  highlightedIndex: -1,
-}
-
-function classPickerUiReducer(
-  state: ClassPickerUiState,
-  action: ClassPickerUiAction,
-): ClassPickerUiState {
-  switch (action.type) {
-    case 'inputChanged':
-      return {
-        ...state,
-        query: action.query,
-        showSuggestions: true,
-        createError: null,
-        highlightedIndex: -1,
-      }
-    case 'openSuggestions':
-      return { ...state, showSuggestions: true }
-    case 'closeSuggestions':
-      return { ...state, showSuggestions: false, highlightedIndex: -1 }
-    case 'resetAfterSubmit':
-      return {
-        ...state,
-        query: '',
-        showSuggestions: false,
-        createError: null,
-        highlightedIndex: -1,
-      }
-    case 'setContextMenu':
-      return { ...state, contextMenu: action.contextMenu }
-    case 'setRenameTarget':
-      return { ...state, renameTarget: action.renameTarget }
-    case 'setCreateError':
-      return { ...state, createError: action.message, showSuggestions: false, highlightedIndex: -1 }
-    case 'moveHighlight': {
-      if (action.count <= 0) return state
-      if (action.direction === 'next') {
-        const next = state.highlightedIndex + 1
-        return {
-          ...state,
-          showSuggestions: true,
-          highlightedIndex: next >= action.count ? 0 : next,
-        }
-      }
-      return {
-        ...state,
-        showSuggestions: true,
-        highlightedIndex:
-          state.highlightedIndex <= 0 ? action.count - 1 : state.highlightedIndex - 1,
-      }
-    }
-  }
 }
 
 function keyboardMenuPosition(element: HTMLElement) {
@@ -146,86 +42,6 @@ function keyboardMenuPosition(element: HTMLElement) {
   return {
     x: rect.left + Math.min(rect.width - 8, 24),
     y: rect.top + Math.min(rect.height - 8, 24),
-  }
-}
-
-function isClassRule(rule: StyleRule): boolean {
-  return !rule.kind || rule.kind === 'class'
-}
-
-function cssAttrSelectorValue(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-}
-
-function getSelectedCanvasElement(nodeId: string): HTMLElement | null {
-  const selector = `[data-node-id="${cssAttrSelectorValue(nodeId)}"]`
-  const localElement = document.querySelector<HTMLElement>(selector)
-  if (localElement) return localElement
-
-  for (const frame of document.querySelectorAll('iframe')) {
-    try {
-      const frameElement = frame.contentDocument?.querySelector<HTMLElement>(selector) ?? null
-      if (frameElement) return frameElement
-    } catch (_err) {
-      // Canvas iframes are same-origin srcdoc documents; ignore any unexpected
-      // cross-origin iframe a plugin or dev tool may add to the admin shell.
-    }
-  }
-  return null
-}
-
-function useClassPickerDerivedState({
-  site,
-  node,
-  nodeId,
-  activeClassId,
-  inlineStyleEditing,
-  query,
-  highlightedIndex,
-}: {
-  site: { styleRules: Record<string, StyleRule> } | null
-  node: PageNode | null
-  nodeId: string
-  activeClassId: string | null
-  inlineStyleEditing: boolean
-  query: string
-  highlightedIndex: number
-}) {
-  const assignedIds = node?.classIds ?? []
-  const visibleAssignedIds = assignedIds.filter((id) => isUserVisibleClass(site?.styleRules[id]))
-  const nodeHasInlineStyles = !!node?.inlineStyles && Object.keys(node.inlineStyles).length > 0
-  const allRules = Object.values(site?.styleRules ?? {}).filter(isUserVisibleClass)
-  const allClasses = allRules.filter(isClassRule)
-  const visibleRuleRegistry = Object.fromEntries(allRules.map((rule) => [rule.id, rule]))
-  const selectedElement = getSelectedCanvasElement(nodeId)
-  const selectorModel = deriveSelectorPickerModel({
-    rules: visibleRuleRegistry,
-    node,
-    selectedElement,
-    activeRuleId: inlineStyleEditing ? null : activeClassId,
-  })
-  const ambientSelectorItems = selectorModel.suggestions.filter((item) => item.rule.kind === 'ambient')
-  const suggestions = useClassPickerSuggestions({
-    allClasses,
-    assignedIds,
-    selectorItems: ambientSelectorItems,
-    query,
-    highlightedIndex,
-  })
-  const hasSuggestionRows = (
-    suggestions.isEmptyQuery
-      ? suggestions.candidates.length > 0
-      : suggestions.filteredSuggestions.length > 0
-  ) || suggestions.selectorSuggestions.length > 0
-
-  return {
-    visibleAssignedIds,
-    showInlinePill: nodeHasInlineStyles || inlineStyleEditing,
-    selectedElement,
-    selectorModel,
-    hasSuggestionRows,
-    highlightedSelectorId: suggestions.highlightedSelectorItem?.rule.id ?? null,
-    ...suggestions,
   }
 }
 
@@ -563,192 +379,5 @@ export function ClassPicker({ nodeId, trailingAction, ref }: ClassPickerProps) {
         }}
       />
     </div>
-  )
-}
-
-interface PillContextMenuPortalProps {
-  contextMenu: ClassContextMenuState | null
-  contextClass: StyleRule | null
-  contextClassIndex: number
-  visibleAssignedCount: number
-  onClose: () => void
-  onEdit: (cls: StyleRule) => void
-  onRename: (cls: StyleRule) => void
-  onMove: (cls: StyleRule, direction: 'up' | 'down') => void
-  onRemove: (cls: StyleRule) => void
-}
-
-function PillContextMenuPortal({
-  contextMenu,
-  contextClass,
-  contextClassIndex,
-  visibleAssignedCount,
-  onClose,
-  onEdit,
-  onRename,
-  onMove,
-  onRemove,
-}: PillContextMenuPortalProps): React.ReactPortal | null {
-  if (!contextMenu || !contextClass) return null
-  const locked = isGeneratedClassLocked(contextClass)
-  const runAndClose = (fn: () => void) => () => {
-    fn()
-    onClose()
-  }
-  return createPortal(
-    <ClassPillContextMenu
-      x={contextMenu.x}
-      y={contextMenu.y}
-      canMoveUp={contextClassIndex > 0}
-      canMoveDown={contextClassIndex >= 0 && contextClassIndex < visibleAssignedCount - 1}
-      locked={locked}
-      onClose={onClose}
-      onEdit={runAndClose(() => onEdit(contextClass))}
-      onRename={runAndClose(() => {
-        if (!locked) onRename(contextClass)
-      })}
-      onMoveUp={runAndClose(() => onMove(contextClass, 'up'))}
-      onMoveDown={runAndClose(() => onMove(contextClass, 'down'))}
-      onRemove={runAndClose(() => onRemove(contextClass))}
-    />,
-    document.body,
-  )
-}
-
-function ClassPillContextMenu({
-  x,
-  y,
-  canMoveUp,
-  canMoveDown,
-  onClose,
-  onEdit,
-  onRename,
-  onMoveUp,
-  onMoveDown,
-  onRemove,
-  locked,
-}: {
-  x: number
-  y: number
-  canMoveUp: boolean
-  canMoveDown: boolean
-  locked: boolean
-  onClose: () => void
-  onEdit: () => void
-  onRename: () => void
-  onMoveUp: () => void
-  onMoveDown: () => void
-  onRemove: () => void
-}) {
-  const firstItemRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    firstItemRef.current?.focus()
-  }, [])
-
-  return (
-    <ContextMenu x={x} y={y} ariaLabel="Class actions" onClose={onClose}>
-      <ContextMenuItem ref={firstItemRef} onClick={onEdit}>
-        <span aria-hidden="true"><EditSolidIcon size={13} /></span>
-        {locked ? 'View utility' : 'Edit styles'}
-      </ContextMenuItem>
-      <ContextMenuItem disabled={locked} onClick={onRename}>
-        <span aria-hidden="true"><EditSolidIcon size={13} /></span>
-        Rename
-      </ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem disabled={!canMoveUp} onClick={onMoveUp}>
-        <span aria-hidden="true"><ChevronUpIcon size={13} /></span>
-        Move up
-      </ContextMenuItem>
-      <ContextMenuItem disabled={!canMoveDown} onClick={onMoveDown}>
-        <span aria-hidden="true"><ChevronDownIcon size={13} /></span>
-        Move down
-      </ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem danger onClick={onRemove}>
-        <span aria-hidden="true"><CloseIcon size={13} /></span>
-        Remove from this element
-      </ContextMenuItem>
-    </ContextMenu>
-  )
-}
-
-const CLASS_RENAME_FORM_ID = 'class-rename-form'
-
-function ClassRenameDialog({
-  initialValue,
-  onCancel,
-  onRename,
-}: {
-  initialValue: string
-  onCancel: () => void
-  onRename: (name: string) => void
-}) {
-  const [name, setName] = useState(initialValue)
-  const [error, setError] = useState<string | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const trimmedName = name.trim()
-  const nameInputId = useId()
-
-  useEffect(() => {
-    requestAnimationFrame(() => inputRef.current?.select())
-  }, [])
-
-  function handleSubmit(event: FormEvent) {
-    event.preventDefault()
-    if (!trimmedName) return
-
-    try {
-      onRename(trimmedName)
-    } catch (err) {
-      setError(err instanceof Error ? err.message.replace(/^\[[^\]]+\]\s*/, '') : 'Unable to rename class')
-    }
-  }
-
-  return (
-    <Dialog
-      open
-      onClose={onCancel}
-      title="Rename selector"
-      size="sm"
-      initialFocusRef={inputRef}
-      footer={
-        <>
-          <Button variant="secondary" size="sm" type="button" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            type="submit"
-            form={CLASS_RENAME_FORM_ID}
-            disabled={!trimmedName}
-          >
-            Save
-          </Button>
-        </>
-      }
-    >
-      <form id={CLASS_RENAME_FORM_ID} className={dialogStyles.form} onSubmit={handleSubmit}>
-        <div className={dialogStyles.field}>
-          <label htmlFor={nameInputId} className={dialogStyles.label}>Name</label>
-          <Input
-            id={nameInputId}
-            ref={inputRef}
-            fieldSize="sm"
-            value={name}
-            onChange={(event) => {
-              setName(event.target.value)
-              setError(null)
-            }}
-            aria-label="Class name"
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </div>
-        {error && <p role="alert" className={dialogStyles.errorText}>{error}</p>}
-      </form>
-    </Dialog>
   )
 }

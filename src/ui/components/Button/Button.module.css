@@ -164,6 +164,15 @@
     color: var(--editor-text);
 }
 
+/* dangerHover: destructive icon affordance — brighten the icon on hover, no
+   background box. Pills carry their own tint, so a colored box/cross reads
+   poorly; a brighter foreground is the clearest affordance. */
+.variant-ghost[data-danger-hover="true"]:hover,
+.variant-ghost[data-danger-hover="true"]:active {
+    background: transparent;
+    color: var(--editor-text);
+}
+
 /* ── Variant: primary ─────────────────────────────────────────────────────── */
 .variant-primary {
     background: var(--editor-surface-4);

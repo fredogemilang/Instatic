@@ -498,8 +498,8 @@ describe('PP-8 — Class pill context menu owns reorder actions', () => {
 // ---------------------------------------------------------------------------
 
 describe('PP-9 — Pill × button tooltip "Remove from this element"', () => {
-  it('ClassPicker.tsx source contains "Remove from this element"', () => {
-    const src = readFileSync(join(PP_DIR, 'ClassPicker.tsx'), 'utf-8')
+  it('ClassPillContextMenu.tsx source contains "Remove from this element"', () => {
+    const src = readFileSync(join(PP_DIR, 'ClassPillContextMenu.tsx'), 'utf-8')
     expect(src).toContain('Remove from this element')
   })
 })
@@ -1151,6 +1151,10 @@ describe('PP-16 — No inline styles / no Tailwind / no !important in new files'
     { file: 'Section.module.css', dir: SECTION_DIR },
     { file: 'ClassPicker.tsx', dir: PP_DIR },
     { file: 'ClassPicker.module.css', dir: PP_DIR },
+    { file: 'ClassPillContextMenu.tsx', dir: PP_DIR },
+    { file: 'ClassRenameDialog.tsx', dir: PP_DIR },
+    { file: 'classPickerUiState.ts', dir: PP_DIR },
+    { file: 'useClassPickerDerivedState.ts', dir: PP_DIR },
     { file: 'ClassComposer.tsx', dir: PP_DIR },
     { file: 'ClassComposer.module.css', dir: PP_DIR },
     { file: 'ClassPropertyRow.tsx', dir: PP_DIR },
