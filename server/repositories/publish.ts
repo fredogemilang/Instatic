@@ -32,6 +32,7 @@ import {
 } from '../publish/runtime/packageImportmap'
 import { savePublishedRuntimeAssets } from './runtimeAsset'
 import { renderPublishedSnapshot } from '../publish/publicRenderer'
+import { isTemplatePage } from '@core/templates'
 import { applyPublishedHtmlPipeline } from '../publish/publishedHtmlPipeline'
 import { prepareInactiveSlot, writeArtefact, writeStaticAsset, swapSlot } from '../publish/staticArtefact'
 import { buildSiteCssBundle } from '../publish/siteCssBundle'
@@ -323,7 +324,7 @@ async function publishDraftSiteLocked(
       const encoder = new TextEncoder()
       for (const snapshot of snapshots) {
         const page = snapshot.site.pages.find((p) => p.id === snapshot.pageRowId)
-        if (!page) continue
+        if (!page || isTemplatePage(page)) continue // template pages only ever wrap; never baked at their own slug
         const cssBundle = buildSiteCssBundle(snapshot.site, registry, page)
         for (const file of [cssBundle.reset, cssBundle.framework, cssBundle.style, cssBundle.userStyles]) {
           if (file.content.length === 0) continue
@@ -343,7 +344,7 @@ async function publishDraftSiteLocked(
       // renderer at request time — one bad page never aborts the whole bake.
       for (const snapshot of snapshots) {
         const page = snapshot.site.pages.find((p) => p.id === snapshot.pageRowId)
-        if (!page) continue
+        if (!page || isTemplatePage(page)) continue // template pages only ever wrap; never baked at their own slug
         const urlPath = page.slug === 'index' ? '/' : `/${page.slug}`
         try {
           const syntheticUrl = new URL(`http://localhost${urlPath}`)
