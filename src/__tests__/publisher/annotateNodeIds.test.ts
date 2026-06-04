@@ -4,7 +4,7 @@ import type { ModuleDefinition } from '@core/module-engine'
 import { makeModule, makeRegistry, makePage, makeSite } from './helpers'
 
 // ---------------------------------------------------------------------------
-// annotateNodeIds — editor-only data-node-id injection (agent read-surface)
+// annotateNodeIds — editor-only uid injection (agent read-surface)
 // ---------------------------------------------------------------------------
 
 const headingDef: ModuleDefinition<{ text: string; level: number }> = makeModule('base.text', {
@@ -48,45 +48,45 @@ describe('renderNode — annotateNodeIds off (default)', () => {
     const undef = renderNode('root', ctx(page, undefined))
     expect(off).toBe('<div class="wrapper"><h2>A</h2><h3>B</h3></div>')
     expect(off).toBe(undef)
-    expect(off).not.toContain('data-node-id')
+    expect(off).not.toContain('uid=')
   })
 
-  it('publishPage default output carries no data-node-id (clean-HTML rule)', () => {
+  it('publishPage default output carries no uid (clean-HTML rule)', () => {
     const page = nestedPage()
     const { html } = publishPage(page, site, registry)
-    expect(html).not.toContain('data-node-id')
+    expect(html).not.toContain('uid=')
   })
 })
 
 describe('renderNode — annotateNodeIds on', () => {
-  it('annotates every node\'s outermost element with its data-node-id', () => {
+  it('annotates every node\'s outermost element with its uid', () => {
     const page = nestedPage()
     const html = renderNode('root', ctx(page, true))
     expect(html).toBe(
-      '<div data-node-id="root" class="wrapper">' +
-        '<h2 data-node-id="c1">A</h2>' +
-        '<h3 data-node-id="c2">B</h3>' +
+      '<div uid="root" class="wrapper">' +
+        '<h2 uid="c1">A</h2>' +
+        '<h3 uid="c2">B</h3>' +
         '</div>',
     )
   })
 
-  it('inserts data-node-id as the first attribute, preserving existing attrs', () => {
+  it('inserts uid as the first attribute, preserving existing attrs', () => {
     const page = makePage({ root: { moduleId: 'base.text', props: { text: 'Hi', level: 1 } } })
-    expect(renderNode('root', ctx(page, true))).toBe('<h1 data-node-id="root">Hi</h1>')
+    expect(renderNode('root', ctx(page, true))).toBe('<h1 uid="root">Hi</h1>')
   })
 
   it('leaves a node that emits no element tag unannotated (unannotatable)', () => {
     const page = makePage({ root: { moduleId: 'test.comment', props: {} } })
     const html = renderNode('root', ctx(page, true))
     expect(html).toBe('<!-- no element here -->')
-    expect(html).not.toContain('data-node-id')
+    expect(html).not.toContain('uid=')
   })
 
   it('publishPage threads annotateNodeIds into the body render', () => {
     const page = nestedPage()
     const { html } = publishPage(page, site, registry, { annotateNodeIds: true })
-    expect(html).toContain('data-node-id="root"')
-    expect(html).toContain('data-node-id="c1"')
-    expect(html).toContain('data-node-id="c2"')
+    expect(html).toContain('uid="root"')
+    expect(html).toContain('uid="c1"')
+    expect(html).toContain('uid="c2"')
   })
 })

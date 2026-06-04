@@ -146,9 +146,9 @@ export interface PublishPageOptions {
   publishVersion?: number
   /**
    * Editor-only: annotate each node's outermost emitted element with
-   * `data-node-id="<id>"`. Default off — real publishes emit clean, id-less
-   * HTML. Used by the agent read-surface token benchmark to produce an
-   * HTML representation the agent could target nodes through.
+   * `uid="<id>"`. Default off — real publishes emit clean, id-less
+   * HTML. Used by the agent read-surface (read_page) to produce an
+   * HTML representation the agent targets nodes through.
    */
   annotateNodeIds?: boolean
 }

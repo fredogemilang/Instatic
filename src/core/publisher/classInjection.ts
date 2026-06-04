@@ -140,10 +140,9 @@ export function injectNodeInlineStyles(
 }
 
 /**
- * Inject a `data-node-id="<id>"` attribute onto the ROOT element of an HTML
- * string. Editor-only annotation used by the agent read-surface benchmark (and
- * any future annotated-HTML read mode) so each tag can be traced back to the
- * page node that produced it.
+ * Inject a `uid="<id>"` attribute onto the ROOT element of an HTML
+ * string. Editor-only annotation used by the agent read-surface (and the token
+ * benchmark) so each tag can be traced back to the page node that produced it.
  *
  * Inserted as the first attribute on the first opening element tag — never on a
  * nested descendant. Returns `html` unchanged when there is no element tag to
@@ -156,6 +155,6 @@ export function injectNodeId(html: string, nodeId: string): string {
 
   const [fullMatch, tagName, attrs] = tagMatch
   const tagStart = tagMatch.index ?? 0
-  const newTag = `<${tagName} data-node-id="${escapeHtml(nodeId)}"${attrs}>`
+  const newTag = `<${tagName} uid="${escapeHtml(nodeId)}"${attrs}>`
   return html.slice(0, tagStart) + newTag + html.slice(tagStart + fullMatch.length)
 }
