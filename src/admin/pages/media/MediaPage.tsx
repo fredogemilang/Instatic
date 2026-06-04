@@ -51,8 +51,6 @@ export function MediaPage() {
     writeWorkspaceLayout('media', { activeLeftPanel: activePanel })
   }, [activePanel])
   const [uploadQueueOpen, setUploadQueueOpen] = useState(false)
-  const [bulkEditOpen, setBulkEditOpen] = useState(false)
-  const [viewerOpen, setViewerOpen] = useState(false)
 
   // Build the thin viewer-editor handle from the workspace. Same contract the
   // standalone MediaExplorerPanel-driven viewer uses, so the viewer doesn't
@@ -70,36 +68,28 @@ export function MediaPage() {
       }
     : null
 
-  // Auto-open the viewer when a primary selection appears via a plain click.
-  // We don't auto-open while a multi-selection is in flight (2+ items) —
-  // that's the bulk-edit story.
-  /* eslint-disable react-hooks/set-state-in-effect */
-  useEffect(() => {
-    if (workspace.selectedAssetId && workspace.selectedAssetIds.size <= 1) {
-      setViewerOpen(true)
-    } else if (!workspace.selectedAssetId) {
-      setViewerOpen(false)
-    }
-  }, [workspace.selectedAssetId, workspace.selectedAssetIds.size])
+  // Viewer and Bulk Edit visibility derive directly from the current
+  // selection — there is no independent "open" state because every close
+  // path also clears the selection ("closed" ≡ "no selection"). Deriving
+  // during render instead of syncing via an effect avoids the extra render
+  // commit (no-chain-state-updates) and the one-frame open lag.
+  //   - Viewer: a single primary selection (≤ 1 item) is showing.
+  //   - Bulk Edit: a 2+ multi-selection is in flight (mutually exclusive
+  //     with the viewer).
+  const viewerOpen =
+    workspace.selectedAssetId !== null && workspace.selectedAssetIds.size <= 1
+  const bulkEditOpen = workspace.selectedAssetIds.size >= 2
 
-  // Auto-open the upload queue the moment something starts uploading. We
-  // don't auto-close on completion — the user often wants to see the result
-  // briefly and dismiss when ready.
+  // The upload queue IS genuinely stateful — it stays open after a transfer
+  // completes (the user dismisses it) and the toolbar button toggles it — so
+  // it can't be derived. Auto-opening on the async upload transition is the
+  // legitimate "sync UI to an external async system" use of an effect.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (workspace.uploadQueue.active && !uploadQueueOpen) {
       setUploadQueueOpen(true)
     }
   }, [workspace.uploadQueue.active, uploadQueueOpen])
-
-  // Bulk Edit auto-opens once a 2+ multi-selection exists, and auto-closes
-  // when the selection collapses back to a single item or empty.
-  useEffect(() => {
-    if (workspace.selectedAssetIds.size >= 2) {
-      setBulkEditOpen(true)
-    } else if (workspace.selectedAssetIds.size <= 1) {
-      setBulkEditOpen(false)
-    }
-  }, [workspace.selectedAssetIds.size])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const toolbarRightSlot = (
@@ -136,11 +126,8 @@ export function MediaPage() {
 
       <MediaViewerWindow
         editor={viewerEditor}
-        open={viewerOpen && workspace.selectedAssetId !== null && workspace.selectedAssetIds.size <= 1}
-        onClose={() => {
-          setViewerOpen(false)
-          workspace.clearSelection()
-        }}
+        open={viewerOpen}
+        onClose={() => workspace.clearSelection()}
       />
 
       <UploadQueueWindow
@@ -151,11 +138,8 @@ export function MediaPage() {
 
       <BulkEditWindow
         workspace={workspace}
-        open={bulkEditOpen && workspace.selectedAssetIds.size >= 2}
-        onClose={() => {
-          setBulkEditOpen(false)
-          workspace.clearSelection()
-        }}
+        open={bulkEditOpen}
+        onClose={() => workspace.clearSelection()}
       />
     </>
   )
