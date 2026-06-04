@@ -1,14 +1,16 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
-import type { Page, PageTemplateConfig } from '@core/page-tree'
+import type { Page, PageTemplateConfig, TemplateTarget } from '@core/page-tree'
 import {
   normalizePageSlug,
   pageSlugDuplicateError,
   pageSlugError,
 } from '@core/page-tree'
+import { findOutletIds } from '@core/templates'
 import { listCmsDataTables } from '@core/persistence/cmsData'
 import type { DataTable } from '@core/data/schemas'
 import { Button } from '@ui/components/Button'
+import { Checkbox } from '@ui/components/Checkbox'
 import { Dialog } from '@ui/components/Dialog'
 import { Input } from '@ui/components/Input'
 import { Select } from '@ui/components/Select'
@@ -46,20 +48,29 @@ const FALLBACK_COLLECTIONS: DataTable[] = [{
 
 const FORM_ID = 'template-settings-form'
 
+const TARGET_KIND_OPTIONS = [
+  { value: 'everywhere', label: 'Everywhere' },
+  { value: 'postTypes', label: 'Post types' },
+]
+
 export function TemplateSettingsDialog({
   page,
   pages,
   onCancel,
   onSave,
 }: TemplateSettingsDialogProps) {
+  const initialTarget = page.template?.target
   const [title, setTitle] = useState(page.title)
   const [slug, setSlug] = useState(page.slug)
-  const [tableSlug, setTableSlug] = useState(page.template?.tableSlug ?? 'posts')
+  const [targetKind, setTargetKind] = useState<TemplateTarget['kind']>(initialTarget?.kind ?? 'everywhere')
+  const [selectedSlugs, setSelectedSlugs] = useState<string[]>(
+    initialTarget?.kind === 'postTypes' ? initialTarget.tableSlugs : [],
+  )
   const [priority, setPriority] = useState(String(page.template?.priority ?? 100))
-  // A template renders an entry at a public URL — only tables with a non-empty
-  // `routeBase` are routable and can be a template source (both `postType` and
-  // `data` kinds qualify). Falls back to a synthetic Posts table when the load
-  // fails or returns nothing routable.
+  // A postTypes template renders an entry at a public URL — only tables with a
+  // non-empty `routeBase` are routable and can be a template source (both
+  // `postType` and `data` kinds qualify). Falls back to a synthetic Posts table
+  // when the load fails or returns nothing routable.
   const { data: loadedCollections } = useAsyncResource(
     async () => {
       const allTables = await listCmsDataTables()
@@ -73,7 +84,7 @@ export function TemplateSettingsDialog({
   const inputRef = useRef<HTMLInputElement>(null)
   const nameInputId = useId()
   const slugInputId = useId()
-  const tableSelectId = useId()
+  const targetSelectId = useId()
   const priorityInputId = useId()
 
   const trimmedTitle = title.trim()
@@ -81,24 +92,48 @@ export function TemplateSettingsDialog({
   const priorityNumber = Number(priority)
   const slugValidation = pageSlugError(normalizedSlug) || pageSlugDuplicateError(normalizedSlug, pages, page.id)
   const priorityInvalid = !Number.isFinite(priorityNumber)
+  const postTypesEmpty = targetKind === 'postTypes' && selectedSlugs.length === 0
+
+  // A template must contain exactly one base.outlet — content flows into it.
+  // Catch the zero/two-outlet authoring error here rather than at publish time.
+  const outletCount = findOutletIds(page).length
+  const outletError = outletCount === 0
+    ? 'A template needs exactly one Content Outlet — add one from the block list.'
+    : outletCount > 1
+      ? 'A template can only have one Content Outlet — remove the extra one.'
+      : null
+
+  const saveDisabled = !trimmedTitle
+    || Boolean(slugValidation)
+    || priorityInvalid
+    || postTypesEmpty
+    || Boolean(outletError)
 
   useEffect(() => {
     requestAnimationFrame(() => inputRef.current?.select())
   }, [])
 
+  function toggleSlug(slugValue: string, checked: boolean) {
+    setSelectedSlugs((prev) =>
+      checked ? [...prev, slugValue] : prev.filter((s) => s !== slugValue),
+    )
+  }
+
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
-    if (!trimmedTitle || slugValidation || priorityInvalid) return
+    if (saveDisabled) return
+
+    const target: TemplateTarget = targetKind === 'everywhere'
+      ? { kind: 'everywhere' }
+      : { kind: 'postTypes', tableSlugs: selectedSlugs }
 
     onSave({
       title: trimmedTitle,
       slug: normalizedSlug,
       template: {
         enabled: true,
-        context: 'entry',
-        tableSlug,
+        target,
         priority: priorityNumber,
-        conditions: page.template?.conditions ?? [],
       },
     })
   }
@@ -120,7 +155,7 @@ export function TemplateSettingsDialog({
             size="sm"
             type="submit"
             form={FORM_ID}
-            disabled={!trimmedTitle || Boolean(slugValidation) || priorityInvalid}
+            disabled={saveDisabled}
           >
             Save
           </Button>
@@ -158,19 +193,35 @@ export function TemplateSettingsDialog({
         </div>
 
         <div className={dialogStyles.field}>
-          <label htmlFor={tableSelectId} className={dialogStyles.label}>Table</label>
+          <label htmlFor={targetSelectId} className={dialogStyles.label}>Applies to</label>
           <Select
-            id={tableSelectId}
-            aria-label="Table"
+            id={targetSelectId}
+            aria-label="Applies to"
             fieldSize="sm"
-            value={tableSlug}
-            onChange={(event) => setTableSlug(event.target.value)}
-            options={collections.map((collection) => ({
-              value: collection.slug,
-              label: collection.pluralLabel || collection.name,
-            }))}
+            value={targetKind}
+            onChange={(event) => setTargetKind(event.target.value as TemplateTarget['kind'])}
+            options={TARGET_KIND_OPTIONS}
           />
         </div>
+
+        {targetKind === 'postTypes' && (
+          <div className={dialogStyles.field}>
+            <span className={dialogStyles.label}>Post types</span>
+            {collections.map((collection) => (
+              <label key={collection.slug} className={dialogStyles.checkboxRow}>
+                <Checkbox
+                  checked={selectedSlugs.includes(collection.slug)}
+                  onCheckedChange={(checked) => toggleSlug(collection.slug, checked)}
+                  aria-label={collection.pluralLabel || collection.name}
+                />
+                {collection.pluralLabel || collection.name}
+              </label>
+            ))}
+            {postTypesEmpty && (
+              <p role="alert" className={dialogStyles.errorText}>Select at least one post type.</p>
+            )}
+          </div>
+        )}
 
         <div className={dialogStyles.field}>
           <label htmlFor={priorityInputId} className={dialogStyles.label}>Priority</label>
@@ -184,6 +235,10 @@ export function TemplateSettingsDialog({
             invalid={priorityInvalid}
           />
         </div>
+
+        {outletError && (
+          <p role="alert" className={dialogStyles.errorText}>{outletError}</p>
+        )}
       </form>
     </Dialog>
   )
