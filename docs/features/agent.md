@@ -2,7 +2,7 @@
 
 The AI Agent is a model-powered assistant integrated into the visual editor. The user types a request in the Agent Panel; the agent reads the current page snapshot, plans a sequence of edits, and executes them by calling tools. Structure is written as semantic HTML (`insertHtml` / `replaceNodeHtml`); styling is written as CSS classes (`createClass` / `updateClassStyles` / `assignClass`).
 
-The agent runs on a provider-agnostic AI runtime (`server/ai/`) that can drive any supported model (Anthropic Claude, OpenAI, OpenRouter, Ollama). Provider SDKs are isolated to `server/ai/drivers/`. The plain `@anthropic-ai/sdk` is banned repo-wide. Gated by `ai-driver-isolation.test.ts`.
+The agent runs on a provider-agnostic AI runtime (`server/ai/`) that can drive any supported model (Anthropic Claude, OpenAI, OpenRouter, Ollama). Every driver talks directly to its provider's REST API over HTTP/SSE — no provider SDKs. All four share one multi-turn tool loop (`drivers/http/toolLoop.ts`); each supplies only a small `ProviderAdapter` of pure mapping functions. The plain `@anthropic-ai/sdk` (and any provider SDK) is banned repo-wide. Gated by `ai-driver-isolation.test.ts`.
 
 ---
 
@@ -46,11 +46,11 @@ server/ai/
 │   │   ├── execTool.ts     — executeAiTool(): server-handler vs browser-bridge dispatch
 │   │   ├── toolLoop.ts     — runToolLoop(): provider-agnostic multi-turn loop
 │   │   └── errors.ts       — isAbortError / classifyHttpError
+│   ├── responses-shared.ts — OpenAI-Responses mapping + SSE translator + adapter factory (openai + openrouter)
 │   ├── anthropic.ts        — Anthropic driver: direct POST /v1/messages (no SDK)
-│   ├── openai.ts           — OpenAI Agents driver
-│   ├── openrouter.ts       — OpenRouter driver (allowed to import @openrouter/agent + Zod; native cost)
-│   ├── ollama.ts           — Ollama driver
-│   └── typeboxToZod.ts     — TypeBox→Zod conversion helper (OpenRouter driver)
+│   ├── openai.ts           — OpenAI driver: direct POST /v1/responses (no SDK)
+│   ├── openrouter.ts       — OpenRouter driver: direct POST /v1/responses (shared Responses path; live /models; native cost)
+│   └── ollama.ts           — Ollama driver: direct POST /v1/chat/completions (no SDK)
 └── runtime/
     ├── runner.ts           — runChat(): drives a driver, emits stream events
     ├── persister.ts        — ConversationsPersister: messages + usage to DB
@@ -383,7 +383,7 @@ Conversations and their message history are persisted server-side in `ai_convers
   - `req.signal` is passed straight to every `fetch()` call in the driver loop (`fetch(endpoint, { signal })`). The in-flight HTTP request to the provider is cancelled immediately — no further tokens are generated or billed. On `AbortError` the loop returns cleanly with no `error` event.
   - Any `callBrowser` promise still waiting for a browser tool-result rejects via the `onAbort` listener registered per pending call (in `server/ai/runtime/transport.ts`). The listener fires, clears the timeout, and removes the pending entry.
   - The stream's `destroy()` hook fires, rejects any remaining pending entries, and removes the bridge from the registry.
-- **Browser tool timeout.** If the browser never POSTs a tool-result, `callBrowser` rejects after 90 seconds (`BROWSER_TOOL_TIMEOUT_MS` in `server/ai/runtime/transport.ts`). The driver sees a rejection, emits an error, and the stream closes. This prevents a closed or unresponsive tab from hanging the SDK loop indefinitely.
+- **Browser tool timeout.** If the browser never POSTs a tool-result, `callBrowser` rejects after 90 seconds (`BROWSER_TOOL_TIMEOUT_MS` in `server/ai/runtime/transport.ts`). The driver sees a rejection, emits an error, and the stream closes. This prevents a closed or unresponsive tab from hanging the tool loop indefinitely.
 - **Crash on server.** If `runChat` throws, the stream emits `{ type: 'error', message }`. The browser surfaces the message verbatim in the Agent Panel (admin-only surface, so info-disclosure is not a concern).
 - **Tool failure.** Browser executors wrap every call in try/catch. Failures return `{ ok: false, error }`. The model reads the error message in the next turn and retries with corrected input.
 - **Bridge-result POST after abort.** If the browser POSTs a tool-result after the stream has closed, the server returns 404 and drops the result silently.
