@@ -8,6 +8,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
+import { CanvasTreeLadderMenu } from '@site/canvas/CanvasTreeLadderMenu'
+import { CornerDownLeftIcon } from 'pixel-art-icons/icons/corner-down-left'
 import { EditSolidIcon } from 'pixel-art-icons/icons/edit-solid'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import styles from './PropertiesPanel.module.css'
@@ -21,7 +23,9 @@ interface NodeHeaderProps {
 
 export function NodeHeader({ nodeId, label, moduleName, onRename }: NodeHeaderProps) {
   const [isEditing, setIsEditing] = useState(false)
+  const [layerMenuOpen, setLayerMenuOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const layerMenuTriggerRef = useRef<HTMLButtonElement>(null)
   const displayName = label ?? moduleName
   // Renaming a node mutates `node.label` — a structural change, not content.
   const canRename = useEditorPermissions().canEditStructure
@@ -79,6 +83,19 @@ export function NodeHeader({ nodeId, label, moduleName, onRename }: NodeHeaderPr
 
   return (
     <div className={styles.headerNodeTitle}>
+      <Button
+        ref={layerMenuTriggerRef}
+        variant="ghost"
+        size="xs"
+        iconOnly
+        aria-haspopup="menu"
+        aria-expanded={layerMenuOpen}
+        aria-label={`Select parent or child layer for ${displayName}`}
+        tooltip="Select parent or child layer"
+        onClick={() => setLayerMenuOpen((open) => !open)}
+      >
+        <CornerDownLeftIcon size={12} className={styles.headerLayerMenuIcon} aria-hidden="true" />
+      </Button>
       <span className={styles.headerNodeLabel} title={displayName}>{displayName}</span>
       {canRename && (
         <Button
@@ -91,6 +108,14 @@ export function NodeHeader({ nodeId, label, moduleName, onRename }: NodeHeaderPr
         >
           <EditSolidIcon size={12} aria-hidden="true" />
         </Button>
+      )}
+      {layerMenuOpen && (
+        <CanvasTreeLadderMenu
+          anchorRef={layerMenuTriggerRef}
+          triggerRef={layerMenuTriggerRef}
+          nodeId={nodeId}
+          onClose={() => setLayerMenuOpen(false)}
+        />
       )}
     </div>
   )

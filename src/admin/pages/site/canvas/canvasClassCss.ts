@@ -5,17 +5,17 @@ import {
   PUBLISHER_RESET_CSS,
   type ViewportContext,
 } from '@core/publisher'
-import { generateFrameworkRootCss } from '@core/framework/generate'
-import { generateFontsCss } from '@core/fonts/css'
+import { generateFrameworkRootCss } from '@core/framework'
+import { generateFontsCss } from '@core/fonts'
 import { breakpointMediaQuery, styleRuleSelector } from '@core/page-tree'
 import type { StyleRule, Condition, ConditionDef } from '@core/page-tree'
-import type { SiteFontsSettings } from '@core/fonts/schemas'
+import type { SiteFontsSettings } from '@core/fonts'
 import type {
   FrameworkColorSettings,
   FrameworkPreferencesSettings,
   FrameworkSpacingSettings,
   FrameworkTypographySettings,
-} from '@core/framework/schemas'
+} from '@core/framework'
 
 export function generateCanvasClassCSS(
   classes: Record<string, StyleRule>,

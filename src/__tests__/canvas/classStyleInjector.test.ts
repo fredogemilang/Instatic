@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { generateCanvasClassCSS } from '@site/canvas/canvasClassCss'
-import { generateFrameworkColorUtilityClasses } from '@core/framework/colors'
+import { generateFrameworkColorUtilityClasses } from '@core/framework'
 import { classKindSelector, type StyleRule } from '@core/page-tree'
 
 function makeClass(

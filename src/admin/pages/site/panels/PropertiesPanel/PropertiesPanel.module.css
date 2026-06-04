@@ -117,6 +117,12 @@
     white-space: nowrap;
 }
 
+.headerLayerMenuIcon {
+    display: block;
+    transform: rotate(90deg);
+    transform-origin: center;
+}
+
 .headerNameInput {
     width: 100%;
     min-width: 0;

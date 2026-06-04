@@ -18,6 +18,7 @@ interface CanvasTreeLadderRowButtonProps {
   highlighted: boolean
   styleRules: StyleRuleRegistry
   visualComponents: ReadonlyArray<VisualComponent>
+  role?: 'button' | 'menuitem'
   onHighlight: (nodeId: string) => void
   onCommit: (nodeId: string) => void
 }
@@ -28,6 +29,7 @@ export function CanvasTreeLadderRowButton({
   highlighted,
   styleRules,
   visualComponents,
+  role,
   onHighlight,
   onCommit,
 }: CanvasTreeLadderRowButtonProps) {
@@ -40,6 +42,7 @@ export function CanvasTreeLadderRowButton({
 
   return (
     <Button
+      role={role}
       variant="ghost"
       size="sm"
       align="between"
@@ -48,6 +51,7 @@ export function CanvasTreeLadderRowButton({
       data-relation={row.relation}
       active={highlighted}
       aria-current={highlighted ? 'true' : undefined}
+      aria-label={`${displayName} ${treeLadderRelationLabel(row)}`}
       style={{ '--tree-ladder-depth': row.depth } as CSSProperties}
       onMouseEnter={() => onHighlight(row.nodeId)}
       onPointerDown={(event) => event.stopPropagation()}

@@ -207,6 +207,12 @@
     z-index: 1;
 }
 
+.treeLadderContextMenu {
+    border-radius: var(--panel-radius);
+    background: var(--editor-bg);
+    box-shadow: var(--panel-shadow);
+}
+
 .treeLadderRow.treeLadderRow {
     width: 100%;
     min-height: 24px;
