@@ -97,6 +97,9 @@ export function CanvasContextSelector() {
           {activeConditionValid
             ? <SlidersHorizontalIcon size={12} aria-hidden="true" />
             : <BreakpointIcon name={activeBp?.icon ?? 'monitor'} />}
+          <span className={styles.triggerLabel}>
+            {activeConditionValid ? (activeCondition?.label ?? 'Condition') : (activeBp?.label ?? '')}
+          </span>
           <ChevronDownIcon size={10} aria-hidden="true" />
         </Button>
       </div>
