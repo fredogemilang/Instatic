@@ -106,6 +106,7 @@ export const VisualComponentRefEditor: React.FC<ModuleComponentProps<VisualCompo
       classes={classes}
       rootMcClassName={mcClassName}
       rootNodeWrapperProps={nodeWrapperProps}
+      readonly={{ label: `${vc.name} component`, kind: 'component', targetId: vc.id }}
     />
   )
 }

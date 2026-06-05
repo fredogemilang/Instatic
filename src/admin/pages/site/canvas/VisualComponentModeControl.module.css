@@ -1,88 +1,41 @@
-/* VisualComponentModeControl — floating Visual Component mode switcher */
+/* VisualComponentModeControl — floating VC mode control.
+ * Matches TemplateModeControl: borderless, text-first, minimal. */
 
 .control {
-    --vc-control-padding: 4px;
     --vc-control-radius: 16px;
-    --vc-control-inner-radius: calc(var(--vc-control-radius) - var(--vc-control-padding));
     display: flex;
     align-items: center;
-    gap: 4px;
-    max-width: min(420px, calc(100vw - 48px));
-    padding: var(--vc-control-padding);
+    gap: 8px;
+    max-width: min(560px, calc(100vw - 48px));
+    padding: 6px 14px;
     pointer-events: auto;
     border: 0;
     border-radius: var(--vc-control-radius);
     background: var(--editor-bg);
     color: var(--editor-text);
     box-shadow: var(--canvas-chrome-shadow);
+    font-size: 12px;
 }
 
 .control .backButton {
-    border-radius: var(--vc-control-inner-radius);
+    min-height: 0;
+    padding: 2px 6px 2px 2px;
+    border-radius: calc(var(--vc-control-radius) - 6px);
     color: var(--editor-text-secondary);
+    font-size: 12px;
+}
+
+.divider {
+    width: 1px;
+    align-self: stretch;
+    margin: 3px 0;
+    background: var(--editor-border);
 }
 
 .modeLabel {
-    display: inline-flex;
-    align-items: center;
-    min-height: 26px;
     flex-shrink: 0;
-    padding: 0 3px;
     color: var(--editor-text-muted);
-    font-size: 11px;
-    font-weight: 650;
+    font-size: 12px;
+    font-weight: 500;
     user-select: none;
-}
-
-.nameChipWrapper {
-    position: relative;
-    display: inline-flex;
-    min-width: 0;
-}
-
-.control .nameChip {
-    box-sizing: border-box;
-    border-radius: var(--vc-control-inner-radius);
-    border: 1px solid var(--input-border);
-    max-width: 210px;
-    min-width: 0;
-    background: transparent;
-    color: var(--editor-text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.control .nameChip:hover {
-    border-color: var(--input-border-hover);
-    background: transparent;
-    color: var(--editor-text);
-}
-
-.control .nameChip:active {
-    border-color: var(--input-border-focus);
-    background: transparent;
-}
-
-.control .nameInput {
-    border-radius: var(--vc-control-inner-radius);
-    width: min(180px, 45vw);
-    max-width: 100%;
-    font-weight: 700;
-}
-
-.error {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    z-index: 200;
-    max-width: min(320px, calc(100vw - 32px));
-    padding: 6px 8px;
-    border: 1px solid var(--panel-border);
-    border-radius: var(--editor-radius);
-    background: var(--panel-bg);
-    color: var(--editor-danger-lighter);
-    font-size: 11px;
-    line-height: 1.4;
-    white-space: normal;
-    box-shadow: var(--panel-shadow);
 }

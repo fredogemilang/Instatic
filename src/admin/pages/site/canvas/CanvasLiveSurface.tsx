@@ -33,7 +33,7 @@ import {
 } from 'react'
 import type { Breakpoint, Page } from '@core/page-tree'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
-import { NodeRenderer } from './NodeRenderer'
+import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
 import { CanvasBreakpointContext, CanvasTemplateContext } from './CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
@@ -171,7 +171,7 @@ export function CanvasLiveSurface({
             >
               <CanvasTemplateContext.Provider value={templateContext}>
                 <CanvasBreakpointContext.Provider value={activeBreakpoint.id}>
-                  <NodeRenderer nodeId={page.rootNodeId} />
+                  <CanvasComposedTree page={page} />
                 </CanvasBreakpointContext.Provider>
               </CanvasTemplateContext.Provider>
             </IframeFrameSurface>

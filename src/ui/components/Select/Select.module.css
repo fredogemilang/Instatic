@@ -117,6 +117,22 @@
     color: var(--editor-text-muted);
 }
 
+/* Non-interactive group header inside a grouped menu (from <optgroup label>). */
+.groupHeader {
+    padding: 6px 9px 2px;
+    color: var(--editor-text-muted);
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    user-select: none;
+    pointer-events: none;
+}
+
+.groupHeader:not(:first-child) {
+    margin-top: 2px;
+}
+
 .optionLabel {
     min-width: 0;
     overflow: hidden;

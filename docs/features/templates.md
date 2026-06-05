@@ -116,10 +116,11 @@ Result: one merged `Page` consumed by `publishPage` unchanged — one CSS bundle
 
 `base.outlet` is the single, polymorphic outlet module:
 
-- **Render:** emits `<article data-instatic-content-region>{props.html}</article>`. When `props.html` is empty, the empty `<article>` is the live-edit anchor for the Content workspace.
-- **Binding (entry route):** the seed attaches `dynamicBindings: { html: { source: 'currentEntry', field: 'body', format: 'html' } }` to the outlet node so the entry's body flows in at render time. This keeps the Content workspace's Tiptap mount working via the `data-instatic-content-region` marker.
+- **Tag:** the outlet renders as an author-chosen semantic element (`tag` / `customTag` props, default `<main>`), sharing `htmlTagControl` / `customHtmlTagControl` with `base.container` / `base.loop`. The Properties panel exposes the tag dropdown.
+- **Render:** emits `<{tag} data-instatic-content-region>{props.html}</{tag}>`. When `props.html` is empty, the empty element is the live-edit anchor for the Content workspace.
+- **Binding (entry route):** the seed attaches `dynamicBindings: { html: { source: 'currentEntry', field: 'body', format: 'html' } }` to the outlet node so the entry's body flows in at render time. The `html` prop is a binding target ONLY — it carries no panel control (you never hand-edit it). This keeps the Content workspace's Tiptap mount working via the `data-instatic-content-region` marker.
 - **Splice (page route):** `composeTemplateChain` removes the `base.outlet` node and inserts the page's content in its place before `publishPage` is called. No outlet node reaches the renderer on page routes.
-- **Canvas preview:** the `OutletEditor` component shows a labelled placeholder in the editor.
+- **Canvas preview:** `OutletEditor` renders the matched content READ-ONLY so the author sees what flows in — the first non-template page (`everywhere` target) via `ReadOnlyNodeTree`, or the entry body (`postTypes` target, resolved into `props.html`). It carries the editor wrapper bag so the outlet has a proper selection overlay; an empty match falls back to the shared placeholder.
 
 A template normally contains exactly one `base.outlet`, but this is **not gated** — you set a page as a template first and add the outlet afterward (the outlet block is only meaningful on templates, so requiring it before save would be circular). At render time the composer is forgiving: no outlet → the template is skipped; multiple → the first wins. Getting the outlet right is the author's job, not a blocking validation.
 
@@ -216,12 +217,36 @@ Source: `src/core/templates/tokenInterpolation.ts`.
 
 ## Editor canvas preview
 
-When editing a template page, the canvas needs a `currentEntry` without a published row. `useTemplatePreviewContext` in `src/admin/pages/site/hooks/useTemplatePreviewContext.ts` builds a synthetic preview:
+When editing a template page, the canvas previews against **live data**, falling back to synthetic sample data only when none exists. `useTemplatePreviewContext` in `src/admin/pages/site/hooks/useTemplatePreviewContext.ts` builds the `currentEntry`:
 
-- **`postTypes` target:** fetches the table schema by `target.tableSlugs[0]` and synthesizes a preview row via `dataTablePreviewToLoopItem(table)`.
-- **`everywhere` target:** no current entry — `base.outlet` renders as a placeholder in the canvas.
+- **`postTypes` target:** fetches a window of published rows for `target.tableSlugs[0]` via `previewCmsDataLoopItems` and seeds the entry stack with the first one (or the author-picked one — see below). When the table has **no** published rows, it falls back to a synthetic sample row via `dataTablePreviewToLoopItem(table)` so the layout stays visible.
+- **`everywhere` target:** no current entry — the outlet previews the first non-template page's tree read-only via `ReadOnlyNodeTree` (or the author-picked page).
 
-Preview values are generic placeholders: `'Example Post Title'` for the `title` field, `null` for `media` fields. Modules must handle `null` media gracefully — the canvas shows "No image selected" for an unbound or null image source.
+Synthetic fallback values are generic placeholders: `'Example Post Title'` for the `title` field, `null` for `media` fields. Modules must handle `null` media gracefully — the canvas shows "No image selected" for an unbound or null image source.
+
+#### Floating controls — `TemplateModeControl` / `VisualComponentModeControl`
+
+While editing a template (or a Visual Component), a borderless floating control mounts in the `CanvasNotch` `floatingControl` slot. Both controls share a **`DocumentSwitcher`** (`src/admin/pages/site/canvas/DocumentSwitcher.tsx`) — a compact, searchable dropdown grouped **Pages / Templates / Components** that jumps the canvas to any other document (`openPageInCanvas` for pages/templates, `setActiveDocument` for components). The current document shows as the trigger value (via the Select's `placeholder`) and is excluded from the list. Renaming lives in the Site panel — the switcher replaces the old inline rename. The VC control additionally keeps a "Back to page" exit.
+
+Grouped menus rely on a small `Select` primitive capability: an `<optgroup label>` renders its label as a non-interactive header row (`isSelectableOption` skips headers in keyboard nav + selection; an active search query flattens to matches with headers dropped).
+
+`TemplateModeControl` also shows a **Previewing** dropdown:
+
+- `everywhere` → lists the non-template pages; the chosen page fills the outlet preview.
+- `postTypes` → lists the table's published posts; the chosen post drives `currentEntry`.
+
+The preview selection lives in `templatePreviewSelection` (UI slice, `templateId → sourceId`). It is **session-only** — a pure preview convenience that never dirties or persists to the site document. Unset → the first real page / published row is previewed. Both `OutletEditor` (everywhere) and `useTemplatePreviewContext` (postTypes) read it.
+
+### Edit-in-context composition
+
+The design canvas renders the active document the way it publishes: **inside its matching template chain**. `CanvasComposedTree` (`src/admin/pages/site/canvas/CanvasComposedTree.tsx`) is the single render entry used by both `BreakpointFrame` and `CanvasLiveSurface`:
+
+- `resolveEditorWrapperTemplates(site, activeDoc)` (`canvasComposition.ts`) returns the templates that WRAP the active document, outermost-first — the editor-side mirror of `resolveTemplateChain`. Editing a page or a `postTypes` template ⇒ wrapped by the `everywhere` layout; editing the `everywhere` layout ⇒ nothing wraps it.
+- Wrappers render **read-only** via `ReadOnlyNodeTree` with the editable document spliced into the innermost wrapper's `base.outlet` (the `outletSlot` prop replaces the outlet node, mirroring `spliceIntoOutlet`). Only the active document's nodes keep `data-node-id` + handlers, so selection / hover / DnD stay scoped to it; the chrome is pixel-identical but non-interactive.
+- Body ownership mirrors the publisher: the iframe `<body>` carries the OUTERMOST wrapper body's classes, and the active document renders as its body *children* (its own `base.body` is dropped, just as the composer drops the inner body).
+- `ReadOnlyNodeTree` (`src/modules/base/utils/ReadOnlyNodeTree.tsx`) is the shared non-interactive tree renderer — also used by `VCInlineTree` for inlined Visual Component bodies.
+- **Navigation guard:** the canvas iframe is an editing surface, never a browsing surface. `IframeFrameSurface` installs a capture-phase `click`/`auxclick`/`submit` listener on the iframe document that `preventDefault`s link navigation and form submission (without `stopPropagation`, so node selection still works) — so clicking a logo/link in the read-only template chrome, an inlined component, or any authored content never reloads the frame. Applies to both the design canvas and the live/preview frame.
+- **Read-only affordance:** `ReadOnlyNodeTree` stamps `data-instatic-readonly-{label,kind,id}` on every read-only element (the source is named by `CanvasComposedTree`, `OutletEditor`, and `VCInlineTree`). `BreakpointFrame` shows a cursor-following `CursorTooltip` ("Part of X — double-click to edit") on hover, and `IframeFrameSurface` opens the source on double-click (`onReadonlyOpen` → `openPageInCanvas` / `setActiveDocument`). The read-only markers ride the optional fields on `NodeWrapperProps`.
 
 ### Dynamic binding picker
 
@@ -303,6 +328,16 @@ When a postType is created, the system seeds a default entry template automatica
 ### Share a layout across post types
 
 In the Template settings dialog, set **Applies to** to "Post types" and check multiple post-type tables. A single template can list several `tableSlugs`: `{ kind: 'postTypes', tableSlugs: ['posts', 'news'] }`.
+
+### Build a template with the AI agent
+
+The site-scope AI agent can author templates end-to-end:
+
+1. Build the chrome on a page with `insertHtml`, including one `<instatic-outlet>` element where the wrapped content should appear (the importer maps it to a `base.outlet` node).
+2. Call `setPageTemplate(pageId, target, priority?)` — `target` is `{ kind: 'everywhere' }` or `{ kind: 'postTypes', tableSlugs: [...] }`. For a postTypes target, the agent reads valid slugs from `list_post_types` first.
+3. `clearPageTemplate(pageId)` reverts a template to an ordinary page. `list_pages` reports each page's current `template` config.
+
+No outlet save-guard applies here either — an agent-built template with no outlet simply doesn't apply. See [agent.md → Templates](agent.md) for the tool surface.
 
 ### Custom token in text
 

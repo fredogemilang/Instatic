@@ -106,6 +106,24 @@ const IFRAME_SRC_DOC = '<!doctype html><html><head></head><body></body></html>'
 /** Stable empty list so a script-less frame doesn't churn the injector's deps. */
 const EMPTY_RUNTIME_SCRIPTS: InjectableRuntimeScript[] = []
 
+/**
+ * Elements whose default click/activation navigates the frame. Anchors and
+ * image-maps cover link navigation; form submission is cancelled separately
+ * via a `submit` listener, so a default-typed submit button inside a form is
+ * covered there even though it isn't matched here.
+ */
+const NAVIGABLE_SELECTOR = 'a[href], area[href], button[type="submit"], input[type="submit"], input[type="image"]'
+
+/**
+ * Cross-realm-safe "is this an Element?" check. The canvas iframe is same-origin
+ * but a different realm, so `target instanceof Element` (the host realm's class)
+ * is false for nodes inside the iframe — duck-type `closest` instead. Mirrors
+ * the same helper in `NodeRenderer`.
+ */
+function isElementLike(value: EventTarget | null): value is Element {
+  return value != null && typeof (value as { closest?: unknown }).closest === 'function'
+}
+
 interface IframeFrameSurfaceProps {
   /** Stable id used to tag the iframe's `<body>` with `data-breakpoint-id`. */
   breakpointId: string
@@ -136,6 +154,12 @@ interface IframeFrameSurfaceProps {
   dataAttrs?: Record<string, string | undefined>
   /** Interaction model — see {@link IframeInteraction}. Defaults to 'canvas'. */
   interaction?: IframeInteraction
+  /**
+   * Double-click handler for read-only composed regions (template chrome,
+   * inlined components, outlet previews). Resolved from the nearest ancestor
+   * carrying `data-instatic-readonly-*` markers; opens that source for editing.
+   */
+  onReadonlyOpen?: (kind: 'page' | 'component', id: string) => void
   /**
    * Bundled runtime scripts to execute inside the frame. Empty/undefined runs
    * nothing — the frame stays a pure render. Same in both interaction modes
@@ -170,6 +194,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       dataAttrs,
       interaction = 'canvas',
       runtimeScripts,
+      onReadonlyOpen,
     },
     ref,
     ) {
@@ -258,6 +283,64 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         iframeDoc.body.removeEventListener('click', handler)
       }
     }, [iframeDoc, breakpointId, onClick, interaction])
+
+    // ── Navigation guard ─────────────────────────────────────────────────
+    // The canvas iframe is an EDITING surface, never a browsing surface.
+    // Authored content, read-only template chrome, and inlined Visual
+    // Components all render real `<a href>` / `<form>` elements; clicking one
+    // would navigate the frame and load the whole site inside the editor. A
+    // capture-phase `preventDefault` cancels every default navigation
+    // regardless of which subtree the element lives in, while deliberately NOT
+    // calling `stopPropagation` so React's synthetic click handlers still run
+    // and node selection keeps working. Applies in both interaction modes —
+    // neither the design canvas nor the live/preview frame is a real
+    // navigation target.
+    useEffect(() => {
+      if (!iframeDoc) return
+      const blockNavigation = (event: Event) => {
+        const target = event.target
+        if (!isElementLike(target)) return
+        if (!target.closest(NAVIGABLE_SELECTOR)) return
+        event.preventDefault()
+      }
+      const blockSubmit = (event: Event) => {
+        event.preventDefault()
+      }
+      iframeDoc.addEventListener('click', blockNavigation, true)
+      iframeDoc.addEventListener('auxclick', blockNavigation, true)
+      iframeDoc.addEventListener('submit', blockSubmit, true)
+      return () => {
+        iframeDoc.removeEventListener('click', blockNavigation, true)
+        iframeDoc.removeEventListener('auxclick', blockNavigation, true)
+        iframeDoc.removeEventListener('submit', blockSubmit, true)
+      }
+    }, [iframeDoc])
+
+    // ── Read-only region open ────────────────────────────────────────────
+    // Double-clicking read-only composed content (template chrome, an inlined
+    // component, an outlet preview) opens its source document for editing.
+    // The nearest ancestor carrying `data-instatic-readonly-*` markers names
+    // the source; editable nodes carry no such markers, so their own
+    // double-click (enter / inline-edit) is untouched.
+    useEffect(() => {
+      if (!iframeDoc || !onReadonlyOpen) return
+      const handleDblClick = (event: MouseEvent) => {
+        const target = event.target
+        if (!isElementLike(target)) return
+        const region = target.closest('[data-instatic-readonly-id]')
+        if (!region) return
+        const id = region.getAttribute('data-instatic-readonly-id')
+        const kind = region.getAttribute('data-instatic-readonly-kind')
+        if (!id || (kind !== 'page' && kind !== 'component')) return
+        event.preventDefault()
+        event.stopPropagation()
+        onReadonlyOpen(kind, id)
+      }
+      iframeDoc.addEventListener('dblclick', handleDblClick, true)
+      return () => {
+        iframeDoc.removeEventListener('dblclick', handleDblClick, true)
+      }
+    }, [iframeDoc, onReadonlyOpen])
 
     // ── Iframe height tracking ────────────────────────────────────────────
     // The canvas is a Figma-like infinite surface — frames are not supposed

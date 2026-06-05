@@ -20,7 +20,7 @@
 import { useRef, useState, type CSSProperties } from 'react'
 import type { Page, Breakpoint } from '@core/page-tree'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
-import { NodeRenderer } from './NodeRenderer'
+import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
 import { CanvasBreakpointContext, CanvasTemplateContext } from './CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
@@ -30,8 +30,17 @@ import { Button } from '@ui/components/Button'
 import { CursorTooltip, type CursorTooltipPoint } from '@ui/components/Tooltip'
 import { cn } from '@ui/cn'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
+import { useEditorStore } from '@site/store/store'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
 import styles from './BreakpointFrame.module.css'
+
+/**
+ * Cross-realm-safe Element check — the iframe is a different realm, so
+ * `instanceof Element` is false for nodes inside it. Duck-type `closest`.
+ */
+function isElementLike(value: EventTarget | null): value is Element {
+  return value != null && typeof (value as { closest?: unknown }).closest === 'function'
+}
 
 interface BreakpointFrameProps {
   page: Page
@@ -75,6 +84,19 @@ export function BreakpointFrame({
   // when the iframe mounts.
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
   const [activationHintPoint, setActivationHintPoint] = useState<CursorTooltipPoint | null>(null)
+  const [readonlyHint, setReadonlyHint] = useState<{ text: string; point: CursorTooltipPoint } | null>(null)
+
+  // Opening the source of a read-only composed region (template chrome,
+  // inlined component, outlet preview) on double-click.
+  const openPageInCanvas = useEditorStore((s) => s.openPageInCanvas)
+  const setActiveDocument = useEditorStore((s) => s.setActiveDocument)
+  const handleReadonlyOpen = (kind: 'page' | 'component', id: string) => {
+    if (kind === 'component') {
+      setActiveDocument({ kind: 'visualComponent', vcId: id })
+    } else {
+      openPageInCanvas(id)
+    }
+  }
 
   // Breakpoint chrome (active highlight + label-click-to-activate) is a style
   // editing affordance — picking the "active" breakpoint controls where per-
@@ -95,12 +117,28 @@ export function BreakpointFrame({
 
   const inactiveFrameActivates = breakpointChromeVisible && activationHintEnabled && !isActive
   const handleFrameCursorMove = (event: MouseEvent) => {
-    if (!inactiveFrameActivates) return
-    setActivationHintPoint(clientPointToEditorDoc(event))
+    if (inactiveFrameActivates) {
+      // The whole frame's "click to activate" affordance owns the cursor here;
+      // don't compete with a read-only hint.
+      setActivationHintPoint(clientPointToEditorDoc(event))
+      return
+    }
+    // On the active frame, hovering read-only composed content (template
+    // chrome, an inlined component, an outlet preview) shows a hint naming its
+    // source. Editable content carries no read-only markers, so it clears it.
+    const target = event.target
+    const region = isElementLike(target)
+      ? target.closest('[data-instatic-readonly-label]')
+      : null
+    const label = region?.getAttribute('data-instatic-readonly-label') ?? null
+    setReadonlyHint(
+      label ? { text: `Part of ${label} — double-click to edit`, point: clientPointToEditorDoc(event) } : null,
+    )
   }
 
   const handleFrameCursorLeave = () => {
     setActivationHintPoint(null)
+    setReadonlyHint(null)
   }
 
   return (
@@ -149,12 +187,13 @@ export function BreakpointFrame({
           onClick={handleEmptyFrameClick}
           onCursorMove={handleFrameCursorMove}
           onCursorLeave={handleFrameCursorLeave}
+          onReadonlyOpen={handleReadonlyOpen}
           runtimeScripts={runtimeScripts}
         >
           {renderTree && (
             <CanvasTemplateContext.Provider value={templateContext}>
               <CanvasBreakpointContext.Provider value={breakpoint.id}>
-                <NodeRenderer nodeId={page.rootNodeId} />
+                <CanvasComposedTree page={page} />
               </CanvasBreakpointContext.Provider>
             </CanvasTemplateContext.Provider>
           )}
@@ -172,6 +211,10 @@ export function BreakpointFrame({
         <CursorTooltip
           content={`Click to activate ${breakpoint.label} breakpoint`}
           point={inactiveFrameActivates ? activationHintPoint : null}
+        />
+        <CursorTooltip
+          content={readonlyHint?.text ?? ''}
+          point={readonlyHint ? readonlyHint.point : null}
         />
       </div>
     </div>

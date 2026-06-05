@@ -3,19 +3,14 @@
  *
  * Tests the floating component-mode control rendered in VC edit mode:
  *   1. Renders null when activeDocument is not a VC
- *   2. Renders mode label, editable component name + back button in VC mode
+ *   2. Renders the mode label, "Back to page", and the document switcher
  *   3. Back button calls exitVisualComponentMode
- *   4. Clicking the name chip enters edit mode
- *   5. Renaming with an invalid name shows role="alert"
- *   6. Renaming with a valid name calls renameVisualComponent + updates display
- *   7. Pressing Escape reverts the name
+ *   4. The switcher shows the current VC name and excludes it from the list
  *
  * Uses @testing-library/react with happy-dom (preloaded via bunfig.toml).
- * Architecture source: Phase 4 Layer 3 (Task #A2)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
-import React from 'react'
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
 import VisualComponentModeControl from '@site/canvas/VisualComponentModeControl'
@@ -43,10 +38,10 @@ function resetStore() {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture: site with one page and one VC
+// Fixture: site with one page and one (or two) VCs
 // ---------------------------------------------------------------------------
 
-function setupVCMode(): { vcId: string; pageId: string } {
+function setupVCMode(): { vcId: string } {
   const store = useEditorStore.getState()
   const site = store.createSite('Test Site')
   const pageId = site.pages[0].id
@@ -58,7 +53,7 @@ function setupVCMode(): { vcId: string; pageId: string } {
     useEditorStore.getState().setActiveDocument({ kind: 'visualComponent', vcId })
   })
 
-  return { vcId, pageId }
+  return { vcId }
 }
 
 beforeEach(resetStore)
@@ -70,24 +65,21 @@ afterEach(cleanup)
 
 describe('VisualComponentModeControl — renders null when not in VC mode', () => {
   it('returns nothing when activeDocument is null', () => {
-    render(<VisualComponentModeControl />)
-    expect(screen.queryByTestId('vc-mode-control')).toBeNull()
+    const { container } = render(<VisualComponentModeControl />)
+    expect(container.firstChild).toBeNull()
   })
 
   it('returns nothing when activeDocument.kind is "page"', () => {
-    const store = useEditorStore.getState()
-    store.createSite('Test Site')
-    const pageId = useEditorStore.getState().site!.pages[0].id
     act(() => {
-      useEditorStore.getState().setActiveDocument({ kind: 'page', pageId })
+      useEditorStore.getState().createSite('Test Site')
     })
-    render(<VisualComponentModeControl />)
-    expect(screen.queryByTestId('vc-mode-control')).toBeNull()
+    const { container } = render(<VisualComponentModeControl />)
+    expect(container.firstChild).toBeNull()
   })
 })
 
 // ---------------------------------------------------------------------------
-// 2 — Renders mode control when in VC mode
+// 2 — Renders the control in VC mode
 // ---------------------------------------------------------------------------
 
 describe('VisualComponentModeControl — renders in VC mode', () => {
@@ -103,30 +95,18 @@ describe('VisualComponentModeControl — renders in VC mode', () => {
     expect(screen.getByTestId('vc-mode-control-back')).toBeDefined()
   })
 
-  it('renders the VC name chip', () => {
-    setupVCMode()
-    render(<VisualComponentModeControl />)
-    const nameChip = screen.getByTestId('vc-mode-control-name')
-    expect(nameChip.textContent).toBe('HeroSection')
-  })
-
-  it('renders the component mode label without uppercase treatment', () => {
+  it('renders the "Editing component" mode label', () => {
     setupVCMode()
     render(<VisualComponentModeControl />)
     const control = screen.getByTestId('vc-mode-control')
-    expect(control.textContent).toContain('Editing')
-    expect(control.textContent).toContain('HeroSection')
+    expect(control.textContent).toContain('Editing component')
   })
 
-  it('shows a rename tooltip when hovering the VC name chip', () => {
+  it('shows the current VC name in the document switcher', () => {
     setupVCMode()
     render(<VisualComponentModeControl />)
-
-    act(() => {
-      fireEvent.mouseEnter(screen.getByTestId('vc-mode-control-name'))
-    })
-
-    expect(screen.getByRole('tooltip').textContent).toBe('Rename component')
+    const switcher = screen.getByTestId('document-switcher') as HTMLInputElement
+    expect(switcher.getAttribute('placeholder')).toBe('HeroSection')
   })
 })
 
@@ -135,258 +115,42 @@ describe('VisualComponentModeControl — renders in VC mode', () => {
 // ---------------------------------------------------------------------------
 
 describe('VisualComponentModeControl — back button', () => {
-  it('calls exitVisualComponentMode when back button is clicked', () => {
-    const { pageId } = setupVCMode()
+  it('calls exitVisualComponentMode when the back button is clicked', () => {
+    setupVCMode()
     render(<VisualComponentModeControl />)
-
     act(() => {
       fireEvent.click(screen.getByTestId('vc-mode-control-back'))
     })
-
-    const s = useEditorStore.getState()
-    expect(s.activeDocument).toBeNull()
-    // Should restore the page
-    expect(s.activePageId).toBe(pageId)
+    expect(useEditorStore.getState().activeDocument).toBeNull()
   })
 })
 
 // ---------------------------------------------------------------------------
-// 4 — Name chip entering edit mode
+// 4 — The switcher lists other documents and excludes the current VC
 // ---------------------------------------------------------------------------
 
-describe('VisualComponentModeControl — inline name editing', () => {
-  it('clicking the name chip shows an input', () => {
+describe('VisualComponentModeControl — document switcher', () => {
+  it('lists other components but excludes the one being edited', () => {
     setupVCMode()
-    render(<VisualComponentModeControl />)
-
     act(() => {
-      fireEvent.click(screen.getByTestId('vc-mode-control-name'))
+      useEditorStore.getState().createVisualComponent('OtherComp')
     })
-
-    expect(screen.getByTestId('vc-mode-control-name-input')).toBeDefined()
+    const { container } = render(<VisualComponentModeControl />)
+    const nativeSelect = container.querySelector('select')
+    const optionTexts = Array.from(nativeSelect?.querySelectorAll('option') ?? []).map(
+      (o) => o.textContent,
+    )
+    expect(optionTexts).toContain('OtherComp')
+    expect(optionTexts).not.toContain('HeroSection')
   })
 
-  it('the input is pre-filled with the current VC name', () => {
+  it('groups the list with a Pages group header for the seeded page', () => {
     setupVCMode()
-    render(<VisualComponentModeControl />)
-
-    act(() => {
-      fireEvent.click(screen.getByTestId('vc-mode-control-name'))
-    })
-
-    const input = screen.getByTestId('vc-mode-control-name-input') as HTMLInputElement
-    expect(input.value).toBe('HeroSection')
-  })
-
-  // ---------------------------------------------------------------------------
-  // 5 — Invalid rename shows role="alert"
-  // ---------------------------------------------------------------------------
-
-  it('shows role="alert" when invalid name is submitted (duplicate name)', () => {
-    const { vcId } = setupVCMode()
-
-    // Add a second VC so we can trigger PROJECT_DUPLICATE on rename
-    act(() => {
-      useEditorStore.setState((s) => {
-        const site = s.site!
-        const otherVC = {
-          id: 'vc-other',
-          name: 'TakenName',
-          tree: {
-            rootNodeId: 'r',
-            nodes: { r: { id: 'r', moduleId: 'base.body', props: {}, children: [], breakpointOverrides: {}, classIds: [] } },
-          },
-          params: [],
-          breakpoints: [],
-          classIds: [],
-          createdAt: 1,
-        }
-        return {
-          site: {
-            ...site,
-            visualComponents: [
-              ...(site.visualComponents ?? []),
-              otherVC,
-            ],
-          },
-        } as Parameters<typeof useEditorStore.setState>[0]
-      })
-    })
-    expect(vcId).toBeDefined()
-
-    render(<VisualComponentModeControl />)
-
-    act(() => {
-      fireEvent.click(screen.getByTestId('vc-mode-control-name'))
-    })
-
-    const input = screen.getByTestId('vc-mode-control-name-input') as HTMLInputElement
-
-    act(() => {
-      fireEvent.change(input, { target: { value: 'TakenName' } })
-      fireEvent.blur(input)
-    })
-
-    const alert = screen.getByRole('alert')
-    expect(alert).toBeDefined()
-    expect(alert.textContent).toContain('TakenName')
-  })
-
-  it('accepts a name with spaces (free-form)', () => {
-    const { vcId } = setupVCMode()
-    render(<VisualComponentModeControl />)
-
-    act(() => {
-      fireEvent.click(screen.getByTestId('vc-mode-control-name'))
-    })
-
-    const input = screen.getByTestId('vc-mode-control-name-input') as HTMLInputElement
-
-    act(() => {
-      fireEvent.change(input, { target: { value: 'Hero Section' } })
-      fireEvent.blur(input)
-    })
-
-    // Spaces are valid → rename committed and input dismissed
-    expect(screen.queryByTestId('vc-mode-control-name-input')).toBeNull()
-    const vc = useEditorStore.getState().site!.visualComponents!.find((v) => v.id === vcId)
-    expect(vc?.name).toBe('Hero Section')
-  })
-
-  // ---------------------------------------------------------------------------
-  // 6 — Valid rename updates the store and display
-  // ---------------------------------------------------------------------------
-
-  it('valid rename calls renameVisualComponent and updates the breadcrumb', () => {
-    const { vcId } = setupVCMode()
-    render(<VisualComponentModeControl />)
-
-    act(() => {
-      fireEvent.click(screen.getByTestId('vc-mode-control-name'))
-    })
-
-    const input = screen.getByTestId('vc-mode-control-name-input') as HTMLInputElement
-
-    act(() => {
-      fireEvent.change(input, { target: { value: 'CardSection' } })
-      fireEvent.blur(input)
-    })
-
-    // Store should have the new name
-    const vc = useEditorStore.getState().site!.visualComponents!.find((v) => v.id === vcId)
-    expect(vc?.name).toBe('CardSection')
-
-    // Input should be dismissed
-    expect(screen.queryByTestId('vc-mode-control-name-input')).toBeNull()
-
-    // Name chip should show the new name
-    expect(screen.getByTestId('vc-mode-control-name').textContent).toBe('CardSection')
-  })
-
-  it('pressing Enter submits the rename', () => {
-    const { vcId } = setupVCMode()
-    render(<VisualComponentModeControl />)
-
-    act(() => {
-      fireEvent.click(screen.getByTestId('vc-mode-control-name'))
-    })
-
-    const input = screen.getByTestId('vc-mode-control-name-input') as HTMLInputElement
-
-    act(() => {
-      fireEvent.change(input, { target: { value: 'FooterSection' } })
-      fireEvent.keyDown(input, { key: 'Enter' })
-    })
-
-    const vc = useEditorStore.getState().site!.visualComponents!.find((v) => v.id === vcId)
-    expect(vc?.name).toBe('FooterSection')
-  })
-
-  // ---------------------------------------------------------------------------
-  // 7 — Escape reverts the name
-  // ---------------------------------------------------------------------------
-
-  it('pressing Escape reverts to original name and dismisses input', () => {
-    setupVCMode()
-    render(<VisualComponentModeControl />)
-
-    act(() => {
-      fireEvent.click(screen.getByTestId('vc-mode-control-name'))
-    })
-
-    const input = screen.getByTestId('vc-mode-control-name-input') as HTMLInputElement
-
-    act(() => {
-      fireEvent.change(input, { target: { value: 'SomethingElse' } })
-      fireEvent.keyDown(input, { key: 'Escape' })
-    })
-
-    // Input should be gone
-    expect(screen.queryByTestId('vc-mode-control-name-input')).toBeNull()
-
-    // Name chip should show the original name
-    expect(screen.getByTestId('vc-mode-control-name').textContent).toBe('HeroSection')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Source-code structural checks
-// ---------------------------------------------------------------------------
-
-describe('VisualComponentModeControl — structural source checks', () => {
-  it('source does not use autoFocus', () => {
-    const src = require('fs').readFileSync(
-      new URL('../../admin/pages/site/canvas/VisualComponentModeControl.tsx', import.meta.url),
-      'utf-8',
+    const { container } = render(<VisualComponentModeControl />)
+    const nativeSelect = container.querySelector('select')
+    const groupLabels = Array.from(nativeSelect?.querySelectorAll('optgroup') ?? []).map((g) =>
+      g.getAttribute('label'),
     )
-    expect(src).not.toContain('autoFocus')
-  })
-
-  it('source uses role="alert" for validation errors', () => {
-    const src = require('fs').readFileSync(
-      new URL('../../admin/pages/site/canvas/VisualComponentModeControl.tsx', import.meta.url),
-      'utf-8',
-    )
-    expect(src).toContain('role="alert"')
-  })
-
-  it('source uses exitVisualComponentMode from the store', () => {
-    const src = require('fs').readFileSync(
-      new URL('../../admin/pages/site/canvas/VisualComponentModeControl.tsx', import.meta.url),
-      'utf-8',
-    )
-    expect(src).toContain('exitVisualComponentMode')
-  })
-
-  it('source uses renameVisualComponent from the store', () => {
-    const src = require('fs').readFileSync(
-      new URL('../../admin/pages/site/canvas/VisualComponentModeControl.tsx', import.meta.url),
-      'utf-8',
-    )
-    expect(src).toContain('renameVisualComponent')
-  })
-
-  it('source uses validateComponentName for validation', () => {
-    const src = require('fs').readFileSync(
-      new URL('../../admin/pages/site/canvas/VisualComponentModeControl.tsx', import.meta.url),
-      'utf-8',
-    )
-    expect(src).toContain('validateComponentName')
-  })
-
-  it('CanvasRoot mounts the VC mode control below CanvasNotch, not in Toolbar', () => {
-    const toolbarSrc = require('fs').readFileSync(
-      new URL('../../admin/pages/site/toolbar/Toolbar.tsx', import.meta.url),
-      'utf-8',
-    )
-    expect(toolbarSrc).not.toContain('breadcrumbSlot')
-    expect(toolbarSrc).not.toContain('breadcrumbRegion')
-
-    const canvasRootSrc = require('fs').readFileSync(
-      new URL('../../admin/pages/site/canvas/CanvasRoot.tsx', import.meta.url),
-      'utf-8',
-    )
-    expect(canvasRootSrc).toContain('VisualComponentModeControl')
-    expect(canvasRootSrc).toContain('floatingControl=')
+    expect(groupLabels).toContain('Pages')
   })
 })

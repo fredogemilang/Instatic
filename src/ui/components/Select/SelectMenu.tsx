@@ -115,32 +115,42 @@ export function SelectMenu({
           No matches
         </div>
       ) : (
-        options.map((option, index) => (
-          <ContextMenuItem
-            key={option.value}
-            id={getOptionId(menuId, index)}
-            active={index === activeIndex}
-            role="option"
-            aria-selected={option.value === selectedValue}
-            disabled={option.disabled}
-            data-placeholder-option={option.placeholder ? 'true' : undefined}
-            className={option.placeholder ? styles.placeholderOption : undefined}
-            tabIndex={-1}
-            onMouseEnter={() => {
-              if (option.disabled) return
-              onHover(index)
-              onOptionPreview?.(option.value)
-            }}
-            onClick={() => onSelect(option.value)}
-          >
-            {option.icon && (
-              <span aria-hidden="true">
-                {option.icon}
-              </span>
-            )}
-            <span className={styles.optionLabel}>{option.label}</span>
-          </ContextMenuItem>
-        ))
+        options.map((option, index) =>
+          option.header ? (
+            <div
+              key={option.value}
+              className={styles.groupHeader}
+              role="presentation"
+            >
+              {option.label}
+            </div>
+          ) : (
+            <ContextMenuItem
+              key={option.value}
+              id={getOptionId(menuId, index)}
+              active={index === activeIndex}
+              role="option"
+              aria-selected={option.value === selectedValue}
+              disabled={option.disabled}
+              data-placeholder-option={option.placeholder ? 'true' : undefined}
+              className={option.placeholder ? styles.placeholderOption : undefined}
+              tabIndex={-1}
+              onMouseEnter={() => {
+                if (option.disabled) return
+                onHover(index)
+                onOptionPreview?.(option.value)
+              }}
+              onClick={() => onSelect(option.value)}
+            >
+              {option.icon && (
+                <span aria-hidden="true">
+                  {option.icon}
+                </span>
+              )}
+              <span className={styles.optionLabel}>{option.label}</span>
+            </ContextMenuItem>
+          ),
+        )
       )}
     </ContextMenu>,
     document.body,

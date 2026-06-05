@@ -58,6 +58,10 @@ const VisualComponentModeControl = lazy(() =>
   import('./VisualComponentModeControl').then((module) => ({ default: module.default })),
 )
 
+const TemplateModeControl = lazy(() =>
+  import('./TemplateModeControl').then((module) => ({ default: module.default })),
+)
+
 /**
  * Stable empty-breakpoints sentinel — used as the `?? fallback` in the
  * breakpoints selector so that `Object.is(prev, next)` returns `true` when
@@ -337,15 +341,26 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
             breakpoint iframe now — mounted per-frame by IframeFrameSurface
             so the canvas sees the same cascade the published page sees. */}
 
-          {/* Insert toolbar and breakpoint context selector are design-only —
-            preview has its own chrome inside CanvasModeToggle. */}
-          {!isLive && editable && (
+          {/* Insert toolbar — shown in both design and live modes. Both are
+            editable surfaces (live reuses the same editable iframe + selection
+            overlay), so the notch's quick-insert and history controls apply
+            equally; only the frame layout differs (all frames vs. one). In live
+            mode the frame is flush with the top edge, so the notch auto-hides
+            (peek) and rolls down on hover instead of overlaying the page. */}
+          {editable && (
             <CanvasNotch
-              floatingControl={activeDocument?.kind === 'visualComponent' && (
-                <Suspense fallback={null}>
-                  <VisualComponentModeControl />
-                </Suspense>
-              )}
+              peek={isLive}
+              floatingControl={
+                activeDocument?.kind === 'visualComponent' ? (
+                  <Suspense fallback={null}>
+                    <VisualComponentModeControl />
+                  </Suspense>
+                ) : canvasPage?.template?.enabled ? (
+                  <Suspense fallback={null}>
+                    <TemplateModeControl />
+                  </Suspense>
+                ) : null
+              }
             />
           )}
 
@@ -353,6 +368,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
             also hosts inline breakpoint switcher buttons, and the toggle owns
             the "Run scripts" switch + its build status / Refresh. */}
           <CanvasModeToggle
+            peek={isLive}
             scriptStatus={scriptBuild.status}
             onRefreshScripts={scriptBuild.refresh}
           />

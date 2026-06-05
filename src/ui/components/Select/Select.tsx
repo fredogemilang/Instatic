@@ -162,8 +162,10 @@ export function Select({
   const trimmedQuery = query.trim().toLowerCase()
   const visibleOptions =
     searchEnabled && trimmedQuery
-      ? normalizedOptions.filter((option) =>
-          option.textValue.toLowerCase().includes(trimmedQuery),
+      ? // While searching, show a flat list of matches — group headers are
+        // dropped so a query never leaves a lone heading with no items.
+        normalizedOptions.filter(
+          (option) => !option.header && option.textValue.toLowerCase().includes(trimmedQuery),
         )
       : normalizedOptions
 

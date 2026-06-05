@@ -22,6 +22,17 @@ export interface NormalizedSelectOption {
   icon?: ReactNode
   disabled?: boolean
   placeholder?: boolean
+  /**
+   * Non-interactive group-header row (emitted from an `<optgroup label>`). It
+   * is rendered as a heading and skipped by selection, keyboard navigation, and
+   * search filtering.
+   */
+  header?: boolean
+}
+
+/** A real, selectable option — not a disabled item and not a group header. */
+export function isSelectableOption(option: NormalizedSelectOption): boolean {
+  return !option.disabled && !option.header
 }
 
 export function stringifySelectValue(value: unknown): string {
@@ -61,8 +72,17 @@ export function normalizeOptions(
 function optionFromChild(child: ReactNode): NormalizedSelectOption[] {
   if (!isValidElement(child)) return []
   if (child.type === 'optgroup') {
-    const props = child.props as { children?: ReactNode }
-    return Children.toArray(props.children).flatMap(optionFromChild)
+    const props = child.props as { label?: string; children?: ReactNode }
+    const groupItems = Children.toArray(props.children).flatMap(optionFromChild)
+    if (groupItems.length === 0) return []
+    const label = props.label ?? ''
+    const header: NormalizedSelectOption = {
+      value: `__group__:${label}`,
+      label,
+      textValue: label,
+      header: true,
+    }
+    return [header, ...groupItems]
   }
   if (child.type !== 'option') return []
 
@@ -84,16 +104,16 @@ export function isEnabledOptionIndex(
   options: NormalizedSelectOption[],
   index: number,
 ): boolean {
-  return index >= 0 && index < options.length && !options[index].disabled
+  return index >= 0 && index < options.length && isSelectableOption(options[index])
 }
 
 export function getFirstEnabledOptionIndex(options: NormalizedSelectOption[]): number {
-  return options.findIndex((option) => !option.disabled)
+  return options.findIndex(isSelectableOption)
 }
 
 export function getLastEnabledOptionIndex(options: NormalizedSelectOption[]): number {
   for (let index = options.length - 1; index >= 0; index--) {
-    if (!options[index].disabled) return index
+    if (isSelectableOption(options[index])) return index
   }
   return -1
 }
@@ -103,7 +123,7 @@ export function getInitialActiveIndex(
   selectedValue: string,
 ): number {
   const selectedIndex = options.findIndex(
-    (option) => option.value === selectedValue && !option.disabled,
+    (option) => option.value === selectedValue && isSelectableOption(option),
   )
   return selectedIndex >= 0 ? selectedIndex : getFirstEnabledOptionIndex(options)
 }
@@ -118,7 +138,7 @@ export function getNextEnabledOptionIndex(
 
   for (let step = 1; step <= options.length; step++) {
     const nextIndex = (startIndex + direction * step + options.length) % options.length
-    if (!options[nextIndex].disabled) return nextIndex
+    if (isSelectableOption(options[nextIndex])) return nextIndex
   }
 
   return -1

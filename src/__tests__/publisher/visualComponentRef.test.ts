@@ -523,11 +523,11 @@ describe('VC inlining — unknown componentId', () => {
 // ---------------------------------------------------------------------------
 
 describe('VC inlining — richtext prop sanitization', () => {
-  // VC: <article>{html param}</article> using base.outlet (html is a richtext key)
+  // VC: <main>{html param}</main> using base.outlet (html is a richtext key)
   const contentNode = makeVCNode({
     id: 'vc-content-node',
     moduleId: 'base.outlet',
-    props: { html: '' },
+    props: { tag: 'main', html: '' },
     propBindings: { html: { paramId: 'param-html' } },
   })
   const contentRootNode = makeVCNode({
@@ -573,10 +573,10 @@ describe('VC inlining — richtext prop sanitization', () => {
     })
     const site = makeSite({ visualComponents: [vcContent], pages: [page] })
     const { html } = publishPage(page, site, registry)
-    // The <article> wrapper from base.outlet must be intact (the
+    // The <main> wrapper from base.outlet must be intact (the
     // `data-instatic-content-region` attribute is the marker the content
     // editor's Live mode uses to mount its inline Tiptap instance).
-    expect(html).toContain('<article data-instatic-content-region>')
+    expect(html).toContain('<main data-instatic-content-region>')
     expect(html).not.toContain('<script>')
   })
 })

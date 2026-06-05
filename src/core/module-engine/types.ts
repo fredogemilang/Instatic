@@ -103,12 +103,27 @@ export interface ModuleComponentProps<
  * activation through the user's authored DOM directly (no wrapper div).
  */
 export interface NodeWrapperProps {
-  'data-node-id': string
-  'data-module-id': string
-  tabIndex: 0
-  role: 'button'
-  'aria-pressed': boolean
+  // Identity + selection fields. Present for EDITABLE nodes (built by the
+  // canvas NodeRenderer). They are optional because the same spread channel
+  // also carries the read-only markers below for NON-editable composed content
+  // (template chrome, inlined components, outlet previews), which deliberately
+  // has no node identity — it is not selectable, only labelled.
+  'data-node-id'?: string
+  'data-module-id'?: string
+  tabIndex?: 0
+  role?: 'button'
+  'aria-pressed'?: boolean
   'data-hovered'?: 'true'
+  /**
+   * Read-only region markers, spread onto every element of a non-editable
+   * composed subtree (`ReadOnlyNodeTree`). The canvas reads the nearest
+   * ancestor carrying these to show a "part of X — double-click to edit" hint
+   * and to open the source on double-click. `kind` routes the open action
+   * ('page' → openPageInCanvas, 'component' → setActiveDocument).
+   */
+  'data-instatic-readonly-label'?: string
+  'data-instatic-readonly-kind'?: 'page' | 'component'
+  'data-instatic-readonly-id'?: string
   /**
    * The node's inline styles (`node.inlineStyles`) as a React style object, so
    * the canvas preview matches the published `style="…"` attribute. Present
