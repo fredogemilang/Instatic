@@ -117,11 +117,11 @@ All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<P
 
 | Function                                       | What it does                                  |
 |------------------------------------------------|-----------------------------------------------|
-| `addPage(site, title, slug) → Page`            | Append a new page to `site.pages`             |
+| `addPage(site, title, slug) → Page`            | Append a new page to `site.pages`. Slug is auto-uniqued via `uniquePageSlug` — a collision never bricks the save. |
 | `deletePage(site, pageId)`                     | Remove a page                                 |
-| `renamePage(site, pageId, title, slug?)`       | Update title (and slug)                       |
+| `renamePage(site, pageId, title, slug?)`       | Update title (and slug). Slug is auto-uniqued (skipping self-collision); `'index'` is always set verbatim. |
 | `reorderPages(site, fromIndex, toIndex)`       | Reorder the page list                         |
-| `duplicatePage(site, pageId, ...)`             | Clone a page with a fresh id and slug         |
+| `duplicatePage(site, pageId, ...)`             | Clone a page with a fresh id. Slug is auto-uniqued so the copy never collides with the source. |
 
 ### Helpers and selectors
 
@@ -142,7 +142,8 @@ All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<P
 - `normalizePageSlug(value)` — lowercases, strips invalid characters, and collapses hyphens.
 - `pageSlugError(slug)` — returns a validation error message or `null` if the slug is valid.
 - `pageSlugDuplicateError(slug, pages, currentPageId?)` — checks for slug collisions across the page list.
-- `createUniquePageSlug(title, pages)` — generates a collision-free slug from a page title.
+- `uniquePageSlug(desired, pages, excludePageId?)` — makes a desired slug unique by auto-suffixing (`-2`, `-3`, …) when a collision exists. `excludePageId` skips the page being renamed so re-saving its own slug is a no-op. Used by `addPage`, `duplicatePage`, and `renamePage`.
+- `createUniquePageSlug(title, pages)` — generates a collision-free slug from a page title (normalises + reserved-slug guard + uniqueness).
 
 ---
 

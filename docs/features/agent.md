@@ -10,7 +10,7 @@ The agent runs on a provider-agnostic AI runtime (`server/ai/`) that can drive a
 
 - **Structure via HTML.** `insertHtml` and `replaceNodeHtml` accept semantic HTML strings; the browser executor calls `importHtml` (the same pipeline as the paste-HTML UI) to convert them into first-class, editable `PageNode`s.
 - **Styling via CSS.** The agent emits CSS the same way a human pastes it: a `<style>` block and/or `class=` attributes inside the `insertHtml`/`replaceNodeHtml` payload. The importer (`cssToStyleRules`) classifies every selector — a bare `.foo {}` rule becomes a reusable Selectors-panel class bound to `class="foo"`; any other selector (`.hero a`, `a:hover`, `nav > li`) becomes an ambient rule; `style=` attributes land on the node's inline styles. There is no structured `classes` parameter — the agent never hand-builds classes node-by-node at insert time. `createClass` / `updateClassStyles` / `assignClass` exist for editing styles on **existing** nodes after insertion.
-- **26 tools total.** 5 server-side read tools (resolved server-side from the posted snapshot) + 21 browser-bridged write tools.
+- **29 tools total.** 6 server-side read tools (resolved server-side from the posted snapshot) + 23 browser-bridged write tools.
 - **Two-endpoint bridge.** `POST /admin/api/ai/chat/site` opens an NDJSON stream. When the model calls a write tool, the server emits `toolRequest`; the browser executor applies it to the editor store and POSTs the `AiToolOutput` result to `POST /admin/api/ai/tool-result`.
 - **Provider-agnostic.** The runtime selects a driver (Anthropic, OpenAI, OpenRouter, Ollama) from the conversation's configured credential.
 - **Tools defined with TypeBox** (`server/ai/tools/`). Gated by `ai-tools-typebox-only.test.ts`.
@@ -40,8 +40,8 @@ server/ai/
 ├── contextTokens.ts        — normalizeContextTokens(): provider-normalised "context used" for the meter
 ├── tools/
 │   ├── site/
-│   │   ├── writeTools.ts      — 21 browser-bridged write tools (TypeBox schemas)
-│   │   ├── readTools.ts       — 5 server-side read tools
+│   │   ├── writeTools.ts      — 23 browser-bridged write tools (TypeBox schemas)
+│   │   ├── readTools.ts       — 6 server-side read tools
 │   │   ├── render.ts          — server-side page render (`renderAgentPage`) + catalog derivations (`describeAgentModules`, `describeAgentTokens`, `filterTokenFamily`)
 │   │   ├── systemPrompt.ts    — HTML-native static prefix + buildDynamicSuffix
 │   │   └── snapshot.ts        — `SiteAgentSnapshot` re-export + catalog output types (ModuleInfo, SnapshotTokens, …)
@@ -139,6 +139,7 @@ NDJSON stream events (one JSON object + \n per line):
     { type: 'toolRequest', requestId, toolName, input }    ← write tools only
     { type: 'toolResult', toolCallId, toolName, ok, error? }
     { type: 'usage', promptTokens, completionTokens, costUsd?, cacheReadTokens?, cacheCreationTokens? }
+    { type: 'context', contextTokens }                     ← per-round meter update
     { type: 'done' }
     { type: 'error', message }                             ← on server error
 
@@ -496,8 +497,8 @@ When `POST /admin/api/ai/credentials` creates a new credential, `seedEmptyDefaul
 - Source-of-truth files:
   - `src/core/ai/toolOutput.ts` — `AiToolOutput` type, `AiToolOutputSchema`, `aiToolOk`, `aiToolError` (canonical bridge result)
   - `src/core/ai/index.ts` — barrel re-exporting the above
-  - `server/ai/tools/site/writeTools.ts` — 17 browser-bridged write tool definitions (TypeBox schemas)
-  - `server/ai/tools/site/readTools.ts` — 5 server-side read tool definitions
+  - `server/ai/tools/site/writeTools.ts` — 23 browser-bridged write tool definitions (TypeBox schemas)
+  - `server/ai/tools/site/readTools.ts` — 6 server-side read tool definitions
   - `server/ai/tools/site/render.ts` — `renderAgentPage`, `describeAgentModules`, `describeAgentTokens`, `filterTokenFamily`
   - `server/ai/tools/site/systemPrompt.ts` — HTML-native system prompt
   - `server/ai/tools/site/snapshot.ts` — `SiteAgentSnapshot` re-export + catalog output types (`ModuleInfo`, `SnapshotTokens`, …)
