@@ -89,13 +89,21 @@ The right Properties Panel exposes this through a unified selector picker:
 
 - assigned class-kind rules appear as removable `TagPill` chips and add / remove entries from `node.classIds`;
 - matching ambient rules appear as non-removable `TagPill` chips because they affect the selected element through CSS matching;
-- non-matching ambient rules still appear in the dropdown, disabled with a "doesn't match this element" reason, so the user can see why the rule is not currently active.
+- ambient rules whose selector contains a supported state pseudo-class (`:hover`, `:focus`, `:checked`, etc.) but whose stripped base selector matches the selected element appear as **inactive-pseudo** pills — they are surfaced even though `element.matches()` reports false for the full selector, so state styles stay editable without physically triggering the state;
+- non-matching ambient rules (those whose stripped base selector also fails) still appear in the dropdown, disabled with a "doesn't match this element" reason;
+- all pills are sorted **weakest → strongest by CSS specificity** (then by `rule.order`) so the chip that actually wins the cascade reads last;
 - class-kind pills and suggestion rows show the leading dot (`.hero-button`) because they are CSS selectors, not plain labels.
 - selector creation uses one input path. `classifySelectorCreateInput` treats one class token (`hero-button` or `.hero-button`) as a class-kind rule and selector-shaped input (`h1`, `.hero .title`, `a:hover`) as an ambient rule.
 - invalid selector-shaped input is validated in the picker autocomplete, disables submit, and replaces the "Create selector" row with a warning row. The store repeats the same validation as the final guard.
 - creating an ambient selector from the picker always creates the rule. If it does not match the selected element, the picker leaves selector-editing mode alone and shows an inline "added but does not match this element" notice with an Undo button.
 
-The picker decides ambient matches against the selected live canvas element as the selector subject (`element.matches(selector)`). A selector such as `.hero .title` appears when the selected element is `.title`, not when the selected element is the `.hero` ancestor. Supported trailing pseudo-state selectors (`:hover`, `:focus`, `:focus-visible`, `:active`) are surfaced as inactive matches by stripping the trailing pseudo and testing the base selector.
+The picker decides ambient matches via `element.matches(selector)` on the selected live canvas element. A selector such as `.hero .title` appears when the selected element is `.title`, not when the selected element is the `.hero` ancestor.
+
+**Pseudo-state rules.** Ambient selectors that carry a supported state pseudo-class are recognized as state rules. The supported set (`SUPPORTED_PSEUDO_STATES`) covers transient interaction, navigation, and form-state pseudo-classes: `:hover`, `:active`, `:focus`, `:focus-visible`, `:focus-within`, `:target`, `:visited`, `:checked`, `:indeterminate`, `:placeholder-shown`, `:autofill`, `:disabled`, `:valid`, `:invalid`, `:in-range`, `:out-of-range`, `:user-valid`, `:user-invalid`. Structural and attribute-condition pseudos (`:first-child`, `:required`, `:not(...)`, etc.) are intentionally absent — `element.matches()` evaluates those correctly against the static DOM, so they produce direct matches, not inactive-pseudo matches. All shared helpers live in `src/admin/pages/site/cssStatePseudo.ts` (`SUPPORTED_PSEUDO_STATES`, `selectorStatePseudo`, `stripStatePseudos`, `splitSelectorList`).
+
+State pseudo matching is tested per selector list entry: `.btn:hover, .x .btn` is split on the top-level comma and each entry is stripped independently. Pseudo-elements (e.g. `::after` in `.card:hover::after`) are stripped because `element.matches` never matches a pseudo-element.
+
+**Forced state preview.** When a state-pseudo ambient rule is the active rule in the Properties Panel, the canvas cannot toggle the real `:hover`/`:focus`/… state via the DOM, so `ClassStyleInjector` force-paints the rule's declarations directly onto the selected node via a doubled `[data-node-id]` selector rule emitted into a separate `<style id="mc-classes-force-state">` element. This mirrors the full `contextStyles` emission — an override that only applies at a breakpoint is previewed only in that breakpoint's frame. When a property control is being dragged (in-flight edit), the forced preview overlays the edit live so dragging a slider shows the correct state appearance.
 
 Class order matters — drag-reorder is supported for assigned class pills.
 
@@ -338,7 +346,10 @@ Nodes that reference the rule by id keep working — only the rendered CSS outpu
   - `src/core/page-tree/scopedClassClone.ts` — `cloneScopedClassesForNodeMap`
   - `src/core/publisher/classCss.ts` — `bagToCSS`
   - `src/core/publisher/cssCollector.ts` — `collectClassCSS`
-  - `src/admin/pages/site/panels/PropertiesPanel/selectorPickerModel.ts` — `deriveSelectorPickerModel`; the pure derivation layer for the unified selector picker
+  - `src/admin/pages/site/cssStatePseudo.ts` — `SUPPORTED_PSEUDO_STATES`, `selectorStatePseudo`, `stripStatePseudos`, `splitSelectorList`; shared helpers for reasoning about state pseudo-classes in the editor
+  - `src/admin/pages/site/panels/PropertiesPanel/selectorPickerModel.ts` — `deriveSelectorPickerModel`, `SelectorMatch`, `SelectorPillItem`, `SelectorSuggestionItem`; pure derivation layer for the unified selector picker including specificity sorting and inactive-pseudo logic
+  - `src/admin/pages/site/canvas/canvasClassCss.ts` — `generateCanvasClassCSS`, `generatePreviewClassCSS`, `generateForcedStateCSS`; canvas CSS generation including forced state preview
+  - `src/admin/pages/site/canvas/ClassStyleInjector.tsx` — manages three `<style>` elements per iframe: `mc-classes`, `mc-classes-preview`, `mc-classes-force-state`
   - `src/core/page-tree/styleRule.ts` — `classifySelectorCreateInput`; the shared classifier for selector creation surfaces
   - `src/admin/pages/site/store/styleRuleRename.ts` — `renameStyleRule`, `isValidCssSelector`; rename logic for both class-kind and ambient rules
   - `src/admin/pages/site/panels/PropertiesPanel/ClassPicker.tsx` — picker UI entry point: pill strip, input, creation flow

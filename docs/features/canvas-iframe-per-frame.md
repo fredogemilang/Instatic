@@ -98,15 +98,19 @@ Pan/zoom gestures are disabled in live mode (`useCanvas({ enabled: !isLive })`).
 
 ## CSS injection into iframes
 
-Three `<style>` elements are injected per iframe, in this order:
+Five `<style>` elements are injected per iframe (three from `ClassStyleInjector`, one each from the other two injectors):
 
 | Injector | `id` attribute | Cascade layer | Purpose |
 |---|---|---|---|
 | `EditorChromeInjector` | `instatic-editor-chrome` | **unlayered** | Editor chrome: placeholder, slot-instance, unknown-module styles. Copies design tokens (`--editor-*`) from parent `:root` onto iframe `:root`. |
 | `ClassStyleInjector` | `mc-classes` | `@layer user-authored` | Publisher reset + framework CSS + class registry CSS |
+| `ClassStyleInjector` | `mc-classes-preview` | `@layer user-authored` | Higher-specificity preview rule (doubled selector) while a property control is hovered. Empty for state-pseudo rules — those use `mc-classes-force-state` instead. |
+| `ClassStyleInjector` | `mc-classes-force-state` | `@layer user-authored` | Force-paints the active state-pseudo rule (`.btn:hover`, `.card:focus`, etc.) onto the selected node via a doubled `[data-node-id]` selector so the state is visible/editable without physically triggering it. Mirrors the full `contextStyles` emission per breakpoint and condition. |
 | `UserStylesheetInjector` | `mc-user-styles` | `@layer user-authored` | User-uploaded stylesheets (verbatim, unscoped) |
 
 Unlayered rules always beat `@layer`-d rules regardless of specificity. User CSS can never override editor chrome even with a high-specificity selector.
+
+`mc-classes-preview` and `mc-classes-force-state` share the same `@layer user-authored` as `mc-classes`. Their doubled selectors (`.foo.foo` for the preview, `[data-node-id="…"][data-node-id="…"]` for the forced state) raise specificity above the base class rule without leaving the layer — same-layer higher specificity wins, keeping the user cascade intact.
 
 `EditorChromeInjector` uses **stable `data-*` attribute selectors** (`data-canvas-module-placeholder`, `data-instatic-slot-instance`, etc.) — not hashed CSS Module class names which only exist in the parent document.
 

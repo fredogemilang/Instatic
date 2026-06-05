@@ -69,7 +69,7 @@ Every interactive control in `src/admin/` goes through one of these. Bare `<butt
 | Primitive                  | When to use                                                  | Key props                                                |
 |----------------------------|--------------------------------------------------------------|----------------------------------------------------------|
 | `DataTable`                | Tabular data with sorting + selection                        | `columns`, `rows`, `selection`, `onSelect`               |
-| `TagPill`                  | Compact tinted labels, selector chips, removable tag pills   | `label`, `active`, `muted`, `onClick`, `onRemove`        |
+| `TagPill`                  | Compact tinted labels, selector chips, removable tag pills   | `label`, `active`, `muted`, `size: 'xs' \| 'sm'`, `monospace`, `leading` (ReactNode prefix slot), `colorKey`, `onClick`, `onRemove`, `onContextMenu`, `mainAriaLabel`, `removeAriaLabel`, `removeTooltip` |
 | `Image`                    | Image with built-in blurhash fallback                        | `src`, `blurhash`, `alt`, `width`, `height`              |
 | `CanvasModulePlaceholder`  | Diagonal-stripe placeholder for empty modules on the canvas  | `label`                                                  |
 | `Kbd`                      | Single keyboard keycap. Use anywhere a key name appears as a hint. | `children`, `className`                             |
