@@ -262,6 +262,72 @@ describe('executeAgentTool — insertHtml', () => {
 })
 
 // ---------------------------------------------------------------------------
+// style-only payloads (ambient/pseudo CSS without an element to host it)
+// ---------------------------------------------------------------------------
+
+describe('executeAgentTool — style-only payloads', () => {
+  it('insertHtml registers an ambient rule from a <style>-only payload (no nodes added)', async () => {
+    const { rootId } = freshStore()
+    const rootChildrenBefore = useEditorStore.getState().site!.pages[0].nodes[rootId].children.length
+
+    const result = await executeAgentTool('insertHtml', {
+      parentId: rootId,
+      html: '<style>.hero a:hover { color: tomato; }</style>',
+    })
+
+    // Previously this returned "HTML contained no importable elements" and threw
+    // the ambient CSS away. Now it succeeds and registers the rule.
+    const data = expectToolData<{ styleRulesAdded: number }>(result)
+    expect(data.styleRulesAdded).toBeGreaterThan(0)
+
+    const site = useEditorStore.getState().site!
+    const ambient = Object.values(site.styleRules).find(
+      (c) => c.kind === 'ambient' && c.selector === '.hero a:hover',
+    )
+    expect(ambient).toBeDefined()
+    expect(ambient!.styles.color).toBe('tomato')
+
+    // No element nodes were added under the parent.
+    expect(site.pages[0].nodes[rootId].children).toHaveLength(rootChildrenBefore)
+  })
+
+  it('insertHtml still errors when the payload has neither elements nor rules', async () => {
+    const { rootId } = freshStore()
+    const result = await executeAgentTool('insertHtml', {
+      parentId: rootId,
+      html: '<style>   </style>',
+    })
+    expectToolError(result)
+    expect(result.error).toContain('no importable elements or style rules')
+  })
+
+  it('replaceNodeHtml with a <style>-only payload registers CSS WITHOUT wiping children', async () => {
+    const { rootId } = freshStore()
+    const containerId = expectNodeIds(
+      await executeAgentTool('insertHtml', { parentId: rootId, html: '<div></div>' }),
+    )[0]
+    await executeAgentTool('insertHtml', { parentId: containerId, html: '<p>Keep me</p>' })
+
+    const childrenBefore = [...useEditorStore.getState().site!.pages[0].nodes[containerId].children]
+    expect(childrenBefore).toHaveLength(1)
+
+    const result = await executeAgentTool('replaceNodeHtml', {
+      nodeId: containerId,
+      html: '<style>.card::before { content: ""; }</style>',
+    })
+
+    expectToolData<{ styleRulesAdded: number }>(result)
+
+    const site = useEditorStore.getState().site!
+    // Children are untouched — a style-only "replace" must not destroy the subtree.
+    expect(site.pages[0].nodes[containerId].children).toEqual(childrenBefore)
+    expect(
+      Object.values(site.styleRules).some((c) => c.selector === '.card::before'),
+    ).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // getNodeHtml
 // ---------------------------------------------------------------------------
 
@@ -382,6 +448,71 @@ describe('executeAgentTool — replaceNodeHtml', () => {
     })
     expectToolError(result)
     expect(result.error).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// auto-navigation to the node's owning document
+// ---------------------------------------------------------------------------
+
+describe('executeAgentTool — auto-navigates to the target node\'s document', () => {
+  // Create a node in page A, then switch the active page to a fresh page B so
+  // the node now lives in a NON-active document. Returns the node id + page A id.
+  async function foreignNode(html: string): Promise<{ id: string; pageAId: string }> {
+    const { rootId } = freshStore()
+    const id = expectNodeIds(
+      await executeAgentTool('insertHtml', { parentId: rootId, html }),
+    )[0]
+    const pageAId = useEditorStore.getState().activePageId!
+    // addPage makes the new page active → id is now in a non-active document.
+    await executeAgentTool('addPage', { title: 'Other', slug: 'other' })
+    return { id, pageAId }
+  }
+
+  it('replaceNodeHtml switches to the owning page and applies the edit there', async () => {
+    const { id, pageAId } = await foreignNode('<div></div>')
+    expect(useEditorStore.getState().activePageId).not.toBe(pageAId)
+
+    const result = await executeAgentTool('replaceNodeHtml', { nodeId: id, html: '<p>Hi A</p>' })
+    expectNodeIds(result)
+
+    // The canvas navigated to page A (the owner)…
+    expect(useEditorStore.getState().activePageId).toBe(pageAId)
+    // …and the edit landed in page A's tree.
+    const pageA = useEditorStore.getState().site!.pages.find((p) => p.id === pageAId)!
+    expect(pageA.nodes[id].children).toHaveLength(1)
+  })
+
+  it('insertHtml under a parent in another page navigates to that page', async () => {
+    const { id, pageAId } = await foreignNode('<div></div>')
+    const result = await executeAgentTool('insertHtml', { parentId: id, html: '<p>child</p>' })
+    expectNodeIds(result)
+    expect(useEditorStore.getState().activePageId).toBe(pageAId)
+  })
+
+  it('getNodeHtml navigates to the owning page and returns its HTML', async () => {
+    const { id, pageAId } = await foreignNode('<p>Hello</p>')
+    const result = await executeAgentTool('getNodeHtml', { nodeId: id })
+    expectToolOk(result)
+    expect(expectHtml(result)).toContain('Hello')
+    expect(useEditorStore.getState().activePageId).toBe(pageAId)
+  })
+
+  it('updateNodeProps navigates to the owning page', async () => {
+    const { id, pageAId } = await foreignNode('<p>Old</p>')
+    const result = await executeAgentTool('updateNodeProps', { nodeId: id, patch: { text: 'New' } })
+    expectToolOk(result)
+    expect(useEditorStore.getState().activePageId).toBe(pageAId)
+  })
+
+  it('still errors clearly when the node exists nowhere', async () => {
+    freshStore()
+    const result = await executeAgentTool('replaceNodeHtml', {
+      nodeId: 'does-not-exist',
+      html: '<p>x</p>',
+    })
+    expectToolError(result)
+    expect(result.error).toContain('not found')
   })
 })
 
@@ -698,6 +829,28 @@ describe('executeAgentTool — addPage', () => {
     const pages = useEditorStore.getState().site!.pages
     expect(pages.some((p) => p.title === 'About')).toBe(true)
   })
+
+  it('returns rootNodeId (the parent for insertHtml) and activates the page', async () => {
+    freshStore()
+    const result = await executeAgentTool('addPage', { title: 'About', slug: 'about' })
+    const data = expectToolData<{ pageId: string; rootNodeId: string }>(result)
+    const newPage = useEditorStore.getState().site!.pages.find((p) => p.id === data.pageId)!
+    expect(data.rootNodeId).toBe(newPage.rootNodeId)
+    // The returned rootNodeId is insertable because addPage makes the page active.
+    const insert = await executeAgentTool('insertHtml', {
+      parentId: data.rootNodeId,
+      html: '<h1>Hi</h1>',
+    })
+    expect(insert.ok).toBe(true)
+  })
+
+  it('a second addPage with the same slug does not collide (auto-unique)', async () => {
+    freshStore()
+    await executeAgentTool('addPage', { title: 'Main Template', slug: 'main-template' })
+    await executeAgentTool('addPage', { title: 'Main Template', slug: 'main-template' })
+    const slugs = useEditorStore.getState().site!.pages.map((p) => p.slug)
+    expect(new Set(slugs).size).toBe(slugs.length) // all unique → site stays save-valid
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -804,6 +957,102 @@ describe('executeAgentTool — duplicatePage', () => {
     })
     expectToolError(result)
     expect(result.error).toContain('Page not found')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// setPageTemplate / clearPageTemplate
+// ---------------------------------------------------------------------------
+
+describe('executeAgentTool — setPageTemplate / clearPageTemplate', () => {
+  it('converts a page into an everywhere template with the default priority', async () => {
+    freshStore()
+    const pageId = useEditorStore.getState().site!.pages[0].id
+    const result = await executeAgentTool('setPageTemplate', {
+      pageId,
+      target: { kind: 'everywhere' },
+    })
+    expectToolOk(result)
+    const page = useEditorStore.getState().site!.pages.find((p) => p.id === pageId)!
+    expect(page.template).toEqual({
+      enabled: true,
+      target: { kind: 'everywhere' },
+      priority: 100,
+    })
+  })
+
+  it('converts a page into a postTypes template with the given slugs and priority', async () => {
+    freshStore()
+    const pageId = useEditorStore.getState().site!.pages[0].id
+    const result = await executeAgentTool('setPageTemplate', {
+      pageId,
+      target: { kind: 'postTypes', tableSlugs: ['posts'] },
+      priority: 50,
+    })
+    expectToolOk(result)
+    const page = useEditorStore.getState().site!.pages.find((p) => p.id === pageId)!
+    expect(page.template).toEqual({
+      enabled: true,
+      target: { kind: 'postTypes', tableSlugs: ['posts'] },
+      priority: 50,
+    })
+  })
+
+  it('fails for a missing page id', async () => {
+    freshStore()
+    const result = await executeAgentTool('setPageTemplate', {
+      pageId: 'nonexistent',
+      target: { kind: 'everywhere' },
+    })
+    expectToolError(result)
+    expect(result.error).toContain('Page not found')
+  })
+
+  it('rejects a postTypes target with no slugs (schema validation)', async () => {
+    freshStore()
+    const pageId = useEditorStore.getState().site!.pages[0].id
+    const result = await executeAgentTool('setPageTemplate', {
+      pageId,
+      target: { kind: 'postTypes', tableSlugs: [] },
+    })
+    expectToolError(result)
+  })
+
+  it('clearPageTemplate reverts a template back to an ordinary page', async () => {
+    freshStore()
+    const pageId = useEditorStore.getState().site!.pages[0].id
+    await executeAgentTool('setPageTemplate', { pageId, target: { kind: 'everywhere' } })
+    const result = await executeAgentTool('clearPageTemplate', { pageId })
+    expectToolOk(result)
+    const page = useEditorStore.getState().site!.pages.find((p) => p.id === pageId)!
+    expect(page.template).toBeUndefined()
+  })
+
+  it('clearPageTemplate fails when the page is not a template', async () => {
+    freshStore()
+    const pageId = useEditorStore.getState().site!.pages[0].id
+    const result = await executeAgentTool('clearPageTemplate', { pageId })
+    expectToolError(result)
+    expect(result.error).toContain('not a template')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// insertHtml — <instatic-outlet> maps to a base.outlet node
+// ---------------------------------------------------------------------------
+
+describe('executeAgentTool — insertHtml <instatic-outlet>', () => {
+  it('imports <instatic-outlet> as a base.outlet node', async () => {
+    const { rootId } = freshStore()
+    const result = await executeAgentTool('insertHtml', {
+      parentId: rootId,
+      html: '<header>Chrome</header><instatic-outlet></instatic-outlet><footer>End</footer>',
+    })
+    const nodeIds = expectNodeIds(result)
+    expect(nodeIds.length).toBe(3)
+    const nodes = useEditorStore.getState().site!.pages[0].nodes
+    const moduleIds = nodeIds.map((id) => nodes[id].moduleId)
+    expect(moduleIds).toContain('base.outlet')
   })
 })
 

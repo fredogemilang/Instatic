@@ -41,6 +41,7 @@ export type NodeActions = Pick<
   | 'insertNode'
   | 'insertComponentRef'
   | 'insertImportedNodes'
+  | 'applyImportedStyleRules'
   | 'deleteNode'
   | 'deleteNodes'
   | 'updateNodeProps'
@@ -133,7 +134,7 @@ function coalesceKeyForPatch(
 }
 
 export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
-  const { get, set, mutatePage, mutateActiveTree, mutateActiveTreeAndSite } = helpers
+  const { get, set, mutatePage, mutateActiveTree, mutateActiveTreeAndSite, mutateSite } = helpers
 
   const actions: NodeActions = {
     insertNode: (moduleId, defaults, parentId, index) => {
@@ -204,6 +205,35 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         return true
       })
       return insertedRootIds
+    },
+
+    applyImportedStyleRules: (styleRules, conditions) => {
+      if (styleRules.length === 0 && conditions.length === 0) return 0
+      let added = 0
+      mutateSite((site) => {
+        const before = Object.keys(site.styleRules).length
+        // Same merge the node-import path uses, so a <style>-only payload and a
+        // <style>-with-elements payload classify + dedupe rules identically.
+        if (styleRules.length) {
+          const classesByName = indexStyleRulesByName(site.styleRules)
+          mergeImportedStyleRules(styleRules, site.styleRules, classesByName)
+        }
+        if (conditions.length) {
+          if (!site.conditions) site.conditions = []
+          const existing = new Set(site.conditions.map((c) => c.id))
+          for (const def of conditions) {
+            if (existing.has(def.id)) continue
+            existing.add(def.id)
+            site.conditions.push(def)
+          }
+        }
+        added = Object.keys(site.styleRules).length - before
+        // Report a real change when rules OR conditions landed, so the undo
+        // snapshot is taken even if every rule was a dedupe no-op but a new
+        // condition was registered.
+        return added > 0 || conditions.length > 0
+      })
+      return added
     },
 
     insertComponentRef: (parentId, componentId, index) => {

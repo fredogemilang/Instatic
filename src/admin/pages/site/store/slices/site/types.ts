@@ -280,6 +280,18 @@ export interface SiteSlice {
   ) => string[]
 
   /**
+   * Apply `<style>`-only imported CSS to the site registry WITHOUT inserting any
+   * nodes — the element-less counterpart of `insertImportedNodes`'s style
+   * handling. Commits the same `mergeImportedStyleRules` collision policy
+   * (bare `.foo` → reusable class, `a:hover` / `.hero a` → ambient rule;
+   * duplicates skipped) plus any referenced conditions, in one undo step.
+   * Returns the number of style rules newly added. Lets a paste / agent-authored
+   * `<style>`-only payload land its hover/pseudo/descendant rules instead of
+   * being discarded for lack of an element to hang them on.
+   */
+  applyImportedStyleRules: (styleRules: NewStyleRule[], conditions: ConditionDef[]) => number
+
+  /**
    * Insert a `base.visual-component-ref` node into the active document.
    *
    * - In VC mode: inserts via `mutateActiveTree` and guards against cyclic references.

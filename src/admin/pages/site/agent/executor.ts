@@ -17,18 +17,25 @@
  */
 
 import { Type, type Static, parseValue } from '@core/utils/typeboxHelpers'
-import { aiToolError, aiToolOk, type AiToolOutput } from '@core/ai'
+import { aiToolError, aiToolOk, type AiToolImage, type AiToolOutput } from '@core/ai'
 import type { EditorStore } from '@site/store/types'
 import { registry } from '@core/module-engine'
 import { sanitizeRichtext, isRichtextPropKey } from '@core/sanitize'
 import { importHtml } from '@core/htmlImport'
 import { cssToStyleRules } from '@core/siteImport'
 import type { NewStyleRule } from '@core/siteImport'
-import type { ConditionDef } from '@core/page-tree'
+import type { BaseNode, ConditionDef, Page, PageTemplateConfig } from '@core/page-tree'
 import { renderNode } from '@core/publisher'
 import type { RenderContext } from '@core/publisher'
 import { getAgentStoreApi } from './storeRef'
-import { captureAgentRenderSnapshot } from './renderEvidence'
+import { captureAgentRenderSnapshot, SnapshotNodeNotFoundError } from './renderEvidence'
+import type { AgentRenderSnapshotPayload } from './types'
+import {
+  runSetColorTokens,
+  runSetFontTokens,
+  runSetTypeScale,
+  runSetSpacingScale,
+} from './tokenRunners'
 
 // Live access to the editor store. Routed through `./storeRef` so this module
 // has no static import edge back into `editor-store/store.ts`.
@@ -156,8 +163,33 @@ const duplicateNodeSchema = Type.Object({
   count: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
 })
 
+const templateTargetSchema = Type.Union([
+  Type.Object({ kind: Type.Literal('everywhere') }),
+  Type.Object({
+    kind: Type.Literal('postTypes'),
+    tableSlugs: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  }),
+])
+
+const setPageTemplateSchema = Type.Object({
+  pageId: Type.String({ minLength: 1 }),
+  target: templateTargetSchema,
+  priority: Type.Optional(Type.Number()),
+})
+
+const clearPageTemplateSchema = Type.Object({
+  pageId: Type.String({ minLength: 1 }),
+})
+
 const renderSnapshotSchema = Type.Object({
   breakpointId: Type.Optional(Type.String({ minLength: 1 })),
+  // Scope the capture to a single node's subtree (sharper, cheaper than the
+  // whole page). Omit to capture the full breakpoint frame.
+  nodeId: Type.Optional(Type.String({ minLength: 1 })),
+  // Set by the server (not the model) based on the active model's vision
+  // capability — non-vision models skip the expensive html-to-image capture
+  // and receive the layout report only.
+  captureScreenshot: Type.Optional(Type.Boolean()),
 })
 
 // ---------------------------------------------------------------------------
@@ -241,24 +273,128 @@ function applyClassBreakpointStyles(
 }
 
 /**
- * Locate a node by ID across every page and visual-component tree on the site.
- *
- * Mutations touch the active canvas tree, but the agent passes node IDs that
- * may belong to any page or VC. We need the node's shape for various checks,
- * so a single-shot cross-tree search is the simplest correct lookup.
+ * The node map of the ACTIVE document — the single tree every write tool
+ * actually mutates (`mutateActiveTree`). Page mode → the active page's nodes;
+ * VC mode → the active component's tree. Mirrors the active-document routing in
+ * `mutateActiveTree`/`insertComponentRef` without importing the store module.
  */
-function findNodeAcrossSite(store: EditorStore, nodeId: string) {
+function activeDocNodes(store: EditorStore): Record<string, BaseNode> | null {
   const site = store.site
-  if (!site) return undefined
+  if (!site) return null
+  const ad = store.activeDocument
+  if (ad?.kind === 'visualComponent') {
+    const vc = site.visualComponents?.find((v) => v.id === ad.vcId)
+    return vc ? (vc.tree.nodes as Record<string, BaseNode>) : null
+  }
+  const pageId = ad?.kind === 'page' ? ad.pageId : store.activePageId
+  const page = site.pages.find((p) => p.id === pageId)
+  return page ? page.nodes : null
+}
+
+/** The active PAGE object (page mode only — null while editing a VC). */
+function getActivePage(store: EditorStore): Page | null {
+  const site = store.site
+  if (!site) return null
+  const ad = store.activeDocument
+  if (ad?.kind === 'visualComponent') return null
+  const pageId = ad?.kind === 'page' ? ad.pageId : store.activePageId
+  return site.pages.find((p) => p.id === pageId) ?? null
+}
+
+/**
+ * Resolve a node by ID **within the active document only** — never across other
+ * pages, templates, or VCs. Write tools mutate the active tree, so resolving an
+ * id that lives in a different document would silently target the wrong tree
+ * (or fail with a misleading "does not accept children"). Returns the node when
+ * it belongs to the active doc, else undefined.
+ */
+function findNodeInActiveDoc(store: EditorStore, nodeId: string): BaseNode | undefined {
+  return activeDocNodes(store)?.[nodeId]
+}
+
+/**
+ * When a node id is NOT in the active document, locate which OTHER document
+ * owns it so the agent gets a precise, actionable error ("that node is in the
+ * 'Global Layout' template — open it to edit") instead of "not found" or a
+ * misleading mutation failure. Returns null when the id exists nowhere.
+ */
+function describeForeignNode(store: EditorStore, nodeId: string): string | null {
+  const site = store.site
+  if (!site) return null
   for (const page of site.pages) {
-    const node = page.nodes[nodeId]
-    if (node) return node
+    if (page.nodes[nodeId]) {
+      const what = page.template ? 'template' : 'page'
+      return `the "${page.title}" ${what} (a different document)`
+    }
   }
   for (const vc of site.visualComponents ?? []) {
-    const node = vc.tree.nodes[nodeId]
-    if (node) return node
+    if (vc.tree.nodes[nodeId]) return `the "${vc.name}" component (a different document)`
   }
-  return undefined
+  return null
+}
+
+/**
+ * Shared "node not found in the active doc" error: distinguishes a node that
+ * lives in another document (actionable — switch docs) from one that exists
+ * nowhere (a bad id).
+ */
+function nodeNotInActiveDocError(store: EditorStore, nodeId: string): AiToolOutput {
+  const foreign = describeForeignNode(store, nodeId)
+  return aiToolError(
+    foreign
+      ? `Node ${nodeId} lives in ${foreign} and could not be activated automatically.`
+      : `Node not found: ${nodeId}`,
+  )
+}
+
+/**
+ * Ensure the document that owns `nodeId` is the ACTIVE one, navigating the
+ * canvas to it when needed. Write tools mutate the active tree, so when the
+ * agent targets a node in another page/template/VC we switch to that document
+ * first — the edit then lands in the correct tree AND the user watches it
+ * happen, instead of the tool silently no-op'ing on the wrong tree. No-op when
+ * the node is already active or exists nowhere.
+ */
+function focusNodeDocument(store: EditorStore, nodeId: string): void {
+  if (activeDocNodes(store)?.[nodeId]) return
+  const site = store.site
+  if (!site) return
+  const ownerPage = site.pages.find((p) => p.nodes[nodeId])
+  if (ownerPage) {
+    store.openPageInCanvas(ownerPage.id)
+    return
+  }
+  const ownerVc = site.visualComponents?.find((vc) => vc.tree.nodes[nodeId])
+  if (ownerVc) {
+    store.setActiveDocument({ kind: 'visualComponent', vcId: ownerVc.id })
+  }
+}
+
+/**
+ * Tools that target an existing node (by `nodeId`/`parentId`) and should pull
+ * the canvas to that node's document before running. Excludes catalog/page/
+ * token tools (no node target) and `render_snapshot` (captures the live DOM, so
+ * a node outside the mounted canvas is genuinely uncapturable, not navigable).
+ */
+const AUTO_NAVIGATE_TOOLS = new Set<string>([
+  'insertHtml',
+  'getNodeHtml',
+  'replaceNodeHtml',
+  'deleteNode',
+  'updateNodeProps',
+  'moveNode',
+  'renameNode',
+  'duplicateNode',
+  'assignClass',
+  'removeClass',
+])
+
+/** Pull the node/parent id a write tool targets out of its raw input bag. */
+function targetNodeIdFromInput(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const bag = raw as Record<string, unknown>
+  const id = bag.nodeId ?? bag.parentId
+  return typeof id === 'string' && id.length > 0 ? id : undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -280,10 +416,20 @@ function findNodeAcrossSite(store: EditorStore, nodeId: string) {
 function runInsertHtml(input: Static<typeof insertHtmlSchema>): AiToolOutput {
   // (1) Parse and walk the HTML to produce a flat node fragment + any <style> CSS
   const { nodes, rootIds, styleCss } = importHtml(input.html)
-  if (rootIds.length === 0) {
-    return aiToolError('HTML contained no importable elements.')
-  }
   const { rules, conditions } = parseImportedStyleCss(styleCss)
+
+  if (rootIds.length === 0) {
+    // A <style>-only payload carries no elements but still carries importable
+    // CSS — reusable classes and ambient rules (`a:hover`, `.hero a`,
+    // `::before`, …). Apply those rather than discarding them; this is the
+    // canonical way to author the pseudo/hover/descendant CSS that the class
+    // tools (createClass/updateClassStyles) can't express.
+    if (rules.length > 0 || conditions.length > 0) {
+      const added = getStoreState().applyImportedStyleRules(rules, conditions)
+      return aiToolOk({ styleRulesAdded: added })
+    }
+    return aiToolError('HTML contained no importable elements or style rules.')
+  }
 
   // (2) Insert via the store action — same path as the paste import modal
   const insertedRootIds = getStoreState().insertImportedNodes(
@@ -307,20 +453,17 @@ function runGetNodeHtml(input: Static<typeof getNodeHtmlSchema>): AiToolOutput {
   const site = store.site
   if (!site) return aiToolError('No active site.')
 
-  // Find the page that contains this node
-  let targetPage: (typeof site.pages)[number] | undefined
-  for (const page of site.pages) {
-    if (page.nodes[input.nodeId]) {
-      targetPage = page
-      break
-    }
-  }
-  if (!targetPage) {
-    return aiToolError(`Node not found: ${input.nodeId}`)
+  // Scope to the ACTIVE page only — never resolve a node from a different page
+  // or template. read_page already exposes only the active page's nodes, so an
+  // id from elsewhere is either stale or a wrapper/outlet-preview node the agent
+  // can't edit from here.
+  const activePage = getActivePage(store)
+  if (!activePage?.nodes[input.nodeId]) {
+    return nodeNotInActiveDocError(store, input.nodeId)
   }
 
   const ctx: RenderContext = {
-    page: targetPage,
+    page: activePage,
     site,
     registry,
     breakpointId: undefined,
@@ -343,24 +486,34 @@ function runReplaceNodeHtml(input: Static<typeof replaceNodeHtmlSchema>): AiTool
   const store = getStoreState()
   if (!store.site) return aiToolError('No active site.')
 
-  // Verify the target node exists
-  const targetNode = findNodeAcrossSite(store, input.nodeId)
+  // Verify the target node exists IN THE ACTIVE DOCUMENT — the only tree this
+  // mutation can touch. A node from another page/template/VC must not resolve.
+  const targetNode = findNodeInActiveDoc(store, input.nodeId)
   if (!targetNode) {
-    return aiToolError(`Node not found: ${input.nodeId}`)
+    return nodeNotInActiveDocError(store, input.nodeId)
   }
 
-  // Delete existing children so the target node is empty before insertion
+  // Parse + validate the payload BEFORE mutating, so an empty / invalid payload
+  // never wipes the node's existing children first and then errors out.
+  const { nodes, rootIds, styleCss } = importHtml(input.html)
+  const { rules, conditions } = parseImportedStyleCss(styleCss)
+
+  if (rootIds.length === 0) {
+    // A <style>-only payload has nothing to replace the children WITH, so leave
+    // the subtree intact and just register its rules — same forgiving behaviour
+    // as insertHtml. Wiping children to insert nothing would be surprising.
+    if (rules.length > 0 || conditions.length > 0) {
+      const added = getStoreState().applyImportedStyleRules(rules, conditions)
+      return aiToolOk({ styleRulesAdded: added })
+    }
+    return aiToolError('HTML contained no importable elements or style rules.')
+  }
+
+  // Delete existing children so the target node is empty before insertion.
   const existingChildren = [...(targetNode.children ?? [])]
   if (existingChildren.length > 0) {
     getStoreState().deleteNodes(existingChildren)
   }
-
-  // Import and insert the new HTML under the target node
-  const { nodes, rootIds, styleCss } = importHtml(input.html)
-  if (rootIds.length === 0) {
-    return aiToolError('HTML contained no importable elements.')
-  }
-  const { rules, conditions } = parseImportedStyleCss(styleCss)
 
   const insertedRootIds = getStoreState().insertImportedNodes(
     input.nodeId,
@@ -396,9 +549,9 @@ function runUpdateNodeProps(input: Static<typeof updateNodePropsSchema>): AiTool
     // are single-value across all breakpoints because the published page is
     // one HTML document. Reject the call rather than silently dropping
     // non-overridable keys, so the agent gets a clear signal.
-    const node = findNodeAcrossSite(store, input.nodeId)
+    const node = findNodeInActiveDoc(store, input.nodeId)
     if (!node) {
-      return aiToolError(`Node not found: ${input.nodeId}`)
+      return nodeNotInActiveDocError(store, input.nodeId)
     }
     const definition = registry.get(node.moduleId)
     if (!definition) {
@@ -484,7 +637,9 @@ function runRemoveClass(input: Static<typeof removeClassSchema>): AiToolOutput {
 
 function runAddPage(input: Static<typeof addPageSchema>): AiToolOutput {
   const page = getStoreState().addPage(input.title, input.slug)
-  return aiToolOk({ pageId: page.id })
+  // rootNodeId is the parent to pass to insertHtml — a pageId is NOT a node id.
+  // addPage also makes the new page active, so the insert targets it.
+  return aiToolOk({ pageId: page.id, rootNodeId: page.rootNodeId })
 }
 
 function runDeletePage(input: Static<typeof deletePageSchema>): AiToolOutput {
@@ -523,6 +678,35 @@ function runDuplicatePage(input: Static<typeof duplicatePageSchema>): AiToolOutp
   return aiToolOk({ pageId: newPage.id })
 }
 
+function runSetPageTemplate(input: Static<typeof setPageTemplateSchema>): AiToolOutput {
+  const store = getStoreState()
+  const site = store.site
+  if (!site) return aiToolError('No active site.')
+  if (!site.pages.some((p) => p.id === input.pageId)) {
+    return aiToolError(`Page not found: ${input.pageId}`)
+  }
+  const config: PageTemplateConfig = {
+    enabled: true,
+    target: input.target,
+    priority: input.priority ?? 100,
+  }
+  store.convertPageToTemplate(input.pageId, config)
+  return aiToolOk()
+}
+
+function runClearPageTemplate(input: Static<typeof clearPageTemplateSchema>): AiToolOutput {
+  const store = getStoreState()
+  const site = store.site
+  if (!site) return aiToolError('No active site.')
+  const page = site.pages.find((p) => p.id === input.pageId)
+  if (!page) return aiToolError(`Page not found: ${input.pageId}`)
+  if (!page.template) {
+    return aiToolError(`Page is not a template: ${input.pageId}`)
+  }
+  store.convertTemplateToPage(input.pageId)
+  return aiToolOk()
+}
+
 function runDuplicateNode(input: Static<typeof duplicateNodeSchema>): AiToolOutput {
   const store = getStoreState()
   const count = input.count ?? 1
@@ -548,14 +732,41 @@ function runDuplicateNode(input: Static<typeof duplicateNodeSchema>): AiToolOutp
 async function runRenderSnapshot(
   input: Static<typeof renderSnapshotSchema>,
 ): Promise<AiToolOutput> {
-  const snapshot = await captureAgentRenderSnapshot({
-    breakpointId: input.breakpointId,
-    captureScreenshot: true,
-  })
+  // Default true so a direct (non-server) invocation still works; the AI loop
+  // always sets this explicitly from the model's vision capability.
+  const captureScreenshot = input.captureScreenshot ?? true
+  let snapshot: AgentRenderSnapshotPayload | null
+  try {
+    snapshot = await captureAgentRenderSnapshot({
+      breakpointId: input.breakpointId,
+      nodeId: input.nodeId,
+      captureScreenshot,
+    })
+  } catch (err) {
+    if (err instanceof SnapshotNodeNotFoundError) return aiToolError(err.message)
+    throw err
+  }
   if (!snapshot) {
     return aiToolError('No canvas frame found for the requested breakpoint.')
   }
-  return aiToolOk({ snapshot })
+
+  // The PNG travels through the dedicated image channel (a native image block on
+  // vision providers) — NEVER inlined into `data` as base64 JSON text, which is
+  // what blew a single snapshot past a million tokens. `data` keeps the layout
+  // report plus a compact screenshot descriptor (status + dimensions only).
+  const { screenshot, ...rest } = snapshot
+  const images: AiToolImage[] = []
+  if (screenshot.status === 'ok' && screenshot.data && screenshot.mimeType) {
+    images.push({ mimeType: screenshot.mimeType, data: screenshot.data })
+  }
+  const screenshotMeta = {
+    status: screenshot.status,
+    ...(screenshot.width != null ? { width: screenshot.width } : {}),
+    ...(screenshot.height != null ? { height: screenshot.height } : {}),
+    ...(screenshot.error ? { error: screenshot.error } : {}),
+  }
+
+  return aiToolOk({ ...rest, screenshot: screenshotMeta }, images)
 }
 
 // ---------------------------------------------------------------------------
@@ -574,6 +785,14 @@ export async function executeAgentTool(
   rawInput: unknown,
 ): Promise<AiToolOutput> {
   try {
+    // Auto-navigate: if a node-targeting tool references a node that lives in a
+    // different document, switch the canvas to that document BEFORE running, so
+    // the mutation lands in the right tree and stays visible to the user.
+    if (AUTO_NAVIGATE_TOOLS.has(toolName)) {
+      const targetId = targetNodeIdFromInput(rawInput)
+      if (targetId) focusNodeDocument(getStoreState(), targetId)
+    }
+
     switch (toolName) {
       case 'insertHtml':
         return runInsertHtml(parseValue(insertHtmlSchema, rawInput))
@@ -605,8 +824,20 @@ export async function executeAgentTool(
         return runRenamePage(parseValue(renamePageSchema, rawInput))
       case 'duplicatePage':
         return runDuplicatePage(parseValue(duplicatePageSchema, rawInput))
+      case 'setPageTemplate':
+        return runSetPageTemplate(parseValue(setPageTemplateSchema, rawInput))
+      case 'clearPageTemplate':
+        return runClearPageTemplate(parseValue(clearPageTemplateSchema, rawInput))
       case 'duplicateNode':
         return runDuplicateNode(parseValue(duplicateNodeSchema, rawInput))
+      case 'set_color_tokens':
+        return runSetColorTokens(rawInput)
+      case 'set_font_tokens':
+        return await runSetFontTokens(rawInput)
+      case 'set_type_scale':
+        return runSetTypeScale(rawInput)
+      case 'set_spacing_scale':
+        return runSetSpacingScale(rawInput)
       case 'render_snapshot':
         return await runRenderSnapshot(parseValue(renderSnapshotSchema, rawInput))
       default:

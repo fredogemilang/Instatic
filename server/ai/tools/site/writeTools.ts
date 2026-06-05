@@ -7,7 +7,8 @@
  * sentinel `execution: 'browser'`. There is NO server-side handler — the
  * runner routes browser-execution tools through the bridge instead.
  *
- * 15 mutation tools + render_snapshot + getNodeHtml = 17 total.
+ * Node/class/page/template mutation tools + design-system token tools +
+ * render_snapshot + getNodeHtml (23 total).
  *
  * Input shapes mirror the browser executor at
  * `src/admin/pages/site/agent/executor.ts` (which validates each call
@@ -47,7 +48,7 @@ const insertHtmlTool: AiTool = {
   scope: 'site',
   execution: 'browser',
   description:
-    'Insert semantic HTML as a subtree of editable nodes under an existing parent. Write structure as HTML (<section>, <h1>, <a>, <button>, <img>, <ul>, ...) and style it with CSS: put a <style> block in the HTML and/or class= attributes. The importer parses every rule — a bare `.foo {}` selector becomes a reusable Selectors-panel class bound to class="foo"; any other selector (`.hero a`, `a:hover`, `nav > li`) becomes an ambient rule. Inline style= attributes land on the node\'s inline styles.',
+    'Insert semantic HTML as a subtree of editable nodes under an existing parent. Write structure as HTML (<section>, <h1>, <a>, <button>, <img>, <ul>, ...) and style it with CSS: put a <style> block in the HTML and/or class= attributes. The importer parses every rule — a bare `.foo {}` selector becomes a reusable Selectors-panel class bound to class="foo"; any other selector (`.hero a`, `a:hover`, `nav > li`) becomes an ambient rule. Inline style= attributes land on the node\'s inline styles. To add ONLY CSS (pseudo-classes, hover, ::before, descendant selectors) with no new elements, pass a <style>-only payload (e.g. "<style>.hero a:hover{color:var(--primary)}</style>") — the rules are registered and `parentId` is ignored. This is the way to author pseudo/hover/descendant CSS that createClass/updateClassStyles cannot express.',
   inputSchema: InsertHtmlInput,
 }
 
@@ -74,7 +75,7 @@ const replaceNodeHtmlTool: AiTool = {
   scope: 'site',
   execution: 'browser',
   description:
-    "Replace a node subtree's children with new HTML. The target node is preserved as the parent; its existing children are rebuilt from the HTML. Style with CSS exactly as in insertHtml: a <style> block and/or class= attributes; bare `.foo` selectors become reusable classes, other selectors become ambient rules.",
+    "Replace a node subtree's children with new HTML. The target node is preserved as the parent; its existing children are rebuilt from the HTML. Style with CSS exactly as in insertHtml: a <style> block and/or class= attributes; bare `.foo` selectors become reusable classes, other selectors become ambient rules. A <style>-only payload (no elements) registers its CSS rules WITHOUT touching the node's children — to add ambient/hover/pseudo CSS prefer insertHtml with a <style>-only payload.",
   inputSchema: ReplaceNodeHtmlInput,
 }
 
@@ -229,7 +230,7 @@ const addPageTool: AiTool = {
   scope: 'site',
   execution: 'browser',
   description:
-    'Add an EMPTY page. `slug` defaults to a slugified title. Success data includes the new id as `pageId`. For copying an existing page use duplicatePage.',
+    'Add an EMPTY page and make it the active page. `slug` defaults to a slugified title and is auto-uniqued (a repeat add becomes `-2`, `-3`) — so never call addPage twice for the same page. Success data: `pageId` and `rootNodeId`. To build into the new page, pass `rootNodeId` as insertHtml\'s `parentId` — a pageId is NOT a node id. The page is already active, so just start inserting; no need to read_page/list_pages first. For copying an existing page use duplicatePage.',
   inputSchema: AddPageInput,
 }
 
@@ -277,11 +278,155 @@ const duplicatePageTool: AiTool = {
 }
 
 // ---------------------------------------------------------------------------
+// Template write tools — convert a page to/from a CMS template.
+//
+// A template is a page carrying a `target` (an `everywhere` layout, or one/more
+// post types) plus a single `<instatic-outlet>` where matched content flows in.
+// These mirror the editor's convertPageToTemplate / convertTemplateToPage store
+// actions; the browser bridge applies them. Targets mirror TemplateTargetSchema
+// in `@core/page-tree`.
+// ---------------------------------------------------------------------------
+
+const TemplateTargetInput = Type.Union([
+  Type.Object({ kind: Type.Literal('everywhere') }),
+  Type.Object({
+    kind: Type.Literal('postTypes'),
+    tableSlugs: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  }),
+])
+
+const SetPageTemplateInput = Type.Object({
+  pageId: Type.String({ minLength: 1 }),
+  target: TemplateTargetInput,
+  priority: Type.Optional(Type.Number()),
+})
+
+const setPageTemplateTool: AiTool = {
+  name: 'setPageTemplate',
+  scope: 'site',
+  execution: 'browser',
+  description:
+    'Turn a page INTO a template (or update an existing template\'s target/priority). `target` is `{kind:"everywhere"}` for a site-wide layout that wraps every page+entry, or `{kind:"postTypes", tableSlugs:[…]}` to wrap entries of those post types (slugs from list_post_types). `priority` (default 100) breaks ties when several templates match at the same breadth level — higher wins. A template needs exactly one `<instatic-outlet>` (insert it via insertHtml) marking where matched content flows; a template with no outlet simply doesn\'t apply. Pass a real page id from the suffix / list_pages.',
+  inputSchema: SetPageTemplateInput,
+}
+
+const ClearPageTemplateInput = Type.Object({
+  pageId: Type.String({ minLength: 1 }),
+})
+
+const clearPageTemplateTool: AiTool = {
+  name: 'clearPageTemplate',
+  scope: 'site',
+  execution: 'browser',
+  description:
+    'Revert a template back to an ordinary page: drops its template target and any dynamic bindings. The `<instatic-outlet>` node (if any) stays — delete it separately if unwanted. No-op error if the page is not a template.',
+  inputSchema: ClearPageTemplateInput,
+}
+
+// ---------------------------------------------------------------------------
+// Design-system token write tools — create/update framework + font tokens.
+//
+// Colors and fonts are LIST-shaped (one entry per token); typography and
+// spacing are SCALE-shaped (a group config from which the framework generates
+// per-step values). Mirror the executor schemas in
+// `src/admin/pages/site/agent/executor.ts`.
+// ---------------------------------------------------------------------------
+
+const SetColorTokensInput = Type.Object({
+  tokens: Type.Array(
+    Type.Object({
+      slug: Type.String({ minLength: 1 }),
+      lightValue: Type.String({ minLength: 1 }),
+      category: Type.Optional(Type.String()),
+      darkValue: Type.Optional(Type.String()),
+      darkModeEnabled: Type.Optional(Type.Boolean()),
+    }),
+    { minItems: 1 },
+  ),
+})
+
+const setColorTokensTool: AiTool = {
+  name: 'set_color_tokens',
+  scope: 'site',
+  execution: 'browser',
+  description:
+    'Create or update framework COLOR tokens — the source of truth for color. Each `{ slug, lightValue }` becomes `var(--<slug>)` plus generated utility classes (text-/bg-/border-) and shade/tint variants. Create-or-update is keyed by `slug`: an existing slug is patched, a new one is created. `lightValue` is any CSS color (hex/rgb/hsl); omit `darkValue` to auto-generate it. Establish color tokens before styling and reference them as `var(--<slug>)` instead of raw hex.',
+  inputSchema: SetColorTokensInput,
+}
+
+const SetFontTokensInput = Type.Object({
+  tokens: Type.Array(
+    Type.Object({
+      name: Type.String({ minLength: 1 }),
+      variable: Type.Optional(Type.String()),
+      fallback: Type.Optional(Type.String()),
+      googleFamily: Type.Optional(Type.String()),
+      variants: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+      subsets: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+      familyId: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    { minItems: 1 },
+  ),
+})
+
+const setFontTokensTool: AiTool = {
+  name: 'set_font_tokens',
+  scope: 'site',
+  execution: 'browser',
+  description:
+    'Create or update FONT tokens — named typefaces referenced as `var(--<variable>)`. Pass `googleFamily` (e.g. "Inter") to install a new Google web font (downloads the files, then binds the token to it); `variants` defaults to ["400","700"] and `subsets` to ["latin"]. Pass `familyId` to reference an already-installed family. Pass neither for a fallback-only/system token. Create-or-update is keyed by `variable` (defaults from `name`). `googleFamily` and `familyId` are mutually exclusive.',
+  inputSchema: SetFontTokensInput,
+}
+
+const ScaleBreakpointInput = (sizeKey: 'fontSize' | 'size') =>
+  Type.Object({
+    [sizeKey]: Type.Optional(Type.Number()),
+    scaleRatio: Type.Optional(Type.Union([Type.Number(), Type.String()])),
+  })
+
+const SetTypeScaleInput = Type.Object({
+  groupId: Type.Optional(Type.String({ minLength: 1 })),
+  namingConvention: Type.Optional(Type.String({ minLength: 1 })),
+  steps: Type.Optional(Type.String({ minLength: 1 })),
+  baseScaleIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+  min: Type.Optional(ScaleBreakpointInput('fontSize')),
+  max: Type.Optional(ScaleBreakpointInput('fontSize')),
+})
+
+const setTypeScaleTool: AiTool = {
+  name: 'set_type_scale',
+  scope: 'site',
+  execution: 'browser',
+  description:
+    'Configure the TYPOGRAPHY scale — the fluid type ramp generating `--text-*` variables (default prefix "text"). A scale is a config: `min`/`max` give the base `fontSize` (px) and `scaleRatio` at the small/large screen anchors; `steps` is the comma-separated step list (e.g. "xs,s,m,l,xl,2xl,3xl,4xl") and `baseScaleIndex` picks which step equals the base size. Creates the group if none exists, else updates it (target a specific one with `groupId`). Reference sizes as `var(--text-l)` rather than raw px.',
+  inputSchema: SetTypeScaleInput,
+}
+
+const SetSpacingScaleInput = Type.Object({
+  groupId: Type.Optional(Type.String({ minLength: 1 })),
+  namingConvention: Type.Optional(Type.String({ minLength: 1 })),
+  steps: Type.Optional(Type.String({ minLength: 1 })),
+  baseScaleIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+  min: Type.Optional(ScaleBreakpointInput('size')),
+  max: Type.Optional(ScaleBreakpointInput('size')),
+})
+
+const setSpacingScaleTool: AiTool = {
+  name: 'set_spacing_scale',
+  scope: 'site',
+  execution: 'browser',
+  description:
+    'Configure the SPACING scale — the fluid spacing ramp generating `--space-*` variables (default prefix "space"). Same shape as set_type_scale but `min`/`max` carry `size` (px) instead of `fontSize`; `steps` defaults to an 11-step scale and `baseScaleIndex` to 5 ("m"). Creates the group if none exists, else updates it. Reference gaps/padding as `var(--space-l)` rather than raw px.',
+  inputSchema: SetSpacingScaleInput,
+}
+
+// ---------------------------------------------------------------------------
 // render_snapshot — browser-bridged, returns a special payload
 // ---------------------------------------------------------------------------
 
 const RenderSnapshotInput = Type.Object({
   breakpointId: Type.Optional(Type.String({ minLength: 1 })),
+  nodeId: Type.Optional(Type.String({ minLength: 1 })),
 })
 
 const renderSnapshotTool: AiTool = {
@@ -289,7 +434,7 @@ const renderSnapshotTool: AiTool = {
   scope: 'site',
   execution: 'browser',
   description:
-    "Capture a screenshot of the canvas at one breakpoint plus layout data (viewport size, per-node bounding boxes, image-load status, warnings for overflow/broken-image/invisible). Use to verify visuals or debug layout issues. `breakpointId` defaults to active.",
+    "Inspect the rendered canvas. Returns a layout report: viewport size, per-node bounding boxes, image-load status, and warnings (overflow / broken-image / invisible-node) — enough to catch most layout bugs in text. On a vision-capable model a screenshot is also attached as an image. Pass `breakpointId` to choose which breakpoint frame (defaults to active). Pass `nodeId` to capture just that node's subtree — a sharper, cheaper image than the whole page, and a report scoped to that section with coordinates relative to the node; omit `nodeId` to capture the full page.",
   inputSchema: RenderSnapshotInput,
 }
 
@@ -314,5 +459,11 @@ export const siteWriteTools: AiTool[] = [
   deletePageTool,
   renamePageTool,
   duplicatePageTool,
+  setPageTemplateTool,
+  clearPageTemplateTool,
+  setColorTokensTool,
+  setFontTokensTool,
+  setTypeScaleTool,
+  setSpacingScaleTool,
   renderSnapshotTool,
 ]

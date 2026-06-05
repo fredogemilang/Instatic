@@ -96,6 +96,35 @@ describe('Anthropic mapHistory', () => {
     expect(toolTurn.content[0]).toEqual({ type: 'tool_result', tool_use_id: 't9', content: 'boom', is_error: true })
   })
 
+  test('coalesces a synthetic tool-result user turn with the following user prompt', () => {
+    // The shape buildMessageHistory produces after healing an aborted turn:
+    // an orphaned tool_use, its synthetic error result, then a new user prompt.
+    // These must collapse into one user turn so Anthropic sees strict
+    // user/assistant alternation with the tool_use answered.
+    const history: AiMessage[] = [
+      { role: 'user', content: [{ kind: 'text', text: 'continue' }] },
+      { role: 'assistant', content: [{ kind: 'toolCall', toolCallId: 't1', toolName: 'updateClassStyles', input: {} }] },
+      { role: 'tool', toolCallId: 't1', output: { ok: false, error: 'interrupted' } },
+      { role: 'user', content: [{ kind: 'text', text: 'next prompt' }] },
+    ]
+    const mapped = mapHistory(history)
+    expect(mapped).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'continue' }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'updateClassStyles', input: {} }] },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 't1', content: 'interrupted', is_error: true },
+          { type: 'text', text: 'next prompt' },
+        ],
+      },
+    ] satisfies AnthropicMessage[])
+    // Roles strictly alternate — no two adjacent user turns.
+    for (let i = 1; i < mapped.length; i++) {
+      expect(mapped[i]!.role).not.toBe(mapped[i - 1]!.role)
+    }
+  })
+
   test('maps base64 image blocks to Anthropic image source', () => {
     const history: AiMessage[] = [
       { role: 'user', content: [{ kind: 'image', mimeType: 'image/png', data: 'BASE64' }, { kind: 'text', text: 'look' }] },

@@ -29,6 +29,7 @@ import {
   listMessagesForConversation,
   readConversationForUser,
 } from '../conversations/store'
+import { buildMessageHistory } from '../conversations/history'
 import {
   readCredentialForUser,
   resolveCredentialForDriver,
@@ -52,13 +53,10 @@ import {
 } from '../runtime'
 import { normalizeContextTokens } from '../contextTokens'
 import type {
-  AiContentBlock,
-  AiMessage,
   AiStreamEvent,
   ToolScope,
 } from '../runtime/types'
 import type { AiStreamRequest } from '../drivers/types'
-import type { MessageRecord } from '../conversations/types'
 
 const ChatRequestBodySchema = Type.Object({
   conversationId: Type.String({ minLength: 1 }),
@@ -192,13 +190,14 @@ async function handleAiChat(
       const emit = (event: AiStreamEvent): void => {
         if (streamClosed) return
         if (event.type === 'error') streamError = event.message
-        // Inject the live "context used" count: the provider-normalised total
-        // input the model processed this turn. Drivers report raw token
-        // buckets; the handler knows the provider, so it normalises here for
-        // the composer meter. (The window is resolved client-side from the
-        // model catalogue, so it isn't carried on the wire.)
+        // Inject the live "context used" count onto each per-round `context`
+        // event: the provider-normalised input the model held that round.
+        // Drivers report raw token buckets; the handler knows the provider, so
+        // it normalises here for the composer meter. (The window is resolved
+        // client-side from the model catalogue, so it isn't carried on the
+        // wire.) `usage` stays billing-only — the meter is driven by `context`.
         const wireEvent: AiStreamEvent =
-          event.type === 'usage'
+          event.type === 'context'
             ? { ...event, contextTokens: normalizeContextTokens(credential.providerId, event) }
             : event
         try {
@@ -209,7 +208,23 @@ async function handleAiChat(
       }
 
       try {
-        const { bridgeId, bridge, destroy } = createBridge(emit, req.signal)
+        // Mutable per-turn context. `snapshot` starts at the value the browser
+        // posted with the request and is refreshed in place by the bridge's
+        // onSnapshot after each mutating browser tool — so a read tool run
+        // later in the same turn sees current state, not stale turn-start state.
+        const toolContextBase = {
+          db,
+          userId: user.id,
+          scope,
+          conversationId: conversation.id,
+          snapshot,
+        }
+        const { bridgeId, bridge, destroy } = createBridge(
+          emit,
+          req.signal,
+          undefined,
+          (next) => { toolContextBase.snapshot = next },
+        )
         destroyBridge = destroy
         emit({ type: 'bridgeReady', bridgeId })
 
@@ -224,13 +239,7 @@ async function handleAiChat(
           credentials: resolvedCredential,
           signal: req.signal,
           bridge,
-          toolContextBase: {
-            db,
-            userId: user.id,
-            scope,
-            conversationId: conversation.id,
-            snapshot,
-          },
+          toolContextBase,
         }
 
         const persister = createConversationsPersister(db, conversation.id, {
@@ -343,29 +352,4 @@ function emptyContentSnapshot(): ContentSnapshot {
     activeDocument: null,
     currentUser: { id: '', displayName: 'Anonymous', email: '' },
   }
-}
-
-/**
- * Reconstruct AiMessage history from the persisted MessageRecord rows.
- * Strips the assistant's leading toolCall blocks (they're driver state,
- * not visible history) — keeps text + tool_result-shaped tool messages.
- */
-function buildMessageHistory(records: MessageRecord[]): AiMessage[] {
-  const out: AiMessage[] = []
-  for (const rec of records) {
-    if (rec.role === 'user') {
-      out.push({ role: 'user', content: rec.content as AiContentBlock[] })
-    } else if (rec.role === 'assistant') {
-      out.push({ role: 'assistant', content: rec.content as AiContentBlock[] })
-    } else if (rec.role === 'tool' && rec.toolCallId) {
-      const textBlock = rec.content.find((b) => b.kind === 'text')
-      const text = textBlock?.kind === 'text' ? textBlock.text : ''
-      out.push({
-        role: 'tool',
-        toolCallId: rec.toolCallId,
-        output: { ok: text === '', data: undefined, error: text || undefined },
-      })
-    }
-  }
-  return out
 }

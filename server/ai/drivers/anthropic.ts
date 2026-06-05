@@ -297,7 +297,7 @@ export function mapHistory(messages: AiMessage[]): AnthropicMessage[] {
   while (i < messages.length) {
     const msg = messages[i]!
     if (msg.role === 'user') {
-      out.push({ role: 'user', content: userContent(msg.content) })
+      pushUserContent(out, userContent(msg.content))
       i += 1
     } else if (msg.role === 'assistant') {
       const content: AnthropicContentBlock[] = []
@@ -312,13 +312,30 @@ export function mapHistory(messages: AiMessage[]): AnthropicMessage[] {
         content.push(toolResultBlock(messages[i] as Extract<AiMessage, { role: 'tool' }>))
         i += 1
       }
-      out.push({ role: 'user', content })
+      pushUserContent(out, content)
     } else {
       // role:'system' never appears in `messages` (system is its own field).
       i += 1
     }
   }
   return out
+}
+
+/**
+ * Append user-turn content, merging into the previous turn when it is also a
+ * user turn. Anthropic requires strict user/assistant alternation, and the
+ * `tool` branch above emits tool results as their own user turn. When an
+ * aborted turn's synthetic tool results sit immediately before the next real
+ * user prompt, that would produce two adjacent user turns; merging them yields
+ * the canonical single user turn carrying `[tool_result…, text…]`.
+ */
+function pushUserContent(out: AnthropicMessage[], content: AnthropicContentBlock[]): void {
+  const prev = out[out.length - 1]
+  if (prev?.role === 'user') {
+    prev.content.push(...content)
+  } else {
+    out.push({ role: 'user', content })
+  }
 }
 
 function userContent(blocks: AiContentBlock[]): AnthropicContentBlock[] {
