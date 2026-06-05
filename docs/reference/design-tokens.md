@@ -320,13 +320,15 @@ Cards are filled and borderless; inputs are unfilled and bordered. That's the lo
 
 ## Z-index layers
 
-Three global tokens cover the three surfaces that float above everything:
+Three global tokens cover the layered surfaces that float above the editor:
 
 ```css
 --z-dropdown:           20;
---tooltip-z-index:    2000;
 --spotlight-z-index:  9000;
+--tooltip-z-index:   10001;
 ```
+
+`--tooltip-z-index` is deliberately the highest token so tooltips are never occluded by the surface their trigger lives on. The body slash menu (`BodySlashMenu.module.css`) uses a raw z-index of `10000` — one step below `--tooltip-z-index` — because it predates tokenisation; see the inline comment in `globals.css`. `--spotlight-z-index` is also reused by the module inserter dialog.
 
 The visual editor uses additional raw z-index values that are **not** tokenised. They fall into two independent stacking contexts:
 
@@ -366,7 +368,7 @@ Raw canvas-internal values are intentional exceptions — they cannot be tokens 
 | `--tooltip-border`     | `rgba(255, 255, 255, 0.06)`                                                 |
 | `--tooltip-shadow`     | `0 4px 16px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04)`    |
 | `--tooltip-radius`     | `6px`                                                                       |
-| `--tooltip-z-index`    | `2000`                                                                      |
+| `--tooltip-z-index`    | `10001`                                                                     |
 
 ---
 
