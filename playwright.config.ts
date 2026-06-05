@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test'
+import { OWNER_STATE_FILE } from './tests/e2e/helpers/constants'
 
 const ADMIN_BASE_URL = process.env.E2E_ADMIN_BASE_URL ?? 'http://127.0.0.1:5174'
 process.env.E2E_PUBLIC_BASE_URL ??= 'http://127.0.0.1:3002'
@@ -24,6 +25,21 @@ export default defineConfig({
     trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure',
     video: 'retain-on-failure',
   },
+  // The disposable DB is set up once per run, so first-run setup runs in its own
+  // `setup` project. Every spec depends on it and reuses the owner's auth state;
+  // specs that need a clean/anonymous session opt out with `test.use({ storageState })`.
+  projects: [
+    {
+      name: 'setup',
+      testMatch: /auth\.setup\.ts$/,
+    },
+    {
+      name: 'e2e',
+      testMatch: '**/*.e2e.ts',
+      dependencies: ['setup'],
+      use: { storageState: OWNER_STATE_FILE },
+    },
+  ],
   webServer: {
     command: 'bun run e2e:dev',
     url: ADMIN_BASE_URL,
