@@ -92,13 +92,25 @@ src/admin/pages/content/agent/
 
 src/admin/pages/site/panels/AgentPanel/
 ├── AgentPanel.tsx          — main panel; resolves active model's contextWindow from the models endpoint
+├── ModelPicker.tsx         — credential + model selector used in the input bar
+├── ConversationHistory.tsx — history popover (browse, restore, delete past threads)
 ├── ContextMeter.tsx        — "context used / window" progress indicator (display only)
-└── ContextMeter.module.css
+├── ContextMeter.module.css
+├── AgentPanel.module.css
+└── index.ts                — barrel export
 ```
 
-The Agent Panel owns the credential list load for its header, setup empty state, and model picker. The header always contains a `ConversationHistory` popover (browse and restore past threads), a "New chat" button (`startNewAgentConversation`), a conditional "Clear conversation" button (visible when `agentMessages.length > 0`), a streaming badge, and an "AI settings" shortcut that routes to `/admin/ai`. The AI settings button is always visible in the header, independent of credential state. When no credentials exist, the message area switches from the prompt empty state to a larger setup state with an `/admin/ai` CTA.
+The Agent Panel owns the credential list load for its header, lock-state empty states, and model picker. The header always contains a `ConversationHistory` popover (browse and restore past threads), a "New chat" button (`startNewAgentConversation`), a conditional "Clear conversation" button (visible when `agentMessages.length > 0`), a streaming badge, and an "AI settings" shortcut that routes to `/admin/ai`. The AI settings button is always visible in the header, independent of credential state.
 
-When the panel opens, `AgentPanel` calls `loadScopeDefault()` so the model picker immediately shows the configured scope default — no "Default" placeholder, no send-time no-provider surprise. `showCredentialSetup` is gated by `hasActiveProvider` (`Boolean(activeCredentialId && activeModelId)`), meaning a stale "No AI provider configured" error string never locks out the UI once a credential + model is staged; picking a model via `setAgentProvider` clears `agentError` immediately, re-enabling the composer.
+The composer has two distinct lock states, expressed as `lockReason: 'setup' | 'chooseModel' | null`:
+
+- `'setup'` — no credentials exist at all. The message area shows a "Connect an AI provider" empty state with a CTA to `/admin/ai`. The model picker is hidden. The textarea placeholder reads "Add AI credentials to start chatting" and the send button tooltip reads "Add AI credentials first".
+- `'chooseModel'` — credentials are loaded but no scope default or explicit pick is active yet (`activeCredentialId` or `activeModelId` is null). The message area shows "Choose a model to get started" with a link to set a default in AI settings. The model picker remains visible so the user can pick inline. The textarea placeholder reads "Choose a model below to start" and the send button tooltip reads "Choose a model first".
+- `null` — `Boolean(activeCredentialId && activeModelId)` is true; the composer is fully usable.
+
+While credentials are still loading, `lockReason` stays `null` so the panel does not flash a setup prompt before `loadScopeDefault()` resolves.
+
+When the panel opens, `AgentPanel` calls `loadScopeDefault()` so the model picker immediately shows the configured scope default — no "Default" placeholder, no send-time no-provider surprise. `composerLocked` is gated by `hasActiveProvider` (`Boolean(activeCredentialId && activeModelId)`), meaning a stale "No AI provider configured" error string never locks out the UI once a credential + model is staged; picking a model via `setAgentProvider` clears `agentError` immediately, re-enabling the composer.
 
 The composer area includes a `<ContextMeter>` that shows "context used / window" as a progress bar. `AgentPanel` resolves the active model's `contextWindow` from `GET /admin/api/ai/providers/:id/models?credentialId=…` (the same catalogue-enriched response the picker uses), so the meter appears as soon as a model is selected — before the first turn. The "used" half comes from `agentContextTokens` in the store (see slice state below). The meter is hidden when no context window is known (Ollama, uncatalogued models).
 
