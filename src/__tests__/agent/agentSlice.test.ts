@@ -449,8 +449,8 @@ describe('sendAgentMessage — request lifecycle', () => {
         {
           type: 'toolRequest',
           requestId: 'req-7',
-          toolName: 'createClass',
-          input: { name: 'pricing-card', styles: { padding: '24px' } },
+          toolName: 'applyCss',
+          input: { css: '.pricing-card { padding: 24px; }' },
         },
         { type: 'done' },
       ]),
@@ -468,12 +468,12 @@ describe('sendAgentMessage — request lifecycle', () => {
     const body = JSON.parse(toolResultCalls[0].body) as {
       bridgeId: string
       requestId: string
-      result: { ok: boolean; data?: { classId?: string } }
+      result: { ok: boolean; data?: { cssRulesCreated?: number } }
     }
     expect(body.bridgeId).toBe('b-3')
     expect(body.requestId).toBe('req-7')
     expect(body.result.ok).toBe(true)
-    expect(body.result.data?.classId).toBeTruthy()
+    expect(body.result.data?.cssRulesCreated).toBe(1)
 
     const classes = useEditorStore.getState().site!.styleRules
     expect(Object.values(classes).some((c) => c.name === 'pricing-card')).toBe(true)

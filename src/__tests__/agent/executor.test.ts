@@ -68,10 +68,6 @@ function expectNodeId(result: AiToolOutput): string {
   return expectToolData<{ nodeId: string }>(result).nodeId
 }
 
-function expectClassId(result: AiToolOutput): string {
-  return expectToolData<{ classId: string }>(result).classId
-}
-
 function expectPageId(result: AiToolOutput): string {
   return expectToolData<{ pageId: string }>(result).pageId
 }
@@ -276,9 +272,9 @@ describe('executeAgentTool — style-only payloads', () => {
     })
 
     // Previously this returned "HTML contained no importable elements" and threw
-    // the ambient CSS away. Now it succeeds and registers the rule.
-    const data = expectToolData<{ styleRulesAdded: number }>(result)
-    expect(data.styleRulesAdded).toBeGreaterThan(0)
+    // the ambient CSS away. Now it succeeds and upserts the rule.
+    const data = expectToolData<{ cssRulesCreated: number; cssRulesUpdated: number }>(result)
+    expect(data.cssRulesCreated + data.cssRulesUpdated).toBeGreaterThan(0)
 
     const site = useEditorStore.getState().site!
     const ambient = Object.values(site.styleRules).find(
@@ -316,7 +312,7 @@ describe('executeAgentTool — style-only payloads', () => {
       html: '<style>.card::before { content: ""; }</style>',
     })
 
-    expectToolData<{ styleRulesAdded: number }>(result)
+    expectToolData<{ cssRulesCreated: number; cssRulesUpdated: number }>(result)
 
     const site = useEditorStore.getState().site!
     // Children are untouched — a style-only "replace" must not destroy the subtree.
@@ -640,42 +636,86 @@ describe('executeAgentTool — renameNode', () => {
 })
 
 // ---------------------------------------------------------------------------
-// createClass
+// applyCss — the single CSS-authoring tool (create + edit, classes + ambient)
 // ---------------------------------------------------------------------------
 
-describe('executeAgentTool — createClass', () => {
-  it('creates a class and returns its classId in canonical tool data', async () => {
+const findRule = (predicate: (c: { name: string; kind?: string; selector: string }) => boolean) =>
+  Object.values(useEditorStore.getState().site!.styleRules).find(predicate)
+
+describe('executeAgentTool — applyCss', () => {
+  it('creates a reusable class from a bare `.foo` selector', async () => {
     freshStore()
-    const result = await executeAgentTool('createClass', {
-      name: 'btn-primary', styles: { fontSize: '14px' },
+    const result = await executeAgentTool('applyCss', {
+      css: '.btn-primary { font-size: 14px; color: var(--primary); }',
     })
-    const { classId } = expectToolData<{ classId: string }>(result)
-    expect(classId).toBeTruthy()
-    const classes = useEditorStore.getState().site!.styleRules
-    expect(Object.values(classes).some((c) => c.name === 'btn-primary')).toBe(true)
+    const data = expectToolData<{ cssRulesCreated: number; cssRulesUpdated: number }>(result)
+    expect(data.cssRulesCreated).toBe(1)
+    expect(data.cssRulesUpdated).toBe(0)
+
+    const cls = findRule((c) => c.name === 'btn-primary')!
+    expect(cls.kind ?? 'class').toBe('class')
+    expect(cls.styles.fontSize).toBe('14px')
+    expect(cls.styles.color).toBe('var(--primary)')
   })
 
-  it('fails when class name is empty', async () => {
+  it('EDITS an existing class when its selector is re-applied (upsert, not duplicate)', async () => {
     freshStore()
-    const result = await executeAgentTool('createClass', { name: '' })
+    await executeAgentTool('applyCss', { css: '.card { color: red; }' })
+    const result = await executeAgentTool('applyCss', {
+      css: '.card { color: blue; font-size: 20px; }',
+    })
+    const data = expectToolData<{ cssRulesCreated: number; cssRulesUpdated: number }>(result)
+    expect(data.cssRulesUpdated).toBe(1)
+    expect(data.cssRulesCreated).toBe(0)
+
+    const cards = Object.values(useEditorStore.getState().site!.styleRules).filter((c) => c.name === 'card')
+    expect(cards).toHaveLength(1) // merged onto the existing rule, not duplicated
+    expect(cards[0].styles.color).toBe('blue') // overwritten
+    expect(cards[0].styles.fontSize).toBe('20px') // added
+  })
+
+  it('creates an ambient rule from a descendant selector', async () => {
+    freshStore()
+    await executeAgentTool('applyCss', { css: '.hero a { color: tomato; }' })
+    const ambient = findRule((c) => c.kind === 'ambient' && c.selector === '.hero a')!
+    expect(ambient).toBeDefined()
+    expect(ambient.styles.color).toBe('tomato')
+  })
+
+  it('EDITS an existing ambient descendant/pseudo rule — the case updateClassStyles could not express', async () => {
+    freshStore()
+    await executeAgentTool('applyCss', { css: '.hero a:hover { color: red; }' })
+    const result = await executeAgentTool('applyCss', {
+      css: '.hero a:hover { color: var(--primary); text-decoration: underline; }',
+    })
+    const data = expectToolData<{ cssRulesCreated: number; cssRulesUpdated: number }>(result)
+    expect(data.cssRulesUpdated).toBe(1)
+
+    const matches = Object.values(useEditorStore.getState().site!.styleRules).filter(
+      (c) => c.kind === 'ambient' && c.selector === '.hero a:hover',
+    )
+    expect(matches).toHaveLength(1) // upserted, not piled up as a duplicate
+    expect(matches[0].styles.color).toBe('var(--primary)')
+    expect(matches[0].styles.textDecoration).toBe('underline')
+  })
+
+  it('folds a matching @media block into the rule contextStyles', async () => {
+    freshStore()
+    await executeAgentTool('applyCss', {
+      css:
+        '.hero-title { font-size: 56px; }' +
+        '@media (max-width: 375px) { .hero-title { font-size: 32px; } }',
+    })
+    const cls = findRule((c) => c.name === 'hero-title')!
+    expect(cls.styles.fontSize).toBe('56px')
+    expect(cls.contextStyles.mobile.fontSize).toBe('32px')
+  })
+
+  it('returns an error for CSS that parses to no rules', async () => {
+    freshStore()
+    const result = await executeAgentTool('applyCss', { css: '/* just a comment */' })
     expectToolError(result)
-  })
-
-  it('creates a class with breakpoint-specific styles', async () => {
-    freshStore()
-    const result = await executeAgentTool('createClass', {
-      name: 'responsive-heading',
-      styles: { fontSize: '64px', lineHeight: '1' },
-      breakpointStyles: {
-        mobile: { fontSize: '40px', lineHeight: '1.05' },
-      },
-    })
-
-    const classId = expectClassId(result)
-    const cls = useEditorStore.getState().site!.styleRules[classId]
-    expect(cls.styles.fontSize).toBe('64px')
-    expect(cls.contextStyles.mobile.fontSize).toBe('40px')
-    expect(cls.contextStyles.mobile.lineHeight).toBe('1.05')
+    expect(result.error).toContain('No CSS rules parsed')
   })
 })
 
@@ -688,8 +728,7 @@ describe('executeAgentTool — assignClass / removeClass', () => {
     const { rootId } = freshStore()
     const insertResult = await executeAgentTool('insertHtml', { parentId: rootId, html: '<p></p>' })
     const nodeId = expectNodeIds(insertResult)[0]
-    const classResult = await executeAgentTool('createClass', { name: 'highlighted' })
-    const classId = expectClassId(classResult)
+    const classId = useEditorStore.getState().createClass('highlighted').id
 
     await executeAgentTool('assignClass', { nodeId, classId })
     const page = useEditorStore.getState().site!.pages[0]
@@ -700,8 +739,7 @@ describe('executeAgentTool — assignClass / removeClass', () => {
     const { rootId } = freshStore()
     const insertResult = await executeAgentTool('insertHtml', { parentId: rootId, html: '<p></p>' })
     const nodeId = expectNodeIds(insertResult)[0]
-    const classResult = await executeAgentTool('createClass', { name: 'highlighted2' })
-    const classId = expectClassId(classResult)
+    const classId = useEditorStore.getState().createClass('highlighted2').id
 
     await executeAgentTool('assignClass', { nodeId, classId })
     await executeAgentTool('removeClass', { nodeId, classId })
@@ -722,7 +760,7 @@ describe('executeAgentTool — class identifier resolution', () => {
       html: '<button>Click</button>',
     })
     const nodeId = expectNodeIds(insertResult)[0]
-    await executeAgentTool('createClass', { name: 'btn-hero', styles: { color: '#fff' } })
+    await executeAgentTool('applyCss', { css: '.btn-hero { color: #fff; }' })
 
     const result = await executeAgentTool('assignClass', { nodeId, classId: 'btn-hero' })
     expectToolOk(result)
@@ -752,7 +790,7 @@ describe('executeAgentTool — class identifier resolution', () => {
       html: '<button>Click</button>',
     })
     const nodeId = expectNodeIds(insertResult)[0]
-    await executeAgentTool('createClass', { name: 'removable' })
+    await executeAgentTool('applyCss', { css: '.removable { color: #fff; }' })
     await executeAgentTool('assignClass', { nodeId, classId: 'removable' })
 
     const result = await executeAgentTool('removeClass', { nodeId, classId: 'removable' })
@@ -762,58 +800,6 @@ describe('executeAgentTool — class identifier resolution', () => {
     const classes = useEditorStore.getState().site!.styleRules
     const cls = Object.values(classes).find((c) => c.name === 'removable')!
     expect(page.nodes[nodeId].classIds ?? []).not.toContain(cls.id)
-  })
-
-  it('updateClassStyles resolves by name', async () => {
-    freshStore()
-    await executeAgentTool('createClass', { name: 'card', styles: { padding: '8px' } })
-
-    const result = await executeAgentTool('updateClassStyles', {
-      classId: 'card',
-      patch: { padding: '16px', borderRadius: '4px' },
-    })
-    expectToolOk(result)
-
-    const classes = useEditorStore.getState().site!.styleRules
-    const cls = Object.values(classes).find((c) => c.name === 'card')!
-    expect(cls.styles.padding).toBe('16px')
-    expect(cls.styles.borderRadius).toBe('4px')
-  })
-
-  it('updateClassStyles can target a configured breakpoint without changing base styles', async () => {
-    freshStore()
-    await executeAgentTool('createClass', { name: 'responsive-card', styles: { display: 'grid', gridTemplateColumns: '1fr 1fr' } })
-
-    const result = await executeAgentTool('updateClassStyles', {
-      classId: 'responsive-card',
-      breakpointId: 'mobile',
-      patch: { gridTemplateColumns: '1fr', gap: '16px' },
-    })
-    expectToolOk(result)
-
-    const classes = useEditorStore.getState().site!.styleRules
-    const cls = Object.values(classes).find((c) => c.name === 'responsive-card')!
-    expect(cls.styles.gridTemplateColumns).toBe('1fr 1fr')
-    expect(cls.contextStyles.mobile.gridTemplateColumns).toBe('1fr')
-    expect(cls.contextStyles.mobile.gap).toBe('16px')
-  })
-
-  it('fails when updateClassStyles targets an unknown breakpoint', async () => {
-    freshStore()
-    await executeAgentTool('createClass', { name: 'responsive-card', styles: { padding: '24px' } })
-
-    const result = await executeAgentTool('updateClassStyles', {
-      classId: 'responsive-card',
-      breakpointId: 'watch',
-      patch: { padding: '12px' },
-    })
-
-    expectToolError(result)
-    expect(result.error).toContain('Breakpoint not found')
-
-    const cls = Object.values(useEditorStore.getState().site!.styleRules).find((c) => c.name === 'responsive-card')!
-    expect(cls.styles.padding).toBe('24px')
-    expect(cls.contextStyles.watch).toBeUndefined()
   })
 })
 

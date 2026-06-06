@@ -9,8 +9,8 @@ The agent runs on a provider-agnostic AI runtime (`server/ai/`) that can drive a
 ## TL;DR
 
 - **Structure via HTML.** `insertHtml` and `replaceNodeHtml` accept semantic HTML strings; the browser executor calls `importHtml` (the same pipeline as the paste-HTML UI) to convert them into first-class, editable `PageNode`s.
-- **Styling via CSS.** The agent emits CSS the same way a human pastes it: a `<style>` block and/or `class=` attributes inside the `insertHtml`/`replaceNodeHtml` payload. The importer (`cssToStyleRules`) classifies every selector — a bare `.foo {}` rule becomes a reusable Selectors-panel class bound to `class="foo"`; any other selector (`.hero a`, `a:hover`, `nav > li`) becomes an ambient rule; `style=` attributes land on the node's inline styles. There is no structured `classes` parameter — the agent never hand-builds classes node-by-node at insert time. `createClass` / `updateClassStyles` / `assignClass` exist for editing styles on **existing** nodes after insertion.
-- **29 tools total.** 6 server-side read tools (resolved server-side from the posted snapshot) + 23 browser-bridged write tools.
+- **Styling via CSS.** The agent emits CSS the same way a human pastes it: a `<style>` block and/or `class=` attributes inside the `insertHtml`/`replaceNodeHtml` payload, or the standalone `applyCss` tool. The importer (`cssToStyleRules`) classifies every selector — a bare `.foo {}` rule becomes a reusable Selectors-panel class bound to `class="foo"`; any other selector (`.hero a`, `a:hover`, `nav > li`) becomes an ambient rule; `style=` attributes land on the node's inline styles. There is no structured `classes` parameter — the agent never hand-builds classes node-by-node at insert time. `applyCss` is the single tool for authoring/editing CSS on its own; it **upserts**, so re-applying a selector edits the existing rule (the way descendant/pseudo rules get restyled).
+- **28 tools total.** 6 server-side read tools (resolved server-side from the posted snapshot) + 22 browser-bridged write tools.
 - **Two-endpoint bridge.** `POST /admin/api/ai/chat/site` opens an NDJSON stream. When the model calls a write tool, the server emits `toolRequest`; the browser executor applies it to the editor store and POSTs the `AiToolOutput` result to `POST /admin/api/ai/tool-result`.
 - **Provider-agnostic.** The runtime selects a driver (Anthropic, OpenAI, OpenRouter, Ollama) from the conversation's configured credential.
 - **Tools defined with TypeBox** (`server/ai/tools/`). Gated by `ai-tools-typebox-only.test.ts`.
@@ -47,7 +47,7 @@ server/ai/
 ├── contextTokens.ts        — normalizeContextTokens(): provider-normalised "context used" for the meter
 ├── tools/
 │   ├── site/
-│   │   ├── writeTools.ts      — 23 browser-bridged write tools (TypeBox schemas)
+│   │   ├── writeTools.ts      — 22 browser-bridged write tools (TypeBox schemas)
 │   │   ├── readTools.ts       — 6 server-side read tools
 │   │   ├── render.ts          — server-side page render (`renderAgentPage`) + catalog derivations (`describeAgentModules`, `describeAgentTokens`, `filterTokenFamily`)
 │   │   ├── systemPrompt.ts    — HTML-native static prefix + buildDynamicSuffix
@@ -288,9 +288,9 @@ All 23 tools carry `execution: 'browser'` in their `AiTool` definition. The serv
 
 | Tool              | Input                                  | Success `data`                        | What it does                                           |
 |-------------------|----------------------------------------|---------------------------------------|--------------------------------------------------------|
-| `insertHtml`      | `{ parentId, index?, html }`           | `{ nodeIds }` or `{ styleRulesAdded }` | Parse HTML (+ any `<style>` CSS) → import as `PageNode`s under `parentId`. A `<style>`-only payload (no elements) registers CSS rules without inserting nodes — returns `{ styleRulesAdded: N }` |
+| `insertHtml`      | `{ parentId, index?, html }`           | `{ nodeIds }` or `{ cssRulesCreated, cssRulesUpdated }` | Parse HTML (+ any `<style>` CSS) → import as `PageNode`s under `parentId`. A `<style>`-only payload (no elements) upserts CSS rules without inserting nodes (prefer `applyCss` for that) |
 | `getNodeHtml`     | `{ nodeId }`                           | `{ html }`                            | Render subtree to HTML via the publisher's `renderNode`|
-| `replaceNodeHtml` | `{ nodeId, html }`                     | `{ nodeIds }` or `{ styleRulesAdded }` | Delete existing children; re-import HTML under the same parent. A `<style>`-only payload registers CSS rules WITHOUT touching the children |
+| `replaceNodeHtml` | `{ nodeId, html }`                     | `{ nodeIds }` or `{ cssRulesCreated, cssRulesUpdated }` | Delete existing children; re-import HTML under the same parent. A `<style>`-only payload upserts CSS rules WITHOUT touching the children |
 
 Styling rides on the `html` payload — there is no separate `classes` parameter. The executor runs `importHtml(html)`, which harvests any `<style>` block's CSS, then hands it to `cssToStyleRules`. That classifier routes each selector:
 
@@ -300,7 +300,9 @@ Styling rides on the `html` payload — there is no separate `classes` parameter
 
 `insertImportedNodes` then links every `class=` token on the imported nodes to its registry class id in the same undo step, so `class="hero-section"` renders and is styleable whether its styles came from a `<style>` rule or an automatically-created bare class. See [html-import.md → Class linking](html-import.md#class-linking-name--id).
 
-**Style-only payloads.** A `<style>`-only string (e.g. `"<style>.hero a:hover{color:var(--primary)}</style>"`) applies CSS — pseudo-classes, hover states, descendant selectors, `::before`/`::after` — without inserting any nodes. Both `insertHtml` and `replaceNodeHtml` accept these; when `importHtml` returns no element nodes but the `<style>` block produced rules or conditions, they are registered via `applyImportedStyleRules` and the call returns `{ styleRulesAdded: N }`. `replaceNodeHtml` with a `<style>`-only payload leaves the target node's existing children intact. This is the canonical way to author pseudo/hover/descendant CSS that `createClass`/`updateClassStyles` cannot express.
+**Authoring CSS with `applyCss`.** `applyCss({ css })` is the single tool for CSS that isn't attached to inserted structure. The agent passes real CSS text (e.g. `".hero a:hover { color: var(--primary) }"`); it runs through the same `cssToStyleRules` classifier and is **upserted** into the registry by `upsertCssRules`: a bare `.foo {}` selector creates or edits a reusable class, any other selector (`.hero a`, `a:hover`, `nav > li`, `::before`, `h1`) creates or edits an ambient rule, and `@media` folds into per-breakpoint/condition overrides. Re-applying a selector **merges** onto the existing rule — so the same tool both creates new styles and restyles existing descendant/pseudo rules (the case the retired `updateClassStyles` could not express). Returns `{ cssRulesCreated, cssRulesUpdated }`. Framework-generated token/utility classes are never overwritten. `insertHtml`/`replaceNodeHtml` also accept a `<style>`-only payload and route it through the same upsert as a forgiving fallback, but `applyCss` is the canonical path.
+
+Note the deliberate split: `applyCss` and `<style>`-only payloads **upsert** (the agent's intent is to author/edit CSS), whereas a `<style>` block that accompanies *elements* in an insert is **additive** (`mergeImportedStyleRules` — it never clobbers a shared class as a side effect of dropping in structure).
 
 **Node edits**
 
@@ -312,14 +314,13 @@ Styling rides on the `html` payload — there is no separate `classes` parameter
 | `duplicateNode`   | `{ nodeId, count? }`                       | `{ nodeId, nodeIds }`   | Clone subtree 1–50 times right after the source           |
 | `renameNode`      | `{ nodeId, label }`                        | none                    | Set the node's display label in the DOM panel (editor-only)|
 
-**Classes**
+**CSS + class assignment**
 
-| Tool                | Input                                  | Success `data` | What it does                                          |
-|---------------------|----------------------------------------|----------------|-------------------------------------------------------|
-| `createClass`       | `{ name, styles?, breakpointStyles? }` | `{ classId }`  | Create a new CSS class                                |
-| `updateClassStyles` | `{ classId, breakpointId?, patch }`    | none           | Shallow-merge styles; `classId` accepts id or name    |
-| `assignClass`       | `{ nodeId, classId }`                  | none           | Attach a class to a node; `classId` accepts id or name|
-| `removeClass`       | `{ nodeId, classId }`                  | none           | Detach a class from a node (the class itself remains) |
+| Tool          | Input                 | Success `data`                          | What it does                                          |
+|---------------|-----------------------|-----------------------------------------|-------------------------------------------------------|
+| `applyCss`    | `{ css }`             | `{ cssRulesCreated, cssRulesUpdated }`  | Parse CSS text and upsert every rule — classes (bare `.foo`) and ambient rules (any other selector); re-applying a selector edits it |
+| `assignClass` | `{ nodeId, classId }` | none                                    | Attach an existing class to a node; `classId` accepts id or name|
+| `removeClass` | `{ nodeId, classId }` | none                                    | Detach a class from a node (the class itself remains) |
 
 **Pages**
 
@@ -387,9 +388,9 @@ Drivers that support prompt caching (Anthropic) apply `cache_control` to the sta
 - Structure as HTML (`insertHtml` / `replaceNodeHtml`); style with CSS in the same payload — a `<style>` block and/or `class=` attributes referencing the design tokens. The importer classifies selectors, so the agent never hand-builds classes at insert time.
 - `<style>` blocks inside imported HTML are parsed: a bare `.foo {}` rule becomes a Selectors-panel class bound to `class="foo"`; any other selector (`.hero a`, `a:hover`, `@media …`) becomes an ambient rule. `style=` attributes land on the node's inline styles. These are applied — not stripped.
 - One `insertHtml` call per logical section (nav, hero, pricing, footer = 4–6 calls); smaller chunks recover better if one fails.
-- Per-breakpoint variation: `@media` queries in the `<style>` block (matched against the site breakpoints), or `breakpointStyles` on `createClass`, keyed by breakpoint ids **verbatim from the dynamic suffix** — never invent ids like `"mobile"` or `"desktop"`.
+- Per-breakpoint variation: `@media` queries — in the `<style>` block of an insert or inside `applyCss` — with min/max-width queries that line up with the breakpoint widths in the dynamic suffix. Never invent ids like `"mobile"` or `"desktop"`.
 - Page ids come from the dynamic suffix; never invent them.
-- Write-tool success data uses explicit keys: `classId` for `createClass`, `pageId` for `addPage`/`duplicatePage`, `nodeId`/`nodeIds` for `duplicateNode`, `nodeIds` for HTML inserts.
+- Write-tool success data uses explicit keys: `cssRulesCreated`/`cssRulesUpdated` for `applyCss`, `pageId` for `addPage`/`duplicatePage`, `nodeId`/`nodeIds` for `duplicateNode`, `nodeIds` for HTML inserts.
 - Editing existing content: call `read_page` first — it returns the annotated page HTML where every element carries `uid="<nodeId>"`; pass that `uid` verbatim to write tools (`updateNodeProps`, `replaceNodeHtml`, etc.). For a single subtree, `getNodeHtml` is sufficient.
 - Reply rule: 1–2 narrating sentences only. No raw HTML/CSS/JSON in the reply.
 
@@ -558,7 +559,7 @@ When `POST /admin/api/ai/credentials` creates a new credential, `seedEmptyDefaul
 - Source-of-truth files:
   - `src/core/ai/toolOutput.ts` — `AiToolOutput` type, `AiToolOutputSchema`, `aiToolOk`, `aiToolError` (canonical bridge result)
   - `src/core/ai/index.ts` — barrel re-exporting the above
-  - `server/ai/tools/site/writeTools.ts` — 23 browser-bridged write tool definitions (TypeBox schemas)
+  - `server/ai/tools/site/writeTools.ts` — 22 browser-bridged write tool definitions (TypeBox schemas)
   - `server/ai/tools/site/readTools.ts` — 6 server-side read tool definitions
   - `server/ai/tools/site/render.ts` — `renderAgentPage`, `describeAgentModules`, `describeAgentTokens`, `filterTokenFamily`
   - `server/ai/tools/site/systemPrompt.ts` — HTML-native system prompt

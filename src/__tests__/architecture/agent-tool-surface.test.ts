@@ -2,9 +2,11 @@
  * Architecture gate — AI site write-tool surface.
  *
  * Asserts that the legacy node-construction tools (`insertNode`,
- * `insertTree`) are absent from the registered site write-tool list, and
- * that the HTML-native replacements (`insertHtml`, `getNodeHtml`,
- * `replaceNodeHtml`) are present.
+ * `insertTree`) and the retired class-patch tools (`createClass`,
+ * `updateClassStyles`) are absent from the registered site write-tool list,
+ * and that the HTML-native replacements (`insertHtml`, `getNodeHtml`,
+ * `replaceNodeHtml`) plus the single CSS-authoring tool (`applyCss`) are
+ * present.
  *
  * This gate catches accidental re-introduction of the old tools and
  * ensures the agent has exactly the HTML-native surface it was redesigned
@@ -41,6 +43,15 @@ describe('agent-tool-surface gate', () => {
     expect(toolNames).toContain('replaceNodeHtml')
   })
 
+  it('single CSS-authoring applyCss tool is present', () => {
+    expect(toolNames).toContain('applyCss')
+  })
+
+  it('retired class-patch tools are absent', () => {
+    expect(toolNames).not.toContain('createClass')
+    expect(toolNames).not.toContain('updateClassStyles')
+  })
+
   it('design-system token tools are present', () => {
     expect(toolNames).toContain('set_color_tokens')
     expect(toolNames).toContain('set_font_tokens')
@@ -53,7 +64,7 @@ describe('agent-tool-surface gate', () => {
     expect(toolNames).toContain('clearPageTemplate')
   })
 
-  it('total tool count is 23 (15 mutation + 2 template + 4 token + render_snapshot + getNodeHtml)', () => {
-    expect(toolNames).toHaveLength(23)
+  it('total tool count is 22 (14 mutation + 2 template + 4 token + render_snapshot + getNodeHtml)', () => {
+    expect(toolNames).toHaveLength(22)
   })
 })

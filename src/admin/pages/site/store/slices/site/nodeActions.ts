@@ -141,7 +141,7 @@ function coalesceKeyForPatch(
 }
 
 export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
-  const { get, set, mutatePage, mutateActiveTree, mutateActiveTreeAndSite, mutateSite } = helpers
+  const { get, set, mutatePage, mutateActiveTree, mutateActiveTreeAndSite } = helpers
 
   const actions: NodeActions = {
     insertNode: (moduleId, defaults, parentId, index) => {

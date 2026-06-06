@@ -14,7 +14,8 @@
  * slice container itself is named after the engine type it owns: StyleRule.
  */
 
-import type { StyleRule, CSSPropertyBag, Condition } from '@core/page-tree'
+import type { StyleRule, CSSPropertyBag, Condition, ConditionDef } from '@core/page-tree'
+import type { NewStyleRule } from '@core/siteImport'
 
 /**
  * Inputs accepted by `createAmbientRule`. `selector` is required (e.g.
@@ -94,6 +95,27 @@ export interface StyleRuleSlice {
 
   /** Shallow-merge a style patch into a class's base styles. */
   updateClassStyles(classId: string, patch: Partial<CSSPropertyBag>): void
+
+  /**
+   * Apply a batch of CSS rules parsed from authored CSS text (see
+   * `cssToStyleRules`) to the registry with UPSERT semantics: a rule whose
+   * `name` (class) or `selector` (ambient) already exists is MERGED onto the
+   * existing rule — base `styles` and every per-context override — so the same
+   * call both creates new selectors and EDITS existing ones. New selectors are
+   * minted at the end of the cascade. Framework-generated/locked token classes
+   * are never overwritten. Any referenced reusable conditions are registered
+   * first. The whole batch is one undo step. Returns how many rules were
+   * created vs. updated.
+   *
+   * This is the engine behind the agent's `applyCss` tool and the element-less
+   * `<style>` payload path — the editing counterpart to the additive
+   * `mergeImportedStyleRules` used when importing structure (which deliberately
+   * does NOT clobber shared classes as a side effect of inserting nodes).
+   */
+  upsertCssRules(
+    rules: NewStyleRule[],
+    conditions: ConditionDef[],
+  ): { created: number; updated: number }
 
   // ── Per-context overrides (unified viewport-context + custom-condition axis) ─
   /**

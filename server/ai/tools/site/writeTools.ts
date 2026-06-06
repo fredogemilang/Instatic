@@ -8,7 +8,7 @@
  * runner routes browser-execution tools through the bridge instead.
  *
  * Node/class/page/template mutation tools + design-system token tools +
- * render_snapshot + getNodeHtml (23 total).
+ * render_snapshot + getNodeHtml (22 total).
  *
  * Input shapes mirror the browser executor at
  * `src/admin/pages/site/agent/executor.ts` (which validates each call
@@ -18,20 +18,6 @@
 
 import { Type } from '@core/utils/typeboxHelpers'
 import type { AiTool } from '../types'
-
-// ---------------------------------------------------------------------------
-// Shared input pieces
-// ---------------------------------------------------------------------------
-
-const StylePatch = Type.Record(
-  Type.String(),
-  Type.Union([Type.String(), Type.Number()]),
-)
-
-const BreakpointStyles = Type.Record(
-  Type.String({ minLength: 1 }),
-  StylePatch,
-)
 
 // ---------------------------------------------------------------------------
 // HTML-native write tools
@@ -48,7 +34,7 @@ const insertHtmlTool: AiTool = {
   scope: 'site',
   execution: 'browser',
   description:
-    'Insert semantic HTML as a subtree of editable nodes under an existing parent. Write structure as HTML (<section>, <h1>, <a>, <button>, <img>, <ul>, ...) and style it with CSS: put a <style> block in the HTML and/or class= attributes. The importer parses every rule — a bare `.foo {}` selector becomes a reusable Selectors-panel class bound to class="foo"; any other selector (`.hero a`, `a:hover`, `nav > li`) becomes an ambient rule. Inline style= attributes land on the node\'s inline styles. To add ONLY CSS (pseudo-classes, hover, ::before, descendant selectors) with no new elements, pass a <style>-only payload (e.g. "<style>.hero a:hover{color:var(--primary)}</style>") — the rules are registered and `parentId` is ignored. This is the way to author pseudo/hover/descendant CSS that createClass/updateClassStyles cannot express.',
+    'Insert semantic HTML as a subtree of editable nodes under an existing parent. Write structure as HTML (<section>, <h1>, <a>, <button>, <img>, <ul>, ...) and style it with CSS in the same call: put a <style> block in the HTML and/or class= attributes. The importer parses every rule — a bare `.foo {}` selector becomes a reusable Selectors-panel class bound to class="foo"; any other selector (`.hero a`, `a:hover`, `nav > li`) becomes an ambient rule. Inline style= attributes land on the node\'s inline styles. To author or edit CSS on its own — pseudo/hover/descendant selectors, or restyling existing rules — use the dedicated applyCss tool instead (insertHtml is for inserting structure).',
   inputSchema: InsertHtmlInput,
 }
 
@@ -75,7 +61,7 @@ const replaceNodeHtmlTool: AiTool = {
   scope: 'site',
   execution: 'browser',
   description:
-    "Replace a node subtree's children with new HTML. The target node is preserved as the parent; its existing children are rebuilt from the HTML. Style with CSS exactly as in insertHtml: a <style> block and/or class= attributes; bare `.foo` selectors become reusable classes, other selectors become ambient rules. A <style>-only payload (no elements) registers its CSS rules WITHOUT touching the node's children — to add ambient/hover/pseudo CSS prefer insertHtml with a <style>-only payload.",
+    "Replace a node subtree's children with new HTML. The target node is preserved as the parent; its existing children are rebuilt from the HTML. Style with CSS exactly as in insertHtml: a <style> block and/or class= attributes; bare `.foo` selectors become reusable classes, other selectors become ambient rules. To author or edit CSS on its own (without rebuilding children), use the dedicated applyCss tool instead.",
   inputSchema: ReplaceNodeHtmlInput,
 }
 
@@ -107,7 +93,7 @@ const updateNodePropsTool: AiTool = {
   scope: 'site',
   execution: 'browser',
   description:
-    'Shallow-merge a patch onto an existing node\'s props. `breakpointId` is only valid for props marked `breakpointOverridable` in the schema (rejected for content props like text/tag/src). For per-breakpoint visual variation use class breakpointStyles, not this. Richtext props are auto-sanitised.',
+    'Shallow-merge a patch onto an existing node\'s props. `breakpointId` is only valid for props marked `breakpointOverridable` in the schema (rejected for content props like text/tag/src). For per-breakpoint visual variation use applyCss with an `@media` query, not this. Richtext props are auto-sanitised.',
   inputSchema: UpdateNodePropsInput,
 }
 
@@ -155,37 +141,20 @@ const duplicateNodeTool: AiTool = {
 }
 
 // ---------------------------------------------------------------------------
-// Class-level write tools
+// CSS + class-assignment write tools
 // ---------------------------------------------------------------------------
 
-const CreateClassInput = Type.Object({
-  name: Type.String({ minLength: 1 }),
-  styles: Type.Optional(StylePatch),
-  breakpointStyles: Type.Optional(BreakpointStyles),
+const ApplyCssInput = Type.Object({
+  css: Type.String({ minLength: 1 }),
 })
 
-const createClassTool: AiTool = {
-  name: 'createClass',
+const applyCssTool: AiTool = {
+  name: 'applyCss',
   scope: 'site',
   execution: 'browser',
   description:
-    'Create a reusable CSS class with camelCase style keys (fontSize, paddingTop, gridTemplateColumns). Name must be a CSS identifier (no spaces) and unique. Success data includes the new id as `classId`; other class tools accept id OR name.',
-  inputSchema: CreateClassInput,
-}
-
-const UpdateClassStylesInput = Type.Object({
-  classId: Type.String({ minLength: 1 }),
-  breakpointId: Type.Optional(Type.String({ minLength: 1 })),
-  patch: StylePatch,
-})
-
-const updateClassStylesTool: AiTool = {
-  name: 'updateClassStyles',
-  scope: 'site',
-  execution: 'browser',
-  description:
-    'Shallow-merge a style patch onto an existing class. `breakpointId` writes a per-breakpoint override instead of base. `classId` accepts id or name.',
-  inputSchema: UpdateClassStylesInput,
+    'Author or edit CSS — the single tool for ALL styling that isn\'t attached inline. Pass real CSS text and it is parsed and UPSERTED into the site: a bare `.foo { … }` selector creates or edits a reusable class (bound to class="foo"); ANY other selector — descendant (`.hero a`), child (`nav > li`), pseudo-class/element (`a:hover`, `.card::before`), attribute, element (`h1`) — creates or edits an ambient rule that attaches by matching, no class attribute needed. `@media` queries fold into per-breakpoint overrides (matched against the site breakpoints); other `@media`/`@supports`/`@container` round-trip as reusable conditions. Re-applying a selector MERGES onto the existing rule, so this both creates new styles and edits existing ones (e.g. `.hero a:hover { color: var(--primary) }` to restyle an existing descendant rule). Reference design tokens — `var(--primary)`, `var(--text-l)`, `var(--space-m)` — not raw hex/px. A reusable class is just a bare `.name` selector (a CSS identifier, no spaces). Success data: `{ cssRulesCreated, cssRulesUpdated }`.',
+  inputSchema: ApplyCssInput,
 }
 
 const AssignClassInput = Type.Object({
@@ -451,8 +420,7 @@ export const siteWriteTools: AiTool[] = [
   moveNodeTool,
   renameNodeTool,
   duplicateNodeTool,
-  createClassTool,
-  updateClassStylesTool,
+  applyCssTool,
   assignClassTool,
   removeClassTool,
   addPageTool,

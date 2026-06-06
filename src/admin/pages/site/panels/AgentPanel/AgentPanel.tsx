@@ -511,6 +511,17 @@ function formatToolCallType(actionType: string): string {
   return actionType.replace(/^mcp__instatic__/, '')
 }
 
+/** Compact one-line summary of an applyCss payload: the selectors it touches. */
+function summarizeCss(css: string): string {
+  const selectors = css
+    .match(/[^{}]+(?=\{)/g)
+    ?.map((s) => s.trim().replace(/\s+/g, ' '))
+    .filter(Boolean) ?? []
+  if (selectors.length === 0) return 'css'
+  const head = selectors.slice(0, 2).join(', ')
+  return selectors.length > 2 ? `${head} +${selectors.length - 2}` : head
+}
+
 function formatActionLabel(actionType: string, params: unknown): string {
   const p = params as Record<string, unknown>
   switch (actionType) {
@@ -521,8 +532,7 @@ function formatActionLabel(actionType: string, params: unknown): string {
     case 'updateNodeProps': return `node ${String(p.nodeId ?? '').slice(0, 6)}…`
     case 'moveNode': return `→ ${String(p.newParentId ?? '').slice(0, 6)}…`
     case 'renameNode': return `"${String(p.label ?? '')}"`
-    case 'createClass': return `"${String(p.name ?? '')}"`
-    case 'updateClassStyles': return `class ${String(p.classId ?? '').slice(0, 6)}…`
+    case 'applyCss': return summarizeCss(String(p.css ?? ''))
     case 'assignClass': return `${String(p.classId ?? '').slice(0, 6)}… → node`
     case 'removeClass': return `${String(p.classId ?? '').slice(0, 6)}… from node`
     case 'addPage': return `"${String(p.title ?? '')}"`

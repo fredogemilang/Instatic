@@ -69,16 +69,6 @@ function parseImportedStyleCss(styleCss: string): {
 // defence-in-depth at the store boundary (Constraint #272).
 // ---------------------------------------------------------------------------
 
-const classStylePatchSchema = Type.Record(
-  Type.String(),
-  Type.Union([Type.String(), Type.Number()]),
-)
-
-const classBreakpointStylesSchema = Type.Record(
-  Type.String({ minLength: 1 }),
-  classStylePatchSchema,
-)
-
 const insertHtmlSchema = Type.Object({
   parentId: Type.String({ minLength: 1 }),
   index: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -115,16 +105,8 @@ const renameNodeSchema = Type.Object({
   label: Type.String({ minLength: 1 }),
 })
 
-const createClassSchema = Type.Object({
-  name: Type.String({ minLength: 1 }),
-  styles: Type.Optional(classStylePatchSchema),
-  breakpointStyles: Type.Optional(classBreakpointStylesSchema),
-})
-
-const updateClassStylesSchema = Type.Object({
-  classId: Type.String({ minLength: 1 }),
-  breakpointId: Type.Optional(Type.String({ minLength: 1 })),
-  patch: classStylePatchSchema,
+const applyCssSchema = Type.Object({
+  css: Type.String({ minLength: 1 }),
 })
 
 const assignClassSchema = Type.Object({
@@ -202,8 +184,8 @@ const renderSnapshotSchema = Type.Object({
  * no matching class is found.
  *
  * Lets Claude reference a class by name in tools that only accept a single
- * class identifier (assignClass/updateClassStyles/removeClass), without
- * needing to remember the generated nanoid from a previous createClass call.
+ * class identifier (assignClass/removeClass), without needing to remember the
+ * generated nanoid from a previous applyCss call.
  */
 function resolveClassId(
   store: EditorStore,
@@ -219,23 +201,6 @@ function resolveClassId(
   return matches[0]?.id ?? null
 }
 
-const EMPTY_CLASS_STYLES: Record<string, string | number> = {}
-const EMPTY_BREAKPOINT_STYLES: Record<string, Record<string, string | number>> = {}
-
-function resolveOrCreateClassId(
-  store: EditorStore,
-  classIdOrName: string,
-  styles: Record<string, string | number> = {},
-): string | null {
-  const resolved = resolveClassId(store, classIdOrName)
-  if (resolved) return resolved
-  try {
-    return store.createClass(classIdOrName, styles).id
-  } catch {
-    return null
-  }
-}
-
 function validateBreakpointId(
   store: EditorStore,
   breakpointId: string,
@@ -245,31 +210,6 @@ function validateBreakpointId(
   return site.breakpoints.some((breakpoint) => breakpoint.id === breakpointId)
     ? null
     : `Breakpoint not found: ${breakpointId}`
-}
-
-function validateBreakpointStyles(
-  store: EditorStore,
-  breakpointStyles: Record<string, Record<string, string | number>>,
-): string | null {
-  for (const breakpointId of Object.keys(breakpointStyles)) {
-    const error = validateBreakpointId(store, breakpointId)
-    if (error) return error
-  }
-  return null
-}
-
-function applyClassBreakpointStyles(
-  store: EditorStore,
-  classId: string,
-  breakpointStyles: Record<string, Record<string, string | number>>,
-): void {
-  for (const [breakpointId, styles] of Object.entries(breakpointStyles)) {
-    if (Object.keys(styles).length > 0) {
-      // A breakpoint id is a valid context id; the validator already confirmed
-      // the key names a real site breakpoint.
-      store.setClassContextStyles(classId, breakpointId, styles)
-    }
-  }
 }
 
 /**
@@ -419,14 +359,14 @@ function runInsertHtml(input: Static<typeof insertHtmlSchema>): AiToolOutput {
   const { rules, conditions } = parseImportedStyleCss(styleCss)
 
   if (rootIds.length === 0) {
-    // A <style>-only payload carries no elements but still carries importable
+    // A <style>-only payload carries no elements but still carries authorable
     // CSS — reusable classes and ambient rules (`a:hover`, `.hero a`,
-    // `::before`, …). Apply those rather than discarding them; this is the
-    // canonical way to author the pseudo/hover/descendant CSS that the class
-    // tools (createClass/updateClassStyles) can't express.
+    // `::before`, …). Upsert them rather than discarding them. (The dedicated
+    // `applyCss` tool is the canonical path for this; insertHtml stays forgiving
+    // when a CSS-only payload arrives here.)
     if (rules.length > 0 || conditions.length > 0) {
-      const added = getStoreState().applyImportedStyleRules(rules, conditions)
-      return aiToolOk({ styleRulesAdded: added })
+      const { created, updated } = getStoreState().upsertCssRules(rules, conditions)
+      return aiToolOk({ cssRulesCreated: created, cssRulesUpdated: updated })
     }
     return aiToolError('HTML contained no importable elements or style rules.')
   }
@@ -500,11 +440,11 @@ function runReplaceNodeHtml(input: Static<typeof replaceNodeHtmlSchema>): AiTool
 
   if (rootIds.length === 0) {
     // A <style>-only payload has nothing to replace the children WITH, so leave
-    // the subtree intact and just register its rules — same forgiving behaviour
+    // the subtree intact and just upsert its rules — same forgiving behaviour
     // as insertHtml. Wiping children to insert nothing would be surprising.
     if (rules.length > 0 || conditions.length > 0) {
-      const added = getStoreState().applyImportedStyleRules(rules, conditions)
-      return aiToolOk({ styleRulesAdded: added })
+      const { created, updated } = getStoreState().upsertCssRules(rules, conditions)
+      return aiToolOk({ cssRulesCreated: created, cssRulesUpdated: updated })
     }
     return aiToolError('HTML contained no importable elements or style rules.')
   }
@@ -565,8 +505,8 @@ function runUpdateNodeProps(input: Static<typeof updateNodePropsSchema>): AiTool
         `Cannot store breakpoint overrides for non-responsive prop(s) on ${node.moduleId}: ` +
           `${nonOverridable.join(', ')}. ` +
           `Module props are content (single value across breakpoints) unless the schema marks them ` +
-          `\`breakpointOverridable: true\`. For per-breakpoint *visual* variation use class breakpoint ` +
-          `styles via updateClassStyles / createClass.breakpointStyles instead.`,
+          `\`breakpointOverridable: true\`. For per-breakpoint *visual* variation use applyCss with an ` +
+          `\`@media\` query instead.`,
       )
     }
     store.setBreakpointOverride(input.nodeId, input.breakpointId, sanitizedPatch)
@@ -586,37 +526,27 @@ function runRenameNode(input: Static<typeof renameNodeSchema>): AiToolOutput {
   return aiToolOk()
 }
 
-function runCreateClass(input: Static<typeof createClassSchema>): AiToolOutput {
-  const store = getStoreState()
-  const breakpointError = validateBreakpointStyles(
-    store,
-    input.breakpointStyles ?? EMPTY_BREAKPOINT_STYLES,
-  )
-  if (breakpointError) return aiToolError(breakpointError)
-  const cls = store.createClass(
-    input.name,
-    input.styles ?? EMPTY_CLASS_STYLES,
-  )
-  applyClassBreakpointStyles(
-    store,
-    cls.id,
-    input.breakpointStyles ?? EMPTY_BREAKPOINT_STYLES,
-  )
-  return aiToolOk({ classId: cls.id })
-}
-
-function runUpdateClassStyles(input: Static<typeof updateClassStylesSchema>): AiToolOutput {
-  const store = getStoreState()
-  const classId = resolveOrCreateClassId(store, input.classId, input.patch)
-  if (!classId) return aiToolError(`Class not found: ${input.classId}`)
-  if (input.breakpointId) {
-    const breakpointError = validateBreakpointId(store, input.breakpointId)
-    if (breakpointError) return aiToolError(breakpointError)
-    store.setClassContextStyles(classId, input.breakpointId, input.patch)
-  } else {
-    store.updateClassStyles(classId, input.patch)
+/**
+ * Apply authored CSS text to the site's style registry.
+ *
+ * The single styling-by-CSS tool: parse the CSS with the SAME engine the HTML
+ * importer uses (`cssToStyleRules` via `parseImportedStyleCss`), then UPSERT
+ * every rule — a bare `.foo {}` selector creates/edits a reusable class, any
+ * other selector (`.hero a`, `a:hover`, `nav > li`, `::before`) creates/edits
+ * an ambient rule, and `@media` folds into per-breakpoint/condition overrides.
+ * Re-applying an existing selector EDITS it; this is what `updateClassStyles`
+ * could not do for descendant/pseudo selectors.
+ */
+function runApplyCss(input: Static<typeof applyCssSchema>): AiToolOutput {
+  const { rules, conditions } = parseImportedStyleCss(input.css)
+  if (rules.length === 0 && conditions.length === 0) {
+    return aiToolError(
+      'No CSS rules parsed. Provide CSS like ".hero { color: var(--primary) }" or ' +
+        '"nav a:hover { text-decoration: underline }".',
+    )
   }
-  return aiToolOk()
+  const { created, updated } = getStoreState().upsertCssRules(rules, conditions)
+  return aiToolOk({ cssRulesCreated: created, cssRulesUpdated: updated })
 }
 
 function runAssignClass(input: Static<typeof assignClassSchema>): AiToolOutput {
@@ -808,10 +738,8 @@ export async function executeAgentTool(
         return runMoveNode(parseValue(moveNodeSchema, rawInput))
       case 'renameNode':
         return runRenameNode(parseValue(renameNodeSchema, rawInput))
-      case 'createClass':
-        return runCreateClass(parseValue(createClassSchema, rawInput))
-      case 'updateClassStyles':
-        return runUpdateClassStyles(parseValue(updateClassStylesSchema, rawInput))
+      case 'applyCss':
+        return runApplyCss(parseValue(applyCssSchema, rawInput))
       case 'assignClass':
         return runAssignClass(parseValue(assignClassSchema, rawInput))
       case 'removeClass':
