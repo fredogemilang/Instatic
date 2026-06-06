@@ -139,6 +139,14 @@ readFieldSchemaCell(cells, 'params')            // → DataField[] | null
 
 These do the boundary validation — handlers and modules read through them rather than typing `cells.foo as string`.
 
+To compute the denormalized, URL-normalized slug for a row (empty string when the table has no `slug` field):
+
+```ts
+slugForTable(table, cells)   // → string  (applies slugFromTitle; empty for tables without a slug field)
+```
+
+This is the single source of truth for slug derivation used by all admin write paths (`rows.ts`, `tables.ts`). Pass the result directly to `createDataRow` / `saveDataRowDraft`.
+
 ---
 
 ## Server side
@@ -284,7 +292,7 @@ When a published row has a non-empty `data_tables.route_base`, the public URL is
 | Reading `cells.foo as string`                                 | Use the readers in `src/core/data/cells.ts`                  |
 | Renaming or deleting a system table                           | Blocked at the repository layer; UI hides the affordance     |
 | Renaming a `builtIn: true` field on a postType                | Disable instead — the underlying field id is reserved        |
-| Writing into `cells_json` directly without re-denormalizing `slug` | Repositories handle the denormalization; go through them    |
+| Writing into `cells_json` directly without re-denormalizing `slug` | Use `slugForTable(table, cells)` from `src/core/data/cells.ts`, then pass the result to the repository function |
 | Computing the published URL by stringing `id` together        | Use `routeBase` + the row's `slug`                           |
 | Skipping the version write on publish                         | `publishDataRow` always writes a `data_row_versions` row     |
 | Manually setting `status: 'published'` without going through the publish path | The publish path runs the renderer, writes a version, and fires hooks |
@@ -310,7 +318,7 @@ type ContentEntryActor =
   | { kind: 'system' }  // schedulers, scheduled-publish tick
 ```
 
-There's also one filter — `content.entry.cells` — that runs over the cell bag BEFORE persistence (admin handlers and the `api.cms.content.*` surface both apply it). Plugins use it to validate, normalize, or auto-fill cells:
+There's also one filter — `content.entry.cells` — that runs over the cell bag BEFORE persistence. All write paths — admin HTTP handlers (`rows.ts`, `tables.ts`) and the plugin `api.cms.content.*` surface — apply it via `applyContentEntryCellsFilter` from `server/publish/contentEvents.ts`. Plugins use it to validate, normalize, or auto-fill cells:
 
 ```ts
 api.cms.hooks.filter('content.entry.cells', (cells, { tableSlug, entryId, actor }) => {
@@ -323,7 +331,7 @@ api.cms.hooks.filter('content.entry.cells', (cells, { tableSlug, entryId, actor 
 })
 ```
 
-Events are emitted from `server/publish/contentEvents.ts` — admin CMS handlers call the helpers directly; plugin handlers fire them via the same helpers; the publish scheduler emits the `system` actor variant.
+Events are emitted from `server/publish/contentEvents.ts`, which also exports `applyContentEntryCellsFilter`. Admin CMS handlers and plugin handlers both call these helpers directly; the publish scheduler emits the `system` actor variant.
 
 ---
 
@@ -338,7 +346,7 @@ Events are emitted from `server/publish/contentEvents.ts` — admin CMS handlers
 - [docs/reference/database-dialects.md](../reference/database-dialects.md) — `_json` column convention + migration parity
 - Source-of-truth files:
   - `src/core/data/schemas.ts` — `DataTableSchema`, `DataRowSchema`, `DataField` union, status enum
-  - `src/core/data/cells.ts` — typed cell readers
+  - `src/core/data/cells.ts` — typed cell readers + `slugForTable` (slug derivation)
   - `src/core/data/fields.ts` — field normalization, built-in field detection
   - `src/core/data/pageFromRow.ts` — Page ↔ row
   - `src/core/data/componentFromRow.ts` — VC ↔ row
