@@ -11,8 +11,7 @@ import type { DbClient } from '../../../db/client'
 import type { DataRow } from '@core/data/schemas'
 import type { StorageFilterOperator, StorageFilterValue } from '@core/plugin-sdk/storageSchemas'
 import { jsonField } from '../../../db/jsonExtract'
-import { placeholder } from './mapper'
-import { getDataRow } from './read'
+import { placeholder, selectHydratedDataRows } from './mapper'
 
 /**
  * Options accepted by `listDataRowsWithFilter`. Mirrors the plugin SDK's
@@ -52,17 +51,14 @@ const ROW_LEVEL_ORDER_KEYS = new Set([
   'published_at',
 ])
 
-interface DataRowFilterRow {
-  id: string
-}
-
 /**
  * List rows in a table with operator-object filters, sort, and pagination.
  *
- * Two queries — one for the page of ids matching the filter, then a second
- * via `getDataRow` per id to hydrate user references. The hydration step
- * is per-row so the SQL itself stays dialect-naive (no recursive joins to
- * stitch in user data inside the filtered subquery).
+ * Two queries total, independent of page size: a single hydrated SELECT (the
+ * filter + pagination live in a `filtered_ids` CTE that the row + user-ref
+ * joins are restricted to) plus one COUNT. The CTE keeps the SQL dialect-naive
+ * — both Postgres and SQLite support `with` — while collapsing what used to be
+ * one hydration round-trip per matching id.
  */
 export async function listDataRowsWithFilter(
   db: DbClient,
@@ -140,30 +136,35 @@ export async function listDataRowsWithFilter(
   const limitPlaceholder = addParam(Math.max(1, Math.min(500, limit)))
   const offsetPlaceholder = addParam(Math.max(0, offset))
 
-  const dataSql = `
+  // The CTE selects (and orders + paginates) the matching id page; the outer
+  // hydrated SELECT joins it back to data_rows + user refs in one round-trip.
+  // The outer `order by` is re-applied because a JOIN does not preserve the
+  // CTE's row order.
+  const cte = `filtered_ids as (
     select data_rows.id
     from data_rows
     where ${whereSql}
     order by ${orderBySql}
     limit ${limitPlaceholder} offset ${offsetPlaceholder}
-  `
+  )`
+
   const countSql = `
     select count(*) as total
     from data_rows
     where ${whereSql}
   `
 
-  const dataParams = params
   const countParams = params.slice(0, countParamCount)
 
-  const [dataResult, countResult] = await Promise.all([
-    db.unsafe<DataRowFilterRow>(dataSql, dataParams),
+  const [rows, countResult] = await Promise.all([
+    selectHydratedDataRows(db, {
+      cte,
+      join: 'join filtered_ids on filtered_ids.id = data_rows.id',
+      tail: `order by ${orderBySql}`,
+      params,
+    }),
     db.unsafe<{ total: number | bigint | string }>(countSql, countParams),
   ])
-
-  const ids = dataResult.rows.map((r) => r.id)
-  const hydrated = await Promise.all(ids.map((id) => getDataRow(db, id)))
-  const rows = hydrated.filter((r): r is DataRow => r !== null)
 
   return {
     rows,

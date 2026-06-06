@@ -280,9 +280,9 @@ Resolved server-side from the posted `SiteAgentSnapshot` (or, for `list_post_typ
 | `list_post_types` | Routable collections eligible as a `postTypes` template target — `{ slug, label, routeBase, kind }` per entry, filtered to a non-empty `routeBase`. Queries the data repositories via `ctx.db` |
 | `list_tokens`     | Design tokens: colors (with shades/tints), typography/spacing scale steps, font tokens — each with CSS variable + utility classes; optional `family` filter (`colors`\|`typography`\|`spacing`\|`fonts`) |
 
-### Write tools — 23, browser-bridged
+### Write tools — 22, browser-bridged
 
-All 23 tools carry `execution: 'browser'` in their `AiTool` definition. The server emits `toolRequest`; the browser executor validates input with TypeBox, runs the store action, and POSTs the canonical `AiToolOutput` result back.
+All 22 tools carry `execution: 'browser'` in their `AiTool` definition. The server emits `toolRequest`; the browser executor validates input with TypeBox, runs the store action, and POSTs the canonical `AiToolOutput` result back.
 
 **Structure (HTML-native)**
 

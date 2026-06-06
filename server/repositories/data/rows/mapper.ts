@@ -147,25 +147,48 @@ const DATA_ROW_JOINS = `from data_rows
     left join roles publisher_roles on publisher_roles.id = publisher_users.role_id`
 
 /**
+ * Shape of a hydrated data-row query. Every clause is spliced verbatim into the
+ * canonical "row + four user-ref joins" SELECT, so each must reference columns
+ * only and bind values through positional placeholders (see `placeholder`),
+ * with the matching values supplied in `params`. The SQL stays dialect-naive
+ * (ANSI joins + CTE, no Postgres-isms).
+ */
+export interface HydratedDataRowsQuery {
+  /**
+   * Optional CTE body spliced as `with <cte> select …`. Provide the full
+   * `name as ( … )` clause. Lets callers inline a filtered/paginated id set so
+   * hydration happens in a single round-trip instead of one query per id.
+   */
+  cte?: string
+  /**
+   * Optional extra JOIN appended after the canonical user-ref joins — e.g.
+   * `join filtered_ids on filtered_ids.id = data_rows.id` to restrict the
+   * hydrated rows to a CTE's id set.
+   */
+  join?: string
+  /** Optional WHERE fragment (omit when a `join` already restricts the rows). */
+  where?: string
+  /** Optional trailing `order by` / `limit` / `offset` clause. */
+  tail?: string
+  /** Positional values matching the placeholders across cte + where + tail. */
+  params: unknown[]
+}
+
+/**
  * Run the canonical hydrated SELECT and map every row to a `DataRow`.
- *
- * `whereSql` is spliced verbatim — it must reference columns only and bind any
- * values through positional placeholders (see `placeholder`), with the matching
- * values supplied in `params`. `tail` carries an optional `order by` / `limit`
- * suffix. The SQL stays dialect-naive (ANSI joins, no Postgres-isms).
  */
 export async function selectHydratedDataRows(
   db: DbClient,
-  whereSql: string,
-  params: unknown[],
-  tail = '',
+  query: HydratedDataRowsQuery,
 ): Promise<DataRow[]> {
   const sql = `
+    ${query.cte ? `with ${query.cte}` : ''}
     select ${DATA_ROW_COLUMNS}
     ${DATA_ROW_JOINS}
-    where ${whereSql}
-    ${tail}
+    ${query.join ?? ''}
+    ${query.where ? `where ${query.where}` : ''}
+    ${query.tail ?? ''}
   `
-  const { rows } = await db.unsafe<DataRowRow>(sql, params)
+  const { rows } = await db.unsafe<DataRowRow>(sql, query.params)
   return rows.map(mapRow)
 }

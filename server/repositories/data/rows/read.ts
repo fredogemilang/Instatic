@@ -34,12 +34,11 @@ export async function listDataRows(
   tableId: string,
   visibility: ListDataRowsVisibility = {},
 ): Promise<DataRow[]> {
-  const dataRows = await selectHydratedDataRows(
-    db,
-    `data_rows.table_id = ${placeholder(db.dialect, 1)} and data_rows.deleted_at is null`,
-    [tableId],
-    'order by data_rows.updated_at desc, data_rows.created_at desc',
-  )
+  const dataRows = await selectHydratedDataRows(db, {
+    where: `data_rows.table_id = ${placeholder(db.dialect, 1)} and data_rows.deleted_at is null`,
+    params: [tableId],
+    tail: 'order by data_rows.updated_at desc, data_rows.created_at desc',
+  })
   if (visibility.ownerUserId) {
     const ownerUserId = visibility.ownerUserId
     return dataRows.filter((row) => isOwnedByUser(row, ownerUserId))
@@ -51,12 +50,11 @@ export async function getDataRow(
   db: DbClient,
   rowId: string,
 ): Promise<DataRow | null> {
-  const rows = await selectHydratedDataRows(
-    db,
-    `data_rows.id = ${placeholder(db.dialect, 1)} and data_rows.deleted_at is null`,
-    [rowId],
-    'limit 1',
-  )
+  const rows = await selectHydratedDataRows(db, {
+    where: `data_rows.id = ${placeholder(db.dialect, 1)} and data_rows.deleted_at is null`,
+    params: [rowId],
+    tail: 'limit 1',
+  })
   return rows[0] ?? null
 }
 
