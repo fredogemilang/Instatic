@@ -41,7 +41,6 @@ export type NodeActions = Pick<
   | 'insertNode'
   | 'insertComponentRef'
   | 'insertImportedNodes'
-  | 'applyImportedStyleRules'
   | 'deleteNode'
   | 'deleteNodes'
   | 'updateNodeProps'
@@ -115,6 +114,14 @@ function recordPatchChanges(
   return Object.entries(patch).some(([key, value]) => !Object.is(current[key], value))
 }
 
+/** Whether a tree already contains a `base.outlet` node (≤1 allowed per tree). */
+function treeHasOutlet(tree: NodeTree<PageNode>): boolean {
+  for (const id in tree.nodes) {
+    if (tree.nodes[id].moduleId === 'base.outlet') return true
+  }
+  return false
+}
+
 /**
  * Build the history-coalescing options for a single-field patch, or `undefined`
  * for multi-field patches (which always get their own discrete undo entry).
@@ -141,11 +148,25 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       const mod = registry.get(moduleId)
       const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
       const newNode = createNode(moduleId, resolvedDefaults)
+      let inserted = false
       mutateActiveTree((tree) => {
+        // Structural invariant: a document tree holds AT MOST ONE base.outlet.
+        // Matched content (a page or the current entry body) flows into a single
+        // outlet — both the publisher's `composeTemplateChain` and the canvas's
+        // read-only wrapper fill only the first, leaving any extra outlet to
+        // render as a dead, empty placeholder. This is the mutation chokepoint
+        // every insert path runs through (picker, drag-drop, programmatic), so
+        // blocking the second outlet here keeps the invariant no matter the
+        // caller. The user-facing message lives in `useInsertModule`.
+        if (moduleId === 'base.outlet' && treeHasOutlet(tree)) {
+          console.warn('[outlet] blocked inserting a second base.outlet into the document')
+          return false
+        }
         insertNode(tree, newNode, parentId, index)
+        inserted = true
         return true
       })
-      return newNode.id
+      return inserted ? newNode.id : ''
     },
 
     insertImportedNodes: (parentId, fragment, opts) => {
@@ -207,35 +228,6 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       return insertedRootIds
     },
 
-    applyImportedStyleRules: (styleRules, conditions) => {
-      if (styleRules.length === 0 && conditions.length === 0) return 0
-      let added = 0
-      mutateSite((site) => {
-        const before = Object.keys(site.styleRules).length
-        // Same merge the node-import path uses, so a <style>-only payload and a
-        // <style>-with-elements payload classify + dedupe rules identically.
-        if (styleRules.length) {
-          const classesByName = indexStyleRulesByName(site.styleRules)
-          mergeImportedStyleRules(styleRules, site.styleRules, classesByName)
-        }
-        if (conditions.length) {
-          if (!site.conditions) site.conditions = []
-          const existing = new Set(site.conditions.map((c) => c.id))
-          for (const def of conditions) {
-            if (existing.has(def.id)) continue
-            existing.add(def.id)
-            site.conditions.push(def)
-          }
-        }
-        added = Object.keys(site.styleRules).length - before
-        // Report a real change when rules OR conditions landed, so the undo
-        // snapshot is taken even if every rule was a dedupe no-op but a new
-        // condition was registered.
-        return added > 0 || conditions.length > 0
-      })
-      return added
-    },
-
     insertComponentRef: (parentId, componentId, index) => {
       if (!componentId) return null
 
@@ -249,49 +241,38 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         }
       }
 
-      // Insert the VC ref node (no props beyond componentId + propOverrides).
-      // `index` forwards through to insertNode so callers using
+      // Resolve the referenced VC up-front (read-only) so its slot-instance
+      // children can be materialized in the SAME mutation as the ref insertion.
+      const vc = site?.visualComponents.find((v) => v.id === componentId)
+
+      // Build the ref node with the module's registry defaults plus the
+      // ref-specific props. `index` forwards to insertNode so callers using
       // resolveInsertLocation can drop the ref at a precise sibling position.
-      const refNodeId = actions.insertNode(
-        'base.visual-component-ref',
-        { componentId, propOverrides: {} },
-        parentId,
-        index,
-      )
+      const mod = registry.get('base.visual-component-ref')
+      const newNode = createNode('base.visual-component-ref', {
+        ...(mod?.defaults ?? {}),
+        componentId,
+        propOverrides: {},
+      })
 
-      // Immediately materialize slot-instance children for each slot param the VC declares.
-      // `insertNode` → `mutateActiveTree` already committed the undo snapshot; we mutate
-      // inside another set() call here to keep slot insertion in the same logical action.
-      const currentSite = get().site
-      const vc = currentSite?.visualComponents.find((v) => v.id === componentId)
-      if (vc) {
-        set((state) => {
-          if (!state.site) return
-          const { activeDocument: ad } = state
+      // Insert the VC ref AND materialize its slot-instance children inside ONE
+      // mutateActiveTree recipe, so both writes land in a single patch set →
+      // a single undo entry. (Splitting them — ref via insertNode, slots via a
+      // separate set() outside history — meant Cmd+Z reverted only the ref and
+      // left the slot-instance nodes orphaned in the persisted node map forever.)
+      const inserted = mutateActiveTree((tree) => {
+        insertNode(tree, newNode, parentId, index)
+        if (vc) {
+          const vcRefNode = tree.nodes[newNode.id]
+          if (vcRefNode) {
+            const syncResult = syncSlotInstances(vcRefNode, vc, tree.nodes)
+            applySlotSyncResult(tree.nodes, syncResult, newNode.id)
+          }
+        }
+        return true
+      })
 
-          type NodeMap = Record<string, import('@core/page-tree').BaseNode>
-          const treeNodes: NodeMap | null = (() => {
-            if (ad?.kind === 'visualComponent') {
-              const activeVc = state.site!.visualComponents.find((v) => v.id === ad.vcId)
-              return activeVc ? (activeVc.tree.nodes as NodeMap) : null
-            }
-            const pageId = ad?.kind === 'page' ? ad.pageId : state.activePageId
-            const page = state.site!.pages.find((p) => p.id === pageId)
-            return page ? (page.nodes as NodeMap) : null
-          })()
-
-          if (!treeNodes) return
-
-          const vcRefNode = treeNodes[refNodeId]
-          if (!vcRefNode) return
-
-          const syncResult = syncSlotInstances(vcRefNode, vc, treeNodes)
-          applySlotSyncResult(treeNodes, syncResult, refNodeId)
-          state.site.updatedAt = Date.now()
-        })
-      }
-
-      return refNodeId
+      return inserted ? newNode.id : null
     },
 
     deleteNode: (nodeId) => {

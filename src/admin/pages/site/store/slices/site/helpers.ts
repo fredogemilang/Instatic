@@ -4,25 +4,17 @@
  * `buildSiteHelpers(set, get)` returns the shared mutation helpers packaged
  * into a single object that gets passed to every per-domain action factory.
  *
- * `reconcileVCRefsForVc` and `depthInTree` are pure utilities consumed by the
- * helpers / action factories — they live here so they sit next to the active
- * tree code that uses them.
+ * `depthInTree` is a pure utility consumed by the helpers / action factories —
+ * it lives here so it sits next to the active tree code that uses it.
  */
 
 import { nanoid } from 'nanoid'
 import type { StoreApi } from 'zustand'
-import type {
-  BaseNode,
-  NodeTree,
-  Page,
-  PageNode,
-  StyleRule,
-  SiteDocument,
-  FrameworkColorToken,
-} from '@core/page-tree'
+import type { FrameworkColorToken } from '@core/framework-schema'
+import type { NodeTree, Page, PageNode, StyleRule, SiteDocument } from '@core/page-tree'
 import type { SiteRuntimeConfig } from '@core/site-runtime'
 import { addPage, createNode, reconcileSiteExplorerInPlace } from '@core/page-tree'
-import { syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
+import { syncAllVCRefSlotInstances, allTreeNodeMaps } from '../vcSlotReconcile'
 import { create } from 'mutative'
 import type { Draft, Patches } from 'mutative'
 import type { ImportFragment } from '@core/htmlImport'
@@ -41,40 +33,6 @@ import { reconcileFrameworkClasses } from './framework/reconcile'
 import { indexStyleRulesByName, linkImportedClassNames } from './importLinking'
 import { addImportedFonts, addImportedFontTokens, overwriteImportedFontTokens } from './importedFonts'
 import type { HistoryEntry, SiteMutationResult, SiteSliceHelpers, SiteSliceRecipe, SuperImportHelpers } from './types'
-
-/**
- * Walk every page's tree, find every `base.visual-component-ref` that points
- * at the given vcId, and run `syncSlotInstances` on each so its slot-instance
- * children match the VC's current set of slot-outlets.
- *
- * MUST be called inside an Immer producer (operates on draft state).
- */
-function reconcileVCRefsForVc(
-  state: { site: SiteDocument | null },
-  vcId: string,
-): void {
-  if (!state.site) return
-  const vc = state.site.visualComponents.find((v) => v.id === vcId)
-  if (!vc) return
-
-  for (const page of state.site.pages) {
-    const treeNodes = page.nodes as Record<string, BaseNode>
-    // Snapshot ids first — applySlotSyncResult mutates the map.
-    const refIds = Object.keys(treeNodes).filter((id) => {
-      const n = treeNodes[id]
-      return (
-        n?.moduleId === 'base.visual-component-ref' &&
-        (n.props as Record<string, unknown>).componentId === vcId
-      )
-    })
-    for (const refId of refIds) {
-      const refNode = treeNodes[refId]
-      if (!refNode) continue
-      const syncResult = syncSlotInstances(refNode, vc, treeNodes)
-      applySlotSyncResult(treeNodes, syncResult, refId)
-    }
-  }
-}
 
 /**
  * Compute a node's depth in the active tree by walking up to root.
@@ -245,8 +203,10 @@ export function buildSiteHelpers(
    *     adds optional `dynamicBindings`), so the cast is safe for all tree
    *     mutations that operate on BaseNode-level fields.
    *     After the mutation, propagates any change in the VC's slot-outlet set
-   *     to every consumer VC ref across all pages via `syncSlotInstances` —
-   *     run INSIDE the recipe so those writes are captured in the same patch set.
+   *     to every consumer VC ref — across all pages AND every other VC's tree
+   *     (refs nested inside other VCs, ISS-026) — via
+   *     `syncAllVCRefSlotInstances`, run INSIDE the recipe so those writes are
+   *     captured in the same patch set.
    */
   function mutateActiveTree(
     fn: (tree: NodeTree<PageNode>) => SiteMutationResult,
@@ -262,9 +222,10 @@ export function buildSiteHelpers(
         // VCNode is structurally compatible with PageNode (dynamicBindings is optional).
         const result = fn(vc.tree as NodeTree<PageNode>)
         if (result === false) return false
-        // Propagate slot-outlet changes to every consumer VC ref. Idempotent
-        // when the slot-outlet set is unchanged.
-        reconcileVCRefsForVc({ site }, vc.id)
+        // Propagate slot-outlet changes to every consumer VC ref — in pages AND
+        // nested inside other VC trees. Idempotent when the slot-outlet set is
+        // unchanged.
+        syncAllVCRefSlotInstances(allTreeNodeMaps(site), vc.id, vc)
         return result
       }
 
@@ -325,7 +286,7 @@ export function buildSiteHelpers(
         const result = fn(vc.tree as NodeTree<PageNode>, site)
         if (result === false) return false
         // Mirror mutateActiveTree's slot-outlet propagation contract.
-        reconcileVCRefsForVc({ site }, vc.id)
+        syncAllVCRefSlotInstances(allTreeNodeMaps(site), vc.id, vc)
         return result
       }
 
