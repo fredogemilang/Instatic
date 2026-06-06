@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox'
-import type { PluginRecord, PluginResource } from '@core/plugin-sdk'
+import { PluginRecordSchema, type PluginRecord, type PluginResource } from '@core/plugin-sdk'
 import type { StorageListOptions } from '@core/plugin-sdk/storageSchemas'
 import { readEnvelope, assertOk } from '@core/http'
 
@@ -11,22 +11,23 @@ interface PluginRecordsPayload {
   totalCount?: number
 }
 
-// Envelope schemas — same strategy as cmsContent / cmsPlugins. PluginRecord
-// and PluginResource are deep types validated downstream by their domain
-// modules; here we just check that the wrapper object has the expected key.
-// Surfaced by /audit-types.
+// Envelope schemas. `record` is validated in full against the canonical
+// `PluginRecordSchema` (source of truth in @core/plugin-sdk). `PluginResource`
+// has no schema yet, so the list/resource envelope keeps the records as
+// validated PluginRecord items while the resource key passes through as
+// unknown and is cast at the call site. Surfaced by /audit-types.
 
 const PluginRecordsEnvelope = Type.Object(
   {
     resource: Type.Optional(Type.Unknown()),
-    records: Type.Optional(Type.Array(Type.Unknown())),
+    records: Type.Optional(Type.Array(PluginRecordSchema)),
     totalCount: Type.Optional(Type.Integer({ minimum: 0 })),
   },
   { additionalProperties: true },
 )
 
 const RecordEnvelope = Type.Object(
-  { record: Type.Optional(Type.Unknown()) },
+  { record: Type.Optional(PluginRecordSchema) },
   { additionalProperties: true },
 )
 
@@ -100,7 +101,7 @@ export async function createCmsPluginResourceRecord(
   })
   const body = await readEnvelope(res, RecordEnvelope, `CMS plugin record create failed with ${res.status}`)
   if (!body.record) throw new Error('CMS plugin record create response was missing record')
-  return body.record as PluginRecord
+  return body.record
 }
 
 export async function updateCmsPluginResourceRecord(
@@ -119,7 +120,7 @@ export async function updateCmsPluginResourceRecord(
   })
   const body = await readEnvelope(res, RecordEnvelope, `CMS plugin record update failed with ${res.status}`)
   if (!body.record) throw new Error('CMS plugin record update response was missing record')
-  return body.record as PluginRecord
+  return body.record
 }
 
 export async function deleteCmsPluginResourceRecord(

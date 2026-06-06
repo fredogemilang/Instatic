@@ -1,5 +1,5 @@
-import { parseJsonResponse, safeParseJson } from '@core/utils/jsonValidate'
-import { assertOk } from '@core/http'
+import { safeParseJson } from '@core/utils/jsonValidate'
+import { readEnvelope, assertOk } from '@core/http'
 import {
   CmsMediaAssetEnvelopeSchema,
   CmsMediaFolderEnvelopeSchema,
@@ -100,18 +100,10 @@ export interface ListCmsMediaAssetsOptions extends ClientBase {
 }
 
 export async function listCmsMediaAssets(
-  options: ListCmsMediaAssetsOptions | FetchLike = {},
-  legacyBasePath = '/admin/api/cms',
+  options: ListCmsMediaAssetsOptions = {},
 ): Promise<CmsMediaAsset[]> {
-  // Backward compatibility: previous signature accepted (fetchImpl, basePath)
-  // as positional args. The MediaExplorerPanel still calls `listCmsMediaAssets()`
-  // with zero args; this overload keeps that working while letting new callers
-  // pass `{ trash: true }`.
-  const opts: ListCmsMediaAssetsOptions = typeof options === 'function'
-    ? { fetchImpl: options, basePath: legacyBasePath }
-    : options
-  const { fetchImpl, basePath } = resolveClient(opts)
-  const params = opts.trash ? '?trash=1' : ''
+  const { fetchImpl, basePath } = resolveClient(options)
+  const params = options.trash ? '?trash=1' : ''
 
   const res = await fetchImpl(`${basePath}/media${params}`, {
     method: 'GET',
@@ -128,13 +120,9 @@ export async function listCmsMediaAssets(
 
 export async function uploadCmsMediaAsset(
   file: File,
-  options: ClientBase | FetchLike = {},
-  legacyBasePath = '/admin/api/cms',
+  options: ClientBase = {},
 ): Promise<CmsMediaAsset> {
-  const opts: ClientBase = typeof options === 'function'
-    ? { fetchImpl: options, basePath: legacyBasePath }
-    : options
-  const { fetchImpl, basePath } = resolveClient(opts)
+  const { fetchImpl, basePath } = resolveClient(options)
   const body = new FormData()
   body.set('file', file)
 
@@ -143,8 +131,7 @@ export async function uploadCmsMediaAsset(
     credentials: 'include',
     body,
   })
-  await assertOk(res, `CMS media upload failed with ${res.status}`)
-  const payload = await parseJsonResponse(res, CmsMediaAssetEnvelopeSchema)
+  const payload = await readEnvelope(res, CmsMediaAssetEnvelopeSchema, `CMS media upload failed with ${res.status}`)
   return normalizeCmsMediaAsset(payload.asset)
 }
 
@@ -172,21 +159,16 @@ export async function updateCmsMediaAsset(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  await assertOk(res, `CMS media update failed with ${res.status}`)
-  const payload = await parseJsonResponse(res, CmsMediaAssetEnvelopeSchema)
+  const payload = await readEnvelope(res, CmsMediaAssetEnvelopeSchema, `CMS media update failed with ${res.status}`)
   return normalizeCmsMediaAsset(payload.asset)
 }
 
 export async function renameCmsMediaAsset(
   assetId: string,
   filename: string,
-  options: ClientBase | FetchLike = {},
-  legacyBasePath = '/admin/api/cms',
+  options: ClientBase = {},
 ): Promise<CmsMediaAsset> {
-  const opts: ClientBase = typeof options === 'function'
-    ? { fetchImpl: options, basePath: legacyBasePath }
-    : options
-  return updateCmsMediaAsset(assetId, { filename }, opts)
+  return updateCmsMediaAsset(assetId, { filename }, options)
 }
 
 /**
@@ -196,13 +178,9 @@ export async function renameCmsMediaAsset(
  */
 export async function deleteCmsMediaAsset(
   assetId: string,
-  options: ClientBase | FetchLike = {},
-  legacyBasePath = '/admin/api/cms',
+  options: ClientBase = {},
 ): Promise<void> {
-  const opts: ClientBase = typeof options === 'function'
-    ? { fetchImpl: options, basePath: legacyBasePath }
-    : options
-  const { fetchImpl, basePath } = resolveClient(opts)
+  const { fetchImpl, basePath } = resolveClient(options)
   const res = await fetchImpl(`${basePath}/media/${encodeURIComponent(assetId)}`, {
     method: 'DELETE',
     credentials: 'include',
@@ -219,8 +197,7 @@ export async function restoreCmsMediaAsset(
     method: 'POST',
     credentials: 'include',
   })
-  await assertOk(res, `CMS media restore failed with ${res.status}`)
-  const payload = await parseJsonResponse(res, CmsMediaAssetEnvelopeSchema)
+  const payload = await readEnvelope(res, CmsMediaAssetEnvelopeSchema, `CMS media restore failed with ${res.status}`)
   return normalizeCmsMediaAsset(payload.asset)
 }
 
@@ -242,8 +219,7 @@ export async function replaceCmsMediaAssetFile(
     credentials: 'include',
     body,
   })
-  await assertOk(res, `CMS media replace failed with ${res.status}`)
-  const payload = await parseJsonResponse(res, CmsMediaAssetEnvelopeSchema)
+  const payload = await readEnvelope(res, CmsMediaAssetEnvelopeSchema, `CMS media replace failed with ${res.status}`)
   return normalizeCmsMediaAsset(payload.asset)
 }
 
@@ -276,8 +252,7 @@ export async function setCmsMediaAssetFolders(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  await assertOk(res, `CMS media folder assignment failed with ${res.status}`)
-  const payload = await parseJsonResponse(res, CmsMediaAssetEnvelopeSchema)
+  const payload = await readEnvelope(res, CmsMediaAssetEnvelopeSchema, `CMS media folder assignment failed with ${res.status}`)
   return normalizeCmsMediaAsset(payload.asset)
 }
 
@@ -291,8 +266,7 @@ export async function listCmsMediaFolders(options: ClientBase = {}): Promise<Cms
     method: 'GET',
     credentials: 'include',
   })
-  await assertOk(res, `CMS folder listing failed with ${res.status}`)
-  const payload = await parseJsonResponse(res, CmsMediaFolderListResponseSchema)
+  const payload = await readEnvelope(res, CmsMediaFolderListResponseSchema, `CMS folder listing failed with ${res.status}`)
   return payload.folders
 }
 
@@ -307,8 +281,7 @@ export async function createCmsMediaFolder(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  await assertOk(res, `CMS folder create failed with ${res.status}`)
-  const payload = await parseJsonResponse(res, CmsMediaFolderEnvelopeSchema)
+  const payload = await readEnvelope(res, CmsMediaFolderEnvelopeSchema, `CMS folder create failed with ${res.status}`)
   return payload.folder
 }
 
@@ -324,8 +297,7 @@ export async function updateCmsMediaFolder(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  await assertOk(res, `CMS folder update failed with ${res.status}`)
-  const payload = await parseJsonResponse(res, CmsMediaFolderEnvelopeSchema)
+  const payload = await readEnvelope(res, CmsMediaFolderEnvelopeSchema, `CMS folder update failed with ${res.status}`)
   return payload.folder
 }
 

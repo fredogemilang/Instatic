@@ -15,9 +15,8 @@
  *   metadata-only edit — no server call.
  */
 
-import { parseJsonResponse } from '@core/utils/jsonValidate'
 import type { FontEntry } from '@core/fonts'
-import { responseErrorMessage } from '@core/http'
+import { readEnvelope, assertOk } from '@core/http'
 import {
   type CmsFontEstimateDto,
   CmsFontEntryEnvelopeSchema,
@@ -38,10 +37,11 @@ export async function listCmsGoogleFonts(
     method: 'GET',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `Google fonts list failed with ${res.status}`))
-  }
-  const payload = await parseJsonResponse(res, CmsGoogleFontsEnvelopeSchema)
+  const payload = await readEnvelope(
+    res,
+    CmsGoogleFontsEnvelopeSchema,
+    `Google fonts list failed with ${res.status}`,
+  )
   return payload.families
 }
 
@@ -70,10 +70,7 @@ export async function estimateCmsGoogleFont(
     body: JSON.stringify(request),
     signal: init?.signal,
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `Font estimate failed with ${res.status}`))
-  }
-  return parseJsonResponse(res, CmsFontEstimateEnvelopeSchema)
+  return readEnvelope(res, CmsFontEstimateEnvelopeSchema, `Font estimate failed with ${res.status}`)
 }
 
 export async function installCmsGoogleFont(
@@ -87,15 +84,14 @@ export async function installCmsGoogleFont(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(request),
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `Font install failed with ${res.status}`))
-  }
-  const payload = await parseJsonResponse(res, CmsFontEntryEnvelopeSchema)
-  // Server-side `installGoogleFont` returns a fully-shaped FontEntry; the
-  // envelope schema treats the inner shape as `unknown` to avoid duplicating
-  // FontEntry's structure here. validateSite() will catch any drift the next
-  // time the site is saved.
-  return payload.font as FontEntry
+  // The envelope validates the inner shape against the canonical
+  // `FontEntrySchema`, so `payload.font` is already a fully-typed FontEntry.
+  const payload = await readEnvelope(
+    res,
+    CmsFontEntryEnvelopeSchema,
+    `Font install failed with ${res.status}`,
+  )
+  return payload.font
 }
 
 export interface RegisterCustomFontRequest {
@@ -120,11 +116,12 @@ export async function registerCustomFont(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(request),
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `Custom font registration failed with ${res.status}`))
-  }
-  const payload = await parseJsonResponse(res, CmsFontEntryEnvelopeSchema)
-  return payload.font as FontEntry
+  const payload = await readEnvelope(
+    res,
+    CmsFontEntryEnvelopeSchema,
+    `Custom font registration failed with ${res.status}`,
+  )
+  return payload.font
 }
 
 export async function deleteCmsFontFamily(
@@ -136,7 +133,5 @@ export async function deleteCmsFontFamily(
     method: 'DELETE',
     credentials: 'include',
   })
-  if (!res.ok) {
-    throw new Error(await responseErrorMessage(res, `Font delete failed with ${res.status}`))
-  }
+  await assertOk(res, `Font delete failed with ${res.status}`)
 }

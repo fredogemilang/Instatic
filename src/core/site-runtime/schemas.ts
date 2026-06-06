@@ -33,7 +33,7 @@ export type LockedSiteDependency = Static<typeof LockedSiteDependencySchema>
 // SiteDependencyLock
 // ---------------------------------------------------------------------------
 
-const SiteDependencyLockSchema = Type.Object({
+export const SiteDependencyLockSchema = Type.Object({
   /** Literal 1 — schema version, not a counter */
   version: Type.Literal(1),
   packages: Type.Record(Type.String(), LockedSiteDependencySchema),
@@ -129,7 +129,7 @@ export type SiteStyleRuntimeConfig = Static<typeof SiteStyleRuntimeConfigSchema>
  * use identical URLs. URLs point at the host's
  * `/_instatic/runtime/cache/<lockHash>/<name>/<entry>` route.
  */
-const RuntimePackageImportmapSchema = Type.Object({
+export const RuntimePackageImportmapSchema = Type.Object({
   /** `name` → entry-file URL, plus `name/` → package-root URL prefix. */
   imports: Type.Record(Type.String(), Type.String()),
   /** Cache hash this importmap was computed against. */
@@ -183,7 +183,7 @@ const SiteRuntimeDiagnosticSeveritySchema = Type.Union([
 // SiteRuntimeDiagnostic
 // ---------------------------------------------------------------------------
 
-const SiteRuntimeDiagnosticSchema = Type.Object({
+export const SiteRuntimeDiagnosticSchema = Type.Object({
   code: Type.String(),
   severity: SiteRuntimeDiagnosticSeveritySchema,
   message: Type.String(),
@@ -263,7 +263,7 @@ export type PublishedRuntimeScriptAsset = Static<typeof PublishedRuntimeScriptAs
 // PublishedPageRuntimeAssets
 // ---------------------------------------------------------------------------
 
-const PublishedPageRuntimeAssetsSchema = Type.Object({
+export const PublishedPageRuntimeAssetsSchema = Type.Object({
   scripts: Type.Array(PublishedRuntimeScriptAssetSchema),
 })
 

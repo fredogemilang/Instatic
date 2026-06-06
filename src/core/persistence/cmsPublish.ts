@@ -1,5 +1,4 @@
-import { parseJsonResponse } from '@core/utils/jsonValidate'
-import { assertOk } from '@core/http'
+import { readEnvelope } from '@core/http'
 import {
   CmsPublishResultSchema,
   CmsPublishStatusSchema,
@@ -17,8 +16,7 @@ export async function publishCmsDraft(
     method: 'POST',
     credentials: 'include',
   })
-  await assertOk(res, `CMS publish failed with ${res.status}`)
-  return await parseJsonResponse(res, CmsPublishResultSchema)
+  return readEnvelope(res, CmsPublishResultSchema, `CMS publish failed with ${res.status}`)
 }
 
 export async function getCmsPublishStatus(
@@ -29,6 +27,5 @@ export async function getCmsPublishStatus(
     method: 'GET',
     credentials: 'include',
   })
-  await assertOk(res, `CMS publish status failed with ${res.status}`)
-  return await parseJsonResponse(res, CmsPublishStatusSchema)
+  return readEnvelope(res, CmsPublishStatusSchema, `CMS publish status failed with ${res.status}`)
 }

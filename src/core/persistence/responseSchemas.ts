@@ -10,19 +10,33 @@
  * Strategy:
  *   - Shallow domain types (CmsMediaAsset, CmsPublishStatus, …) are
  *     validated fully — the schemas double as the source of truth.
- *   - Deep domain types (SiteDocument, SiteDependencyLock,
- *     PublishedPageRuntimeAssets, …) live in separate modules with
- *     hundreds of fields. Validating their full structure is a separate
- *     audit-types pass; for now we validate the *envelope* (the
- *     wrapping object key) and pass the inner value through as unknown.
- *     This still catches the "server returned an array / null / wrong
- *     envelope key" class of bug — the most common runtime failure.
+ *   - Deep domain types that already own a canonical TypeBox schema in
+ *     their module (FontEntry → @core/fonts; SiteDependencyLock,
+ *     PublishedPageRuntimeAssets, SiteRuntimeDiagnostic,
+ *     RuntimePackageImportmap → @core/site-runtime) are validated in full
+ *     by referencing that schema directly. No `as DeepType` cast at the
+ *     call site — the envelope guarantees the shape.
+ *   - The few remaining deep types whose canonical definition is still a
+ *     hand-authored interface (InstalledPlugin / PluginManifest in
+ *     @core/plugin-sdk; the media-storage summary types) keep the
+ *     envelope-only `Type.Unknown()` strategy and cast at the call site.
+ *     Those sites are allowlisted in boundary-validation.test.ts (RULE 5)
+ *     with a justification and are tracked as follow-up — converting their
+ *     interfaces to schema-derived types is a plugin-SDK / media-storage
+ *     refactor out of scope for this persistence-boundary pass.
  *
  * Surfaced by /audit-types — see #1 in /health-check report.
  */
 
 import { Type, type Static } from '@sinclair/typebox'
 import { DataRowSchema } from '@core/data/schemas'
+import { FontEntrySchema } from '@core/fonts'
+import {
+  PublishedPageRuntimeAssetsSchema,
+  RuntimePackageImportmapSchema,
+  SiteDependencyLockSchema,
+  SiteRuntimeDiagnosticSchema,
+} from '@core/site-runtime'
 export { BundlePreviewSchema, ImportResultSchema } from '@core/data/bundleSchema'
 export type { BundlePreview, ImportResult } from '@core/data/bundleSchema'
 
@@ -172,26 +186,43 @@ export const CmsPublishStatusSchema = Type.Object({
 export type CmsPublishStatus = Static<typeof CmsPublishStatusSchema>
 
 // ---------------------------------------------------------------------------
-// cmsRuntime.ts — envelopes only; inner types are deep
+// cmsRuntime.ts — fully validated against the @core/site-runtime schemas
+// (the schemas are the source of truth; the editor-facing types are derived
+// from them via Static<>, so the envelope catches server type-drift here
+// instead of as undefined-in-UI deep in callers).
 // ---------------------------------------------------------------------------
 
 export const CmsRuntimeDependencyEnvelopeSchema = Type.Object({
-  dependencyLock: Type.Unknown(),
+  dependencyLock: SiteDependencyLockSchema,
   /**
    * Precomputed importmap built by the server from the freshly installed
    * dependency cache. Optional because the server may skip the install
    * step (e.g. lock resolution succeeded but install failed); the editor
    * keeps the lock either way and falls back to deferring iframe renders.
    */
-  packageImportmap: Type.Optional(Type.Unknown()),
+  packageImportmap: Type.Optional(RuntimePackageImportmapSchema),
 })
+
+/**
+ * One emitted asset (compiled script / stylesheet) in a runtime preview
+ * build. Schema is the source of truth; `CmsRuntimePreviewAsset` in
+ * `cmsRuntime.ts` is derived from it via Static<>.
+ */
+export const CmsRuntimePreviewAssetSchema = Type.Object({
+  path: Type.String(),
+  publicPath: Type.String(),
+  content: Type.String(),
+  contentType: Type.String(),
+})
+
+export type CmsRuntimePreviewAsset = Static<typeof CmsRuntimePreviewAssetSchema>
 
 export const CmsRuntimePreviewResponseSchema = Type.Object(
   {
     html: Type.String(),
-    assets: Type.Array(Type.Unknown()),
-    runtimeAssets: Type.Unknown(),
-    diagnostics: Type.Array(Type.Unknown()),
+    assets: Type.Array(CmsRuntimePreviewAssetSchema),
+    runtimeAssets: PublishedPageRuntimeAssetsSchema,
+    diagnostics: Type.Array(SiteRuntimeDiagnosticSchema),
   },
   { additionalProperties: true },
 )
@@ -243,13 +274,13 @@ export const CmsGoogleFontsEnvelopeSchema = Type.Object({
   families: Type.Array(GoogleFontFamilySchema),
 })
 
-// FontEntry mirrors @core/fonts/schemas FontEntry. We schema the envelope
-// shallowly here — full structural validation runs server-side via
-// validateSite when the next save happens, so the install response is
-// consumed as `unknown` and immediately committed via the addFont action
-// which only reads stable top-level fields.
+// The install/register responses return a fully-shaped FontEntry. We validate
+// it against the canonical `FontEntrySchema` from @core/fonts (the source of
+// truth that `site.settings.fonts` is also validated against) so server
+// type-drift surfaces as a clear envelope error at the boundary instead of as
+// an undefined field after the addFont action commits it.
 export const CmsFontEntryEnvelopeSchema = Type.Object({
-  font: Type.Unknown(),
+  font: FontEntrySchema,
 })
 
 /**

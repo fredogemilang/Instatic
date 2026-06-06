@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { ApiError } from '@core/http'
 import { buildCmsRuntimePreview, resolveCmsRuntimeDependencies } from '@core/persistence/cmsRuntime'
 
 describe('CMS runtime client', () => {
@@ -44,6 +45,60 @@ describe('CMS runtime client', () => {
     )
     expect(result.dependencyLock).toEqual(dependencyLock)
     expect(result.packageImportmap).toBeUndefined()
+  })
+
+  // F4: dependencyLock is now validated against SiteDependencyLockSchema rather
+  // than cast `as SiteDependencyLock`. A type-drifted lock must be rejected at
+  // readEnvelope, not silently cast into a broken value.
+  it('rejects a dependency lock whose shape fails the schema', async () => {
+    await expect(
+      resolveCmsRuntimeDependencies(
+        { dependencies: {}, devDependencies: {} },
+        // `version` must be the literal 1; a server returning 2 is type-drift.
+        async () =>
+          new Response(
+            JSON.stringify({ dependencyLock: { version: 2, packages: {}, updatedAt: 0 } }),
+            { status: 200 },
+          ),
+      ),
+    ).rejects.toThrow()
+  })
+
+  it('throws ApiError with .status when the resolve endpoint rejects', async () => {
+    let caught: unknown
+    try {
+      await resolveCmsRuntimeDependencies(
+        { dependencies: {}, devDependencies: {} },
+        async () => new Response(JSON.stringify({ error: 'install_failed' }), { status: 500 }),
+      )
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(500)
+    expect((caught as ApiError).message).toBe('install_failed')
+  })
+
+  // F4: runtimeAssets + diagnostics are now validated against the
+  // @core/site-runtime schemas instead of cast. A malformed runtimeAssets is
+  // rejected at the boundary.
+  it('rejects a runtime preview whose runtimeAssets shape fails the schema', async () => {
+    await expect(
+      buildCmsRuntimePreview(
+        { site: { id: 's' }, pageId: 'p' },
+        async () =>
+          new Response(
+            JSON.stringify({
+              html: '<x>',
+              assets: [],
+              // scripts must be an array of script-asset objects, not a string.
+              runtimeAssets: { scripts: 'nope' },
+              diagnostics: [],
+            }),
+            { status: 200 },
+          ),
+      ),
+    ).rejects.toThrow()
   })
 
   it('posts site preview requests to the runtime preview endpoint', async () => {

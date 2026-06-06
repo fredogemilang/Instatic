@@ -13,6 +13,12 @@ export type {
   SiteStyleRuntimeConfig,
 } from './schemas'
 export {
+  PublishedPageRuntimeAssetsSchema,
+  RuntimePackageImportmapSchema,
+  SiteDependencyLockSchema,
+  SiteRuntimeDiagnosticSchema,
+} from './schemas'
+export {
   DEFAULT_SCRIPT_RUNTIME_CONFIG,
   DEFAULT_STYLE_RUNTIME_CONFIG,
   DEFAULT_SITE_RUNTIME,

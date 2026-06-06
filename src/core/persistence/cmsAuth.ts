@@ -1,4 +1,3 @@
-import { parseJsonResponse } from '@core/utils/jsonValidate'
 import {
   CmsPublicSiteSchema,
   CmsSetupStatusSchema,
@@ -117,8 +116,7 @@ export async function getCmsSetupStatus(
     method: 'GET',
     credentials: 'include',
   })
-  await assertOk(res, `CMS setup status failed with ${res.status}`)
-  return await parseJsonResponse(res, CmsSetupStatusSchema)
+  return readEnvelope(res, CmsSetupStatusSchema, `CMS setup status failed with ${res.status}`)
 }
 
 /**
@@ -135,8 +133,7 @@ export async function getCmsPublicSite(
     method: 'GET',
     credentials: 'include',
   })
-  await assertOk(res, `CMS public site identity failed with ${res.status}`)
-  return await parseJsonResponse(res, CmsPublicSiteSchema)
+  return readEnvelope(res, CmsPublicSiteSchema, `CMS public site identity failed with ${res.status}`)
 }
 
 export async function setupCms(
@@ -164,8 +161,7 @@ export async function loginCms(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  await assertOk(res, `CMS login failed with ${res.status}`)
-  const body = await parseJsonResponse(res, CmsLoginResponseSchema)
+  const body = await readEnvelope(res, CmsLoginResponseSchema, `CMS login failed with ${res.status}`)
   return { mfaRequired: body.mfaRequired === true }
 }
 

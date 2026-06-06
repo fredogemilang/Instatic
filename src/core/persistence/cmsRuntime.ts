@@ -6,21 +6,16 @@ import type {
 } from '@core/site-runtime'
 import type { SitePackageJson } from '@core/site-dependencies/manifest'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
-import { parseJsonResponse } from '@core/utils/jsonValidate'
-import { assertOk } from '@core/http'
+import { readEnvelope } from '@core/http'
 import {
   CmsRuntimeDependencyEnvelopeSchema,
   CmsRuntimePreviewResponseSchema,
+  type CmsRuntimePreviewAsset,
 } from './responseSchemas'
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
-export interface CmsRuntimePreviewAsset {
-  path: string
-  publicPath: string
-  content: string
-  contentType: string
-}
+export type { CmsRuntimePreviewAsset }
 
 export interface CmsRuntimePreviewResult {
   html: string
@@ -59,16 +54,17 @@ export async function resolveCmsRuntimeDependencies(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ packageJson }),
   })
-  await assertOk(res, `Runtime dependency resolution failed with ${res.status}`)
-  // Envelope validated; SiteDependencyLock + RuntimePackageImportmap are
-  // both deep shapes — pass through as unknown, then the casts below
-  // restore the typed surface for callers.
-  const body = await parseJsonResponse(res, CmsRuntimeDependencyEnvelopeSchema)
+  // The envelope schema validates SiteDependencyLock + RuntimePackageImportmap
+  // in full (both own canonical schemas in @core/site-runtime), so the parsed
+  // body is already correctly typed — no cast needed.
+  const body = await readEnvelope(
+    res,
+    CmsRuntimeDependencyEnvelopeSchema,
+    `Runtime dependency resolution failed with ${res.status}`,
+  )
   return {
-    dependencyLock: body.dependencyLock as SiteDependencyLock,
-    ...(body.packageImportmap
-      ? { packageImportmap: body.packageImportmap as RuntimePackageImportmap }
-      : {}),
+    dependencyLock: body.dependencyLock,
+    ...(body.packageImportmap ? { packageImportmap: body.packageImportmap } : {}),
   }
 }
 
@@ -83,15 +79,18 @@ export async function buildCmsRuntimePreview(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
-  await assertOk(res, `Runtime preview build failed with ${res.status}`)
-  // Envelope validated; deep nested types (PublishedPageRuntimeAssets,
-  // SiteRuntimeDiagnostic) pass through as unknown — see responseSchemas.ts
-  // for the strategy. Callers continue to see the original interface.
-  const body = await parseJsonResponse(res, CmsRuntimePreviewResponseSchema)
+  // The envelope schema validates the assets, runtimeAssets, and diagnostics
+  // shapes in full against the canonical @core/site-runtime schemas, so the
+  // parsed body matches CmsRuntimePreviewResult directly — no cast needed.
+  const body = await readEnvelope(
+    res,
+    CmsRuntimePreviewResponseSchema,
+    `Runtime preview build failed with ${res.status}`,
+  )
   return {
     html: body.html,
-    assets: body.assets as CmsRuntimePreviewResult['assets'],
-    runtimeAssets: body.runtimeAssets as PublishedPageRuntimeAssets,
-    diagnostics: body.diagnostics as SiteRuntimeDiagnostic[],
+    assets: body.assets,
+    runtimeAssets: body.runtimeAssets,
+    diagnostics: body.diagnostics,
   }
 }

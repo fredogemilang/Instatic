@@ -36,6 +36,20 @@
  * │  must be parsed through the single shared helper `readValidatedBody`    │
  * │  in server/http.ts, which does the try/catch and TypeBox validation     │
  * │  in one place. Only server/http.ts itself is allowed to call req.json() │
+ * ├──────────────────────────────────────────────────────────────────────────┤
+ * │  RULE 5  Deep-cast of a validated envelope field                        │
+ * │  After `const body = await readEnvelope(...)` (or parseJsonResponse),   │
+ * │  casting one of its fields to a deep type — `body.x as DeepType` — is    │
+ * │  banned in src/core/persistence/. The cast gives false TypeScript        │
+ * │  confidence: the envelope schema only validated `x` as Type.Unknown(),  │
+ * │  so server type-drift surfaces at runtime as undefined-in-UI, invisible  │
+ * │  to RULE 1 (which only catches `res.json() as`). Fix by referencing the  │
+ * │  field's real TypeBox schema in the envelope so the parsed value is      │
+ * │  already typed (most deep types own a schema: FontEntrySchema in         │
+ * │  @core/fonts; SiteDependencyLock/PublishedPageRuntimeAssets/             │
+ * │  SiteRuntimeDiagnostic/RuntimePackageImportmap in @core/site-runtime;    │
+ * │  PluginRecordSchema in @core/plugin-sdk). Genuinely-unavoidable cases    │
+ * │  (interface-only deep types) are allowlisted with a §5.x justification.  │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * @see src/core/http/apiClient.ts — apiRequest, readEnvelope, responseErrorMessage
@@ -150,6 +164,35 @@ const ALLOWLIST_REQ_JSON = new Set<string>([
   join(PROJECT_ROOT, 'server/http.ts'),
 ])
 
+/**
+ * Files exempt from RULE 5 (deep-cast of a validated envelope field). Each
+ * §5.x entry documents the deep types involved and why a real schema is not
+ * yet wired up. These are tracked follow-ups, NOT permanent exemptions — the
+ * goal is to convert the underlying interfaces to schema-derived types so the
+ * envelope can validate them directly, at which point the entry is removed.
+ */
+const ALLOWLIST_ENVELOPE_FIELD_CAST = new Set<string>([
+  // §5.1  cmsPlugins.ts — body.plugin as InstalledPlugin (×4), body.manifest as
+  //   PluginManifest, body.schema/settings as PluginSettings*. InstalledPlugin
+  //   and PluginManifest are large hand-authored interfaces in @core/plugin-sdk
+  //   (PluginManifest embeds entrypoints, resources, adminPages, settings,
+  //   frontend, packs; InstalledPlugin embeds the full manifest plus host
+  //   bookkeeping). A canonical `manifestSchema` exists in the manifest parser
+  //   but is intentionally not 1:1 with the interface (it applies post-parse
+  //   defaults). Converting these interfaces to schema-derived source-of-truth
+  //   types is a plugin-SDK refactor out of scope for the persistence-boundary
+  //   hardening pass; tracked as follow-up.
+  join(PROJECT_ROOT, 'src/core/persistence/cmsPlugins.ts'),
+
+  // §5.2  cmsMediaStorage.ts — body.election as CmsMediaElection, body.result as
+  //   MediaStorageVerifyResult (plus several `(body.x ?? []) as ReadonlyArray<…>`).
+  //   The media-storage summary types (CmsMediaElection, MediaStorageVerifyResult,
+  //   CmsMediaAdapterSummary, CmsMediaElectedVariantDelegate, …) are interface-only
+  //   in @core/plugin-sdk/types/media.ts with no TypeBox schemas. Authoring them is
+  //   a separate media-storage domain pass; tracked as follow-up.
+  join(PROJECT_ROOT, 'src/core/persistence/cmsMediaStorage.ts'),
+])
+
 // ---------------------------------------------------------------------------
 // Violation record
 // ---------------------------------------------------------------------------
@@ -205,6 +248,77 @@ function scan(
           line: i + 1,
           rule: ruleName,
           match: m[0],
+        })
+      }
+    }
+  }
+
+  return violations
+}
+
+// ---------------------------------------------------------------------------
+// Envelope-field-cast scanner (RULE 5)
+//
+// Two-pass per file:
+//   1. Collect the names of variables assigned from readEnvelope /
+//      parseJsonResponse (the validated-envelope vars), e.g. `const body = …`,
+//      `const payload = …`, `const body: VerifyBody = …`.
+//   2. Flag any line that casts a FIELD of one of those vars to a PascalCase
+//      type: `<var>.<field> as <DeepType>`.
+//
+// This is precise on purpose: it does NOT flag whole-object assertions
+// (`body as Foo`) or internal casts on unrelated locals (`p.nodes as Record`),
+// only the "validated the envelope shallowly, then lied about a field's deep
+// type" pattern that RULE 1 cannot see.
+// ---------------------------------------------------------------------------
+
+const ENVELOPE_ASSIGN_RE =
+  /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[^=]+)?=\s*await\s+(?:readEnvelope|parseJsonResponse)\b/
+
+/** True if `line` casts a field of one of `vars` to a PascalCase type. */
+function envelopeFieldCast(line: string, vars: Set<string>): string | null {
+  for (const v of vars) {
+    const re = new RegExp(`\\b${v}\\.[A-Za-z0-9_]+\\s+as\\s+[A-Z][A-Za-z0-9_]+`)
+    const m = re.exec(line)
+    if (m !== null) return m[0]
+  }
+  return null
+}
+
+function scanEnvelopeFieldCasts(root: string, allowlist: Set<string>): Violation[] {
+  const files = walk(root).filter((f) => !allowlist.has(f))
+  const violations: Violation[] = []
+
+  for (const file of files) {
+    if (file.includes('__tests__') || file.endsWith('.test.ts') || file.endsWith('.test.tsx')) {
+      continue
+    }
+    let content: string
+    try {
+      content = readFileSync(file, 'utf8')
+    } catch {
+      continue
+    }
+
+    const lines = stripComments(content).split('\n')
+
+    // Pass 1 — collect envelope var names.
+    const vars = new Set<string>()
+    for (const line of lines) {
+      const m = ENVELOPE_ASSIGN_RE.exec(line)
+      if (m !== null) vars.add(m[1])
+    }
+    if (vars.size === 0) continue
+
+    // Pass 2 — flag field casts on those vars.
+    for (let i = 0; i < lines.length; i++) {
+      const match = envelopeFieldCast(lines[i], vars)
+      if (match !== null) {
+        violations.push({
+          file: relative(PROJECT_ROOT, file),
+          line: i + 1,
+          rule: 'envelope field cast — validate the field via its TypeBox schema, do not cast',
+          match,
         })
       }
     }
@@ -385,5 +499,62 @@ describe('Boundary validation — HTTP and JSON parse boundaries must use TypeBo
       `Allowlisted files:\n` +
         [...ALLOWLIST_REQ_JSON].map((f) => `  ${relative(PROJECT_ROOT, f)}`).join('\n'),
     )
+  })
+
+  // ── Rule 5: no `<envelopeVar>.<field> as DeepType` in persistence ────────
+
+  test('RULE 5 — no deep-cast of a validated envelope field in src/core/persistence/', () => {
+    // After readEnvelope/parseJsonResponse, a field cast (`body.x as DeepType`)
+    // bypasses validation for that field — the envelope only checked it as
+    // Type.Unknown(). Reference the field's real TypeBox schema in the envelope
+    // instead, so the parsed value is already correctly typed.
+    const violations = scanEnvelopeFieldCasts(PERSISTENCE_ROOT, ALLOWLIST_ENVELOPE_FIELD_CAST)
+
+    if (violations.length === 0) {
+      expect(violations).toHaveLength(0)
+      return
+    }
+    throw formatViolations(
+      violations,
+      `${violations.length} envelope-field deep-cast(s) found in src/core/persistence/.`,
+      'Reference the field’s canonical TypeBox schema in the envelope (e.g. FontEntrySchema,\n' +
+        'SiteDependencyLockSchema, PluginRecordSchema) so readEnvelope returns the typed value —\n' +
+        'then delete the `as DeepType` cast. Allowlist interface-only deep types with a §5.x note.',
+      `Allowlisted files (interface-only deep types, tracked follow-ups):\n` +
+        [...ALLOWLIST_ENVELOPE_FIELD_CAST].map((f) => `  ${relative(PROJECT_ROOT, f)}`).join('\n'),
+    )
+  })
+
+  // ── Rule 5 meta-test: prove the scanner actually catches the class ───────
+
+  test('RULE 5 detector matches the `body.x as DeepType` pattern it is meant to gate', () => {
+    // Guards against the gate silently rotting into a no-op (e.g. a regex typo
+    // that matches nothing). We feed the detector a synthetic envelope var and
+    // assert it flags the old pattern and ignores the validated-without-cast
+    // and whole-object-assertion shapes.
+    const vars = new Set(['body', 'payload'])
+
+    // Positive: the exact pattern the old code used (and the gate forbids).
+    expect(envelopeFieldCast('  return body.font as FontEntry', vars)).not.toBeNull()
+    expect(
+      envelopeFieldCast('    plugin: body.plugin as InstalledPlugin | undefined,', vars),
+    ).not.toBeNull()
+    expect(envelopeFieldCast('  return payload.font as FontEntry', vars)).not.toBeNull()
+
+    // Negative: the fixed shape — a validated field returned with no cast.
+    expect(envelopeFieldCast('  return payload.font', vars)).toBeNull()
+    expect(envelopeFieldCast('    dependencyLock: body.dependencyLock,', vars)).toBeNull()
+
+    // Negative: a whole-object assertion (`body as Foo`) is a different, lower
+    // concern and not part of this rule.
+    expect(envelopeFieldCast('  const cast = body as PluginRecordsPayload', vars)).toBeNull()
+
+    // Negative: a cast on an unrelated local (not an envelope var).
+    expect(envelopeFieldCast('  p.nodes as Record<string, BaseNode>', vars)).toBeNull()
+
+    // The envelope-assignment detector recognises both typed and untyped forms.
+    expect(ENVELOPE_ASSIGN_RE.test('  const body = await readEnvelope(res, S, msg)')).toBe(true)
+    expect(ENVELOPE_ASSIGN_RE.test('  const body: VerifyBody = await readEnvelope(')).toBe(true)
+    expect(ENVELOPE_ASSIGN_RE.test('  const x = await parseJsonResponse(res, S)')).toBe(true)
   })
 })
