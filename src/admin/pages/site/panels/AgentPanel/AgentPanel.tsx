@@ -87,12 +87,25 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
   const credentialsLoaded = credentialsResource.data !== null || !credentialsResource.loading
   const noCredentials = credentialsLoaded && credentials.length === 0
   const noProviderError = agentError?.startsWith('No AI provider configured') ?? false
-  // Once a credential + model is active (preloaded scope default OR an explicit
-  // pick), a provider IS configured — so the setup state must not show even if
-  // a stale no-provider error string is still hanging around. This is what
-  // keeps the composer usable after the user picks a model post-error.
+  // The composer can't run a turn without an active (credential, model) — one
+  // is either preloaded from the scope default or picked in the model picker.
+  // Locking off `hasActiveProvider` (not a sticky error string) is what keeps
+  // the composer usable the instant the user picks a model.
   const hasActiveProvider = Boolean(activeCredentialId && activeModelId)
-  const showCredentialSetup = (noCredentials || noProviderError) && !hasActiveProvider
+  const composerLocked = !hasActiveProvider
+  // Why the composer is locked, used for the empty-state + placeholder copy:
+  //   'setup'       → no credentials exist at all → add one in AI settings.
+  //   'chooseModel' → credentials exist but no scope default / pick yet →
+  //                   choose a model below, or set a default in AI settings.
+  // While credentials are still loading we keep messaging neutral (null) so
+  // the panel doesn't flash a setup prompt before the default preload lands.
+  const lockReason: 'setup' | 'chooseModel' | null = !composerLocked
+    ? null
+    : noCredentials
+      ? 'setup'
+      : credentialsLoaded
+        ? 'chooseModel'
+        : null
 
   // Resolve the active model's context window from the catalogue (via the
   // models endpoint) so the composer meter can show "0 / window" before the
@@ -262,15 +275,10 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
         className={styles.thread}
       >
         {messages.length === 0 ? (
-          <AgentEmptyState
-            needsCredentialSetup={showCredentialSetup}
-            message={noProviderError ? agentError : null}
-          />
+          <AgentEmptyState mode={lockReason ?? 'prompt'} />
         ) : (
           <>
-            {showCredentialSetup && (
-              <AgentCredentialAlert message={noProviderError ? agentError ?? undefined : undefined} />
-            )}
+            {lockReason && <AgentCredentialAlert mode={lockReason} />}
             {messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)}
           </>
         )}
@@ -295,13 +303,15 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
           {!isStreaming && (
             <Textarea
               ref={inputRef}
-              placeholder={showCredentialSetup
+              placeholder={lockReason === 'setup'
                 ? 'Add AI credentials to start chatting'
-                : 'Tell me what to build… (Enter to send)'}
+                : lockReason === 'chooseModel'
+                  ? 'Choose a model below to start'
+                  : 'Tell me what to build… (Enter to send)'}
               aria-label="Message to AI assistant"
               rows={2}
               resize="none"
-              disabled={showCredentialSetup}
+              disabled={composerLocked}
               onKeyDown={handleKeyDown}
               onChange={(e) => {
                 // Auto-grow textarea
@@ -337,8 +347,12 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
                 variant="primary"
                 size="sm"
                 iconOnly
-                disabled={showCredentialSetup}
-                tooltip={showCredentialSetup ? 'Add AI credentials first' : 'Send'}
+                disabled={composerLocked}
+                tooltip={lockReason === 'setup'
+                  ? 'Add AI credentials first'
+                  : lockReason === 'chooseModel'
+                    ? 'Choose a model first'
+                    : 'Send'}
                 aria-label="Send"
               >
                 <SendSolidIcon size={14} />
@@ -520,14 +534,10 @@ function formatActionLabel(actionType: string, params: unknown): string {
 // Empty state
 // ---------------------------------------------------------------------------
 
-function AgentEmptyState({
-  needsCredentialSetup,
-  message,
-}: {
-  needsCredentialSetup: boolean
-  message: string | null
-}) {
-  if (needsCredentialSetup) {
+type ComposerLockReason = 'setup' | 'chooseModel'
+
+function AgentEmptyState({ mode }: { mode: ComposerLockReason | 'prompt' }) {
+  if (mode === 'setup') {
     return (
       <EmptyState
         variant="centered"
@@ -535,8 +545,22 @@ function AgentEmptyState({
         role="alert"
         icon={<AiSettingsSolidIcon size={34} />}
         title="Connect an AI provider"
-        description={message ?? 'Add a provider credential, then choose the site default model before starting a chat.'}
+        description="Add a provider credential, then choose a default model before starting a chat."
         action={<AgentSettingsButton variant="emptyState" label="Open AI settings" />}
+      />
+    )
+  }
+
+  if (mode === 'chooseModel') {
+    return (
+      <EmptyState
+        variant="centered"
+        size="large"
+        role="alert"
+        icon={<AiSettingsSolidIcon size={34} />}
+        title="Choose a model to get started"
+        description="Pick a model below, or set a default in AI settings so it's ready every time you open this chat."
+        action={<AgentSettingsButton variant="emptyState" label="Set a default in AI settings" />}
       />
     )
   }
@@ -552,13 +576,18 @@ function AgentEmptyState({
   )
 }
 
-function AgentCredentialAlert({ message }: { message?: string }) {
+function AgentCredentialAlert({ mode }: { mode: ComposerLockReason }) {
   return (
     <div role="alert" className={styles.credentialAlert}>
       <p className={styles.credentialAlertText}>
-        {message ?? 'No AI provider credentials are configured yet.'}
+        {mode === 'setup'
+          ? 'No AI provider credentials are configured yet.'
+          : 'Choose a model below, or set a default in AI settings.'}
       </p>
-      <AgentSettingsButton variant="inline" label="Open AI settings" />
+      <AgentSettingsButton
+        variant="inline"
+        label={mode === 'setup' ? 'Open AI settings' : 'Set a default'}
+      />
     </div>
   )
 }

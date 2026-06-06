@@ -95,7 +95,7 @@ describe('AgentPanel', () => {
     expect(screen.queryByRole('button', { name: 'Model' })).toBeNull()
   })
 
-  it('keeps the prompt empty state when credentials are available', async () => {
+  it('shows the build prompt when a provider is active (default preloaded)', async () => {
     globalThis.fetch = mock(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.endsWith('/admin/api/ai/credentials')) {
@@ -112,20 +112,66 @@ describe('AgentPanel', () => {
           }],
         })
       }
+      if (url.includes('/admin/api/ai/providers/')) {
+        return jsonResponse({ models: [] })
+      }
       throw new Error(`Unexpected fetch: ${url}`)
     }) as typeof fetch
 
-    renderAgentPanel()
+    // Active credential + model stands in for a preloaded scope default.
+    renderAgentPanel({ agentActiveCredentialId: 'cred_1', agentActiveModelId: 'gpt-4o' })
 
     await waitFor(() => {
       expect(screen.getByText("Describe what you want to build and I'll do it for you.")).toBeTruthy()
     })
 
     expect(screen.queryByText('Connect an AI provider')).toBeNull()
+    expect(screen.queryByText('Choose a model to get started')).toBeNull()
+    const textarea = screen.getByLabelText('Message to AI assistant') as HTMLTextAreaElement
+    expect(textarea.disabled).toBe(false)
     // Settings and new-chat shortcuts are always available in the header,
     // independent of credential state.
     expect(screen.getByTestId('agent-settings-header-button')).toBeTruthy()
     expect(screen.getByTestId('agent-new-chat-header-button')).toBeTruthy()
+  })
+
+  it('prompts to choose a model when credentials exist but no default is set', async () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/admin/api/ai/credentials')) {
+        return jsonResponse({
+          credentials: [{
+            id: 'cred_1',
+            providerId: 'openai',
+            authMode: 'apiKey',
+            displayLabel: 'OpenAI',
+            baseUrl: null,
+            keyFingerprintCurrent: true,
+            createdAt: '2026-06-01T10:00:00.000Z',
+            lastUsedAt: null,
+          }],
+        })
+      }
+      if (url.includes('/admin/api/ai/providers/')) {
+        return jsonResponse({ models: [] })
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    }) as typeof fetch
+
+    // No active credential/model and no default loaded → must choose a model.
+    renderAgentPanel()
+
+    await waitFor(() => {
+      expect(screen.getByText('Choose a model to get started')).toBeTruthy()
+    })
+
+    expect(screen.queryByText('Connect an AI provider')).toBeNull()
+    // The composer is locked until a model is chosen, so the user can't fall
+    // into the old send-time "no provider" surprise.
+    const textarea = screen.getByLabelText('Message to AI assistant') as HTMLTextAreaElement
+    expect(textarea.disabled).toBe(true)
+    // The empty state links to AI settings to set a default.
+    expect(screen.getByRole('button', { name: 'Set a default in AI settings' })).toBeTruthy()
   })
 
   it('preloads the scope default on open', async () => {
