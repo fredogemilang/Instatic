@@ -196,7 +196,7 @@ The engine's style rule registry (`site.styleRules`) is keyed by a generated **i
    - **auto-creates** a bare (style-less) class for that name.
 3. The node's `classIds` are rewritten to the resolved ids in the same `mutateActiveTreeAndSite` transaction (one undo step).
 
-The result: imported markup renders its `class` attribute, the classes show up in the Selectors panel, and they are immediately styleable — by the user in the editor, or by the AI agent emitting a `<style>` block in the `insertHtml` payload (whose `.foo {}` rules pre-create the named classes **with** styles, so the link in step 2 finds them) or `createClass` after the fact.
+The result: imported markup renders its `class` attribute, the classes show up in the Selectors panel, and they are immediately styleable — by the user in the editor, or by the AI agent emitting a `<style>` block in the `insertHtml` payload (whose `.foo {}` rules pre-create the named classes **with** styles, so the link in step 2 finds them) or `applyCss` after the fact.
 
 > Skipping this linking step is the bug that made HTML-authored styles silently never apply: names on `classIds` never matched the id-keyed registry, so the renderer dropped them. Regression-gated by `src/__tests__/agent/executor.test.ts`.
 
