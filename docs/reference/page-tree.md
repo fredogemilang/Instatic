@@ -124,7 +124,8 @@ All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<P
 | `wrapNode(tree, nodeId, wrapperModuleId)`                         | Wrap a node in a new container                              |
 | `wrapNodes(tree, nodeIds, wrapperModuleId)`                       | Same, multi-select                                          |
 | `pasteSubtree(tree, subtree, parentId, index?)`                   | Insert a previously-copied subtree with new ids             |
-| `removeNodeSubtrees(nodes, rootNodeIds)`                          | Remove the given root nodes and their entire subtrees from a flat node map; splices each root from its parent's `children[]`. Takes `Record<string, BaseNode>` directly (not the full `NodeTree`) — works on both Mutative drafts and plain maps. Used for cascade-deletion of `base.visual-component-ref` nodes in both the editor and the persistence loader. |
+| `deleteSubtree(nodes, rootId, options?)`                          | THE single subtree-deletion primitive. Removes `rootId` and all its descendants from a flat node map. `options.unlinkParent` (default `true`) controls whether the root is also spliced from its parent's `children[]` — slot-sync passes `false` because it overwrites the parent's children array wholesale afterwards. Takes `Record<string, BaseNode>` directly. Works on both Mutative drafts and plain object maps. |
+| `removeNodeSubtrees(nodes, rootNodeIds)`                          | Cascade-delete multiple root nodes and their entire subtrees. Calls `deleteSubtree(..., { unlinkParent: true })` for each root. Used to splice every `base.visual-component-ref` pointing at a deleted VC (plus all its slot-instance children and user content) from page trees and VC definition trees. Takes `Record<string, BaseNode>` directly. |
 
 ### Site-level mutations (operate on a `SiteDocument`)
 
@@ -145,7 +146,8 @@ All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<P
 - `getChildren(tree, nodeId)` — returns all direct children of a node as typed `TNode[]`.
 - `getParent(tree, nodeId)` — returns the parent **node** (`TNode`) or `undefined` for the root. O(1) via the node's `parentId` pointer (see "The `parentId` invariant" above) — no node-map scan.
 - `getAncestors(tree, nodeId)` — ordered `[root, …, parent]` chain. O(depth) by walking `parentId`.
-- `flattenSubtree(tree, nodeId)` — returns all node IDs in depth-first pre-order starting at `nodeId`. Used by virtual-scroll flattening in the DOM tree panel.
+- `collectSubtreeIds(nodes, rootId)` — THE single descendant-collection primitive for the whole engine. Takes a raw `Record<string, BaseNode>` (not the full `NodeTree`) and returns all node IDs reachable from `rootId` in DFS pre-order, with a hard cycle guard. Every deletion and duplication path that needs "this node and everything under it" routes through this function. No caller may re-implement this walk without the cycle guard.
+- `flattenSubtree(tree, nodeId)` — NodeTree-typed wrapper over `collectSubtreeIds`. Returns node IDs in DFS pre-order. Used by virtual-scroll flattening in the DOM tree panel.
 - `isAncestor(tree, ancestorId, descendantId)` — true if `ancestor` is on the path to `descendant`. O(depth) via `parentId`.
 - `resolveProps(node, breakpointId?, schema?)` — merge base props with breakpoint overrides, filtering to `breakpointOverridable: true` keys when `schema` is provided.
 - `evaluateCondition(condition, props)` — evaluate a declarative `PropertyCondition` against a props object. Used by the Properties Panel to show/hide controls.
@@ -287,6 +289,8 @@ const tree = parsePageNodeTree(raw)
 | Adding a parallel `interface NodeTree` type                     | `NodeTreeSchema` and `NodeTree<TNode>` in `treeSchema.ts` are the source of truth |
 | Using a non-flat tree representation (nested `children: PageNode[]`) | Flat map + `children: string[]` — covered by `src/__tests__/persistence/treeSchemaShape.test.ts` |
 | Writing a mutation that takes a `Page` specifically             | Take `NodeTree<TNode>` — pages and VCs both pass            |
+| Rolling a custom DFS walk to collect descendants                 | Use `collectSubtreeIds(nodes, rootId)` — it is THE single walker with a hard cycle guard; hand-rolled walks skip the guard and loop forever on corrupt trees |
+| Calling `deleteSubtree` / `removeNodeSubtrees` without the `parentId` cache being populated | `parentId` is stamped by every mutation and by `reindexNodeParents` on load — it is always populated for any in-system tree; the delete primitives rely on it |
 | Deep-importing a concrete file: `import X from '@core/page-tree/mutations'` | Import through the barrel: `import { X } from '@core/page-tree'` — gated by `no-core-barrel-deep-imports.test.ts` |
 
 ---
@@ -301,14 +305,16 @@ const tree = parsePageNodeTree(raw)
   - `src/core/page-tree/baseNode.ts` — `BaseNodeSchema` + `BaseNode`
   - `src/core/page-tree/pageNode.ts` — `PageNode` (extends `BaseNode`)
   - `src/core/page-tree/page.ts` — `Page` (is `NodeTree<PageNode>` + metadata)
-  - `src/core/page-tree/mutations.ts` — all node + site mutations
-  - `src/core/page-tree/selectors.ts` — `getNode`, `getParent`, `getAncestors`, `isAncestor`, `flattenSubtree`, `resolveProps`, `evaluateCondition`
+  - `src/core/page-tree/mutations.ts` — all node + site mutations; `cloneNodeWithRemap` (THE single deep-clone primitive)
+  - `src/core/page-tree/selectors.ts` — `collectSubtreeIds` (THE single subtree-walker), `getNode`, `getParent`, `getAncestors`, `isAncestor`, `flattenSubtree`, `resolveProps`, `evaluateCondition`
+  - `src/core/page-tree/subtreeRemoval.ts` — `deleteSubtree` (THE single subtree-deletion primitive), `removeNodeSubtrees`
   - `src/core/page-tree/parentIndex.ts` — `reindexNodeParents` (derive-on-entry backfill)
   - `src/core/visualComponents/schemas.ts` — `VCNode` (= `BaseNode`)
   - `src/admin/pages/site/store/slices/site/nodeActions.ts` — store actions calling `mutateActiveTree`
 - Gate tests:
   - `src/__tests__/persistence/treeSchemaShape.test.ts`
   - `src/__tests__/page-tree/parentIndex.test.ts` — `parentId` invariant: every mutation keeps it consistent; undo/redo preserves it; `reindexNodeParents` derives from children only; `getParent` is O(1) not O(N)
+  - `src/__tests__/page-tree/subtree-consolidation.test.ts` — cycle-safety: `collectSubtreeIds` + deletion + duplication all terminate on corrupt cyclic trees; `cloneNodeWithRemap` produces deep-independent clones; deletion paths unlink via O(1) `parentId` cache, not a whole-map scan
   - `src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts`
   - `src/__tests__/architecture/centralized-site-mutation-history.test.ts`
   - `src/__tests__/architecture/visual-components-mutation-contract.test.ts`

@@ -130,9 +130,9 @@ Three op kinds:
 | `RenameSlot`  | The slot's `name` changed in the VC; the existing slot-instance's `slotName` prop updates |
 | `DeleteSlot`  | The VC removed a slot; the matching slot-instance + its subtree are dropped |
 
-Slot-instances are matched to slots by **slot id, not name**, so renaming a slot in the VC carries the user's content with it.
+Matching strategy: **name first, then positional fallback**. Phase 1 matches existing slot-instances to slots by `slotName` (exact match). Phase 2 pairs any remaining unmatched instances with unmatched slot names by position — this produces `rename` ops rather than delete+insert, so renaming a slot outlet in the VC carries the user's content with it instead of wiping it.
 
-`applySlotSyncResult` is called inside Immer producers in `siteSlice` and `visualComponentsSlice` so the mutation participates in the editor's undo history. `allTreeNodeMaps(site)` (from `vcSlotReconcile.ts`) supplies both page node maps and every VC definition tree's node map, so a `base.visual-component-ref` nested inside another VC's tree is reconciled exactly like a ref on a page. The load-time validator (`validateVisualComponents` in `src/core/persistence/validate.ts`) runs the same sweep over all surviving VC trees to self-heal any stored drift.
+`applySlotSyncResult` is called inside Mutative producers in `siteSlice` and `visualComponentsSlice` so the mutation participates in the editor's undo history. `allTreeNodeMaps(site)` (from `vcSlotReconcile.ts`) supplies both page node maps and every VC definition tree's node map, so a `base.visual-component-ref` nested inside another VC's tree is reconciled exactly like a ref on a page. The load-time validator (`validateVisualComponents` in `src/core/persistence/validate.ts`) runs the same sweep over all surviving VC trees to self-heal any stored drift.
 
 When the ref is first inserted, slot-instances are seeded with the slot's default content from the VC's `slot-outlet.children` (if any). After that, edits inside slot-instances are owned by the consumer page.
 
