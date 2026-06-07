@@ -138,13 +138,14 @@ export interface SitePanelSlice {
   removeStyleRuntimeConfig: (fileId: string) => void
 
   /**
-   * Replace the self-hosted dependency lock + (optionally) the prebuilt
-   * importmap returned alongside it. The server emits both from one call
-   * to `/runtime/dependencies/resolve` so they reflect the same install.
+   * Replace the self-hosted dependency lock + the prebuilt importmap
+   * returned alongside it. The server emits both from one call to
+   * `/runtime/dependencies/resolve` so they reflect the same install.
+   * Pass `null` for the importmap to clear a stale map.
    */
   setSiteDependencyLock: (
     lock: SiteDependencyLock,
-    packageImportmap?: RuntimePackageImportmap | null,
+    packageImportmap: RuntimePackageImportmap | null,
   ) => void
 
   /**
@@ -309,30 +310,26 @@ export const createSitePanelSlice: EditorStoreSliceCreator<SitePanelSlice> = (se
   setSiteDependencyLock: (lock, packageImportmap) => {
     const normalized = normalizeSiteRuntimeConfig({
       dependencyLock: lock,
-      ...(packageImportmap !== undefined ? { packageImportmap } : {}),
+      packageImportmap,
     })
     const nextLock = normalized.dependencyLock
     const nextImportmap = normalized.packageImportmap
     const currentRuntime = get().siteRuntime
     const lockUnchanged = JSON.stringify(currentRuntime.dependencyLock) === JSON.stringify(nextLock)
-    // When the caller omits the importmap (legacy single-arg call), keep
-    // the existing one. When they pass `null`, treat that as "clear" —
-    // useful for tests + future call sites that want to drop a stale map.
-    const importmapUnchanged = packageImportmap === undefined
-      ? true
-      : JSON.stringify(currentRuntime.packageImportmap ?? null) === JSON.stringify(nextImportmap ?? null)
+    // `null` means "clear" — drop a stale map. Otherwise compare the
+    // normalized importmaps to decide whether anything changed.
+    const importmapUnchanged =
+      JSON.stringify(currentRuntime.packageImportmap ?? null) === JSON.stringify(nextImportmap ?? null)
     if (lockUnchanged && importmapUnchanged) return
 
     const baseRuntime = { ...currentRuntime, dependencyLock: nextLock }
-    const nextRuntime: SiteRuntimeConfig = packageImportmap === undefined
-      ? baseRuntime
-      : nextImportmap
-        ? { ...baseRuntime, packageImportmap: nextImportmap }
-        : (() => {
-          const stripped = { ...baseRuntime }
-          delete stripped.packageImportmap
-          return stripped
-        })()
+    const nextRuntime: SiteRuntimeConfig = nextImportmap
+      ? { ...baseRuntime, packageImportmap: nextImportmap }
+      : (() => {
+        const stripped = { ...baseRuntime }
+        delete stripped.packageImportmap
+        return stripped
+      })()
     commitSiteRuntime(nextRuntime)
   },
 
