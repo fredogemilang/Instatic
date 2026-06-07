@@ -2,9 +2,7 @@
  * Tabs — ARIA-correct, keyboard-navigable tab compound component.
  *
  * Implements the WAI-ARIA "tabs with automatic activation" pattern:
- * arrow keys move focus AND change the active value simultaneously,
- * matching the simpler authoring-practices pattern used in the existing
- * Search plugin dashboard (examples/plugins/search/admin/dashboard.tsx).
+ * arrow keys move focus AND change the active value simultaneously.
  *
  * Underline-indicator style — visually distinct from RangeTabs (pill
  * segmented control). Tabs is for page-level chrome; RangeTabs is for

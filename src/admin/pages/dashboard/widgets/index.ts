@@ -44,12 +44,10 @@ export function registerFirstPartyDashboardWidgets(): void {
   if (registered) return
   registered = true
 
-  // NOTE: the Visitors widget is no longer registered first-party. It now
-  // ships from the Analytics plugin (`examples/plugins/analytics/editor/`)
-  // and registers itself via `api.dashboard.widgets.register(...)`. The
-  // host stays Analytics-agnostic — installing the Analytics plugin is
-  // what puts the Visitors tile on the dashboard. This is the canonical
-  // example of how plugins extend the dashboard.
+  // NOTE: the Visitors widget is no longer registered first-party. A plugin
+  // can register its own dashboard tile via `api.dashboard.widgets.register(...)`.
+  // The host stays widget-agnostic — installing a plugin is what puts an extra
+  // tile on the dashboard.
 
   dashboardWidgetRegistry.register({
     id: 'pages',

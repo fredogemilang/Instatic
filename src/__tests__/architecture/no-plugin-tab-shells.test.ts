@@ -1,13 +1,12 @@
 /**
  * Architecture Source-Scan — Tab-Shell Regression Gate
  *
- * Plugin admin apps and host admin/editor code must use the Tabs compound
- * component from @instatic/host-ui (src/ui/components/Tabs/) for any tab
- * UI. Rolling a custom `role="tablist"` div is banned outside the primitive
- * itself and a small set of pre-existing §T-allowlisted files.
+ * Host admin/editor code must use the Tabs compound component from
+ * @instatic/host-ui (src/ui/components/Tabs/) for any tab UI. Rolling a
+ * custom `role="tablist"` div is banned outside the primitive itself and a
+ * small set of pre-existing §T-allowlisted files.
  *
  * SCAN ROOTS:
- *   examples/plugins/ * /admin/**   — plugin admin app code
  *   src/admin/**                    — host admin shell
  *   src/editor/**                   — host editor shell
  *
@@ -41,7 +40,6 @@ import { extname, join, relative } from 'path'
 
 const PROJECT_ROOT = join(import.meta.dir, '../../../')
 const SRC_ROOT = join(PROJECT_ROOT, 'src')
-const EXAMPLES_PLUGINS_ROOT = join(PROJECT_ROOT, 'examples/plugins')
 
 // ---------------------------------------------------------------------------
 // File walker — .ts and .tsx files only, recursive
@@ -62,22 +60,8 @@ function walkTSX(dir: string, out: string[] = []): string[] {
   return out
 }
 
-/** Collect .ts/.tsx files from examples/plugins/<plugin>/admin/** for every plugin. */
-function collectPluginAdminFiles(): string[] {
-  const result: string[] = []
-  if (!existsSync(EXAMPLES_PLUGINS_ROOT)) return result
-  for (const plugin of readdirSync(EXAMPLES_PLUGINS_ROOT)) {
-    const adminDir = join(EXAMPLES_PLUGINS_ROOT, plugin, 'admin')
-    if (existsSync(adminDir) && statSync(adminDir).isDirectory()) {
-      walkTSX(adminDir, result)
-    }
-  }
-  return result
-}
-
 function collectAllFiles(): string[] {
   return [
-    ...collectPluginAdminFiles(),
     ...walkTSX(join(SRC_ROOT, 'admin')),
     ...walkTSX(join(SRC_ROOT, 'editor')),
   ]
@@ -171,17 +155,6 @@ function scanForViolations(): Violation[] {
 describe('No-plugin-tab-shells — role="tablist" must come from the Tabs primitive', () => {
   it('scan roots resolve to at least one file (sanity check)', () => {
     const files = collectAllFiles()
-    expect(files.length).toBeGreaterThan(0)
-  })
-
-  it('at least one plugin admin file is scanned (sanity check)', () => {
-    const files = collectPluginAdminFiles()
-    if (files.length === 0) {
-      throw new Error(
-        '[no-plugin-tab-shells] No plugin admin files found under examples/plugins/*/admin/. ' +
-          'Update EXAMPLES_PLUGINS_ROOT or the plugin folder layout if the structure has changed.',
-      )
-    }
     expect(files.length).toBeGreaterThan(0)
   })
 

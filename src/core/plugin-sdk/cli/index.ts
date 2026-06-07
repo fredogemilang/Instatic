@@ -73,9 +73,9 @@ Options for \`dev\`:
 Examples:
   instatic-plugin init acme.confetti
   instatic-plugin init acme.seo --kind content-editor
-  instatic-plugin lint examples/plugins/newsletter
-  instatic-plugin build examples/plugins/newsletter
-  instatic-plugin dev examples/plugins/newsletter
+  instatic-plugin lint acme.confetti
+  instatic-plugin build acme.confetti
+  instatic-plugin dev acme.confetti
   instatic-plugin dev --uploads ../instatic/uploads
 `)
 }

@@ -1,5 +1,5 @@
 {
-  "//ignore": "examples/** is reference/demo plugin code for plugin authors (newsletter, analytics, etc.), NOT shipped product code. It is intentionally excluded from the react-doctor health bar so the score reflects product code in src/, server/, scripts/ only. This is a deliberate, reviewable scoping decision — not a silent suppression.",
+  "//ignore": "examples/** is reference/demo plugin code for plugin authors, NOT shipped product code. It is intentionally excluded from the react-doctor health bar so the score reflects product code in src/, server/, scripts/ only. This is a deliberate, reviewable scoping decision — not a silent suppression.",
   "ignore": {
     "files": ["examples/**"]
   },
