@@ -26,7 +26,7 @@ const SCAN_ROOTS = [
 ]
 
 const HEX_COLOR_RE = /#[0-9a-fA-F]{3,8}\b/g
-const RAW_COLOR_FUNCTION_RE = /\b(?:rgb|hsl)\(/g
+const RAW_COLOR_FUNCTION_RE = /\b(?:rgba?|hsla?)\(/g
 
 function collectModuleCss(dir: string): string[] {
   const results: string[] = []

@@ -12,7 +12,7 @@
 }
 
 .sectionOpen {
-    background: rgba(255, 255, 255, 0.012);
+    background: var(--editor-overlay-white-012);
 }
 
 .sectionToggle {
@@ -26,14 +26,14 @@
     border: 0;
     cursor: pointer;
     color: var(--editor-text-secondary);
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--editor-overlay-white-10);
     border-radius: 12px;
     font-family: inherit;
     text-align: left;
 }
 
 .sectionToggle:hover {
-    background: rgba(255, 255, 255, 0.12);
+    background: var(--editor-overlay-white-12);
     color: var(--editor-text);
 }
 

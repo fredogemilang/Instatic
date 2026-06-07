@@ -10,7 +10,7 @@
     border: 0;
     border-radius: 16px;
     background: var(--editor-surface-3);
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 12px 28px var(--editor-overlay-black-50);
     /* Anchor the subtle scale to the menu's top edge — the menu drops down
        from the click point / trigger, so growing from the top reads natural. */
     transform-origin: top center;

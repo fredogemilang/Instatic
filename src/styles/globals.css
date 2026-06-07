@@ -307,6 +307,79 @@
     --spotlight-skeleton-shimmer: rgba(255, 255, 255, 0.12);
     /* Travelling highlight on determinate progress bars (Super Import) */
     --editor-progress-shimmer: rgba(255, 255, 255, 0.4);
+
+    /* ─── Achromatic overlay scales ──────────────────────────────────────────
+     * Two-layer model: surfaces, borders and depth are achromatic. These are
+     * the single source of truth for the low-alpha white tints (surface lifts,
+     * hover fills, inner highlights) and black scrims/shadows used throughout
+     * editor chrome. Suffix = alpha ×100 (012 = 0.012). Use a token instead of
+     * a raw rgba() so the ramp stays consistent and tunable in one place. */
+    --editor-overlay-white-012: rgba(255, 255, 255, 0.012);
+    --editor-overlay-white-02: rgba(255, 255, 255, 0.02);
+    --editor-overlay-white-025: rgba(255, 255, 255, 0.025);
+    --editor-overlay-white-03: rgba(255, 255, 255, 0.03);
+    --editor-overlay-white-035: rgba(255, 255, 255, 0.035);
+    --editor-overlay-white-04: rgba(255, 255, 255, 0.04);
+    --editor-overlay-white-05: rgba(255, 255, 255, 0.05);
+    --editor-overlay-white-06: rgba(255, 255, 255, 0.06);
+    --editor-overlay-white-07: rgba(255, 255, 255, 0.07);
+    --editor-overlay-white-075: rgba(255, 255, 255, 0.075);
+    --editor-overlay-white-08: rgba(255, 255, 255, 0.08);
+    --editor-overlay-white-10: rgba(255, 255, 255, 0.1);
+    --editor-overlay-white-12: rgba(255, 255, 255, 0.12);
+    --editor-overlay-white-14: rgba(255, 255, 255, 0.14);
+    --editor-overlay-white-16: rgba(255, 255, 255, 0.16);
+    --editor-overlay-white-18: rgba(255, 255, 255, 0.18);
+    --editor-overlay-white-22: rgba(255, 255, 255, 0.22);
+    --editor-overlay-white-55: rgba(255, 255, 255, 0.55);
+    --editor-overlay-white-70: rgba(255, 255, 255, 0.7);
+
+    --editor-overlay-black-24: rgba(0, 0, 0, 0.24);
+    --editor-overlay-black-25: rgba(0, 0, 0, 0.25);
+    --editor-overlay-black-28: rgba(0, 0, 0, 0.28);
+    --editor-overlay-black-30: rgba(0, 0, 0, 0.3);
+    --editor-overlay-black-32: rgba(0, 0, 0, 0.32);
+    --editor-overlay-black-35: rgba(0, 0, 0, 0.35);
+    --editor-overlay-black-40: rgba(0, 0, 0, 0.4);
+    --editor-overlay-black-45: rgba(0, 0, 0, 0.45);
+    --editor-overlay-black-50: rgba(0, 0, 0, 0.5);
+    --editor-overlay-black-55: rgba(0, 0, 0, 0.55);
+    --editor-overlay-black-60: rgba(0, 0, 0, 0.6);
+    --editor-overlay-black-70: rgba(0, 0, 0, 0.7);
+    --editor-overlay-black-82: rgba(0, 0, 0, 0.82);
+    --editor-overlay-black-85: rgba(0, 0, 0, 0.85);
+
+    /* ─── Identity tint surfaces (rail hue at low alpha) ──────────────────────
+     * Categorical-identity colour used as a soft surface/border tint, derived
+     * from the matching --rail-tint-* hue. Suffix = alpha ×100. */
+    --editor-sky-tint-06: rgba(155, 220, 255, 0.06);
+    --editor-sky-tint-16: rgba(155, 220, 255, 0.16);
+    --editor-sky-tint-18: rgba(155, 220, 255, 0.18);
+    --editor-sky-tint-40: rgba(155, 220, 255, 0.4);
+    --editor-sky-tint-55: rgba(155, 220, 255, 0.55);
+    --editor-mint-tint-06: rgba(142, 230, 200, 0.06);
+    --editor-mint-tint-15: rgba(142, 230, 200, 0.15);
+    --editor-mint-tint-20: rgba(142, 230, 200, 0.2);
+
+    /* ─── State tint surfaces (semantic hue at low alpha) ─────────────────────
+     * Extra alpha steps beyond the canonical *-bg / *-border tokens above, for
+     * surfaces and borders that need a slightly different weight. */
+    --editor-success-tint-12: rgba(52, 211, 153, 0.12);
+    --editor-success-tint-35: rgba(52, 211, 153, 0.35);
+    --editor-warning-tint-08: rgba(245, 158, 11, 0.08);
+    --editor-warning-tint-22: rgba(245, 158, 11, 0.22);
+    --editor-danger-tint-08: rgba(239, 68, 68, 0.08);
+    --editor-danger-tint-30: rgba(239, 68, 68, 0.3);
+    --editor-danger-tint-40: rgba(239, 68, 68, 0.4);
+    --editor-indigo-tint-12: rgba(99, 102, 241, 0.12);
+    --editor-indigo-tint-22: rgba(99, 102, 241, 0.22);
+
+    /* ─── Bespoke surface tints ───────────────────────────────────────────────
+     * One-off colours that aren't part of a scale: the plugins hero gradient
+     * stops and the dark scrim behind the live canvas iframe overlay. */
+    --plugins-hero-tint-a: rgba(35, 92, 72, 0.32);
+    --plugins-hero-tint-b: rgba(49, 64, 94, 0.24);
+    --canvas-live-scrim: rgba(24, 24, 27, 0.82);
 }
 
 /* Reduced motion support — Constraint from UX Guideline #189 */

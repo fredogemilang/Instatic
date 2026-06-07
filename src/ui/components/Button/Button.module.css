@@ -251,11 +251,11 @@
 
 .navItem:hover {
     color: var(--editor-text-secondary);
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--editor-overlay-white-03);
 }
 
 .navItem[data-active="true"] {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--editor-overlay-white-05);
     border-left-color: var(--editor-text);
     color: var(--editor-text);
 }
