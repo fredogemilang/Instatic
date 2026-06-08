@@ -22,7 +22,6 @@
     "dev:agent": "bun run dev:server",
     "dev:server": "bun --watch server/index.ts",
     "dev:vite": "vite",
-    "dev:www": "bun run scripts/dev-www.ts",
     "e2e:dev": "bun run scripts/e2e-dev.ts",
     "db:drop": "bun run scripts/db-drop.ts",
     "start": "bun run scripts/start.ts",
