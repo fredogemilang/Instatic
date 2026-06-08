@@ -25,14 +25,22 @@ export function observeIframeMutations(
   iframeDoc: Document,
   callback: MutationCallback,
 ): MutationObserver | null {
+  const body = iframeDoc.body
+  const head = iframeDoc.head
+  if (!body || !head) return null
+  const NodeConstructor = iframeDoc.defaultView?.Node ?? Node
+  if (!(body instanceof NodeConstructor) || !(head instanceof NodeConstructor)) {
+    return null
+  }
+
   const observer = new MutationObserverConstructor(callback)
   try {
-    observer.observe(iframeDoc.body, {
+    observer.observe(body, {
       childList: true,
       subtree: true,
       characterData: true,
     })
-    observer.observe(iframeDoc.head, {
+    observer.observe(head, {
       childList: true,
       subtree: true,
       characterData: true,

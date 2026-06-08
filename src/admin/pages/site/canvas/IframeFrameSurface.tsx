@@ -81,12 +81,7 @@ import { useIframeCursorBridge } from './useIframeCursorBridge'
 import { iframeWheelPointToParentClientPoint } from './iframeWheelForwarding'
 import { useCanvasFormControlSuppression } from './useCanvasFormControlSuppression'
 import { CANVAS_VIEWPORT_HEIGHT, type CanvasViewport } from './resolveViewportUnits'
-import { resolveCanvasFrameHeight } from './iframeFrameHeight'
-import {
-  getIframeObserverConstructors,
-  getIframeObserverDocument,
-  observeIframeMutations,
-} from './iframeFrameObservers'
+import { useIframeFrameAutoHeight } from './useIframeFrameAutoHeight'
 import styles from './IframeFrameSurface.module.css'
 
 /**
@@ -204,6 +199,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
 
     useIframeCursorBridge(iframeRef, iframeDoc, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(iframeDoc, { breakpointId, enabled: !isLive })
+    useIframeFrameAutoHeight({ iframeRef, iframeDoc, isLive })
 
     // Bridge the iframe handle out to the parent (selection overlay reads
     // `iframeElement` to translate inside-iframe rects into editor coordinates).
@@ -341,118 +337,6 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         iframeDoc.removeEventListener('dblclick', handleDblClick, true)
       }
     }, [iframeDoc, onReadonlyOpen])
-
-    // ── Iframe height tracking ────────────────────────────────────────────
-    // The canvas is a Figma-like infinite surface — frames are not supposed
-    // to have their own scrollbars. If the iframe element has a fixed
-    // height (e.g. the default ~150px or `100vh`) but its content overflows,
-    // the iframe scrolls internally — and that scroll captures wheel events
-    // before they reach the canvas pan/zoom gesture layer. We grow the
-    // iframe to its content's full height so:
-    //  1. No inner scrollbar appears.
-    //  2. Wheel events for canvas pan are never consumed by inner scroll.
-    //  3. The whole page is visible at once, the way the legacy in-document
-    //     frame rendered it.
-    //
-    // Viewport-unit feedback loop — why this is guarded
-    // ─────────────────────────────────────────────────
-    // The iframe element's height IS the `vh`/`vw` reference for the page
-    // rendered inside it. So writing `iframe.style.height` from the measured
-    // content height feeds straight back into any authored CSS that sizes
-    // against the viewport (`min-height: 88vh`, `height: 100vh`, percentage
-    // heights chained off such an ancestor, …): we grow the frame → `vh`
-    // recomputes larger → content grows → the ResizeObserver fires → we grow
-    // again. Below 100% of viewport units this converges slowly; at ≥ 100%
-    // it diverges and pins the CPU. An unguarded loop makes the editor
-    // unusable the instant a user pastes viewport-relative CSS.
-    //
-    // The guard:
-    //  - Coalesce measurements into a single rAF so a write can't trigger a
-    //    synchronous re-measure on the same frame.
-    //  - Cap how many times we may resize from our OWN height writes before
-    //    treating the layout as settled (a viewport feedback chain only ever
-    //    grows from our writes, with no DOM mutation in between). The frame
-    //    is left at its last height once the cap trips — convergent pages
-    //    reach their natural height, divergent ones stop at a bounded height,
-    //    and the CPU is never pinned.
-    //  - A genuine content/style change (nodes added/removed, text edited,
-    //    injected CSS replaced) fires the MutationObserver, which resets the
-    //    budget so real edits always earn a fresh fit. Our own height writes
-    //    land on the iframe element in the PARENT document, so they never
-    //    trip the MutationObserver and never reset the budget themselves.
-    useEffect(() => {
-      // Grow-to-content is a canvas-only concern: on the infinite surface the
-      // frame must not have an inner scrollbar. In 'live' mode the iframe IS
-      // the scroll viewport (published height behaviour), so we leave its
-      // height to CSS (100%) and let it scroll internally.
-      if (isLive) return
-      if (!iframeDoc) return
-      const iframe = iframeRef.current
-      if (!iframe) return
-      const observerDocument = getIframeObserverDocument(iframe, iframeDoc)
-
-      const MAX_SELF_RESIZES = 60
-      let selfResizes = 0
-      let rafId: number | null = null
-      const {
-        ResizeObserver: FrameResizeObserver,
-        MutationObserver: FrameMutationObserver,
-      } = getIframeObserverConstructors(iframe)
-
-      const measure = () => {
-        rafId = null
-        const body = observerDocument.body
-        const html = observerDocument.documentElement
-        if (!body || !html) return
-        const current = parseFloat(iframe.style.height || '0')
-        const target = resolveCanvasFrameHeight({
-          bodyScrollHeight: body.scrollHeight,
-          documentScrollHeight: html.scrollHeight,
-          currentFrameHeight: current,
-        })
-        if (Math.abs(current - target) <= 0.5) {
-          // Layout settled — clear the budget so the next genuine change
-          // gets a fresh fit.
-          selfResizes = 0
-          return
-        }
-        // Not settling after many consecutive self-driven resizes → this is
-        // a viewport-unit feedback loop. Stop writing to break it.
-        if (selfResizes >= MAX_SELF_RESIZES) return
-        iframe.style.height = `${target}px`
-        selfResizes += 1
-      }
-      const scheduleMeasure = () => {
-        if (rafId === null) rafId = requestAnimationFrame(measure)
-      }
-
-      // First fit runs synchronously so the frame doesn't flash at the
-      // ~150px default height before the first rAF lands.
-      measure()
-
-      // ResizeObserver fires for any layout change inside the iframe — font
-      // load reflow, image decode/lazy-load, authored style edits, and our
-      // own height writes (hence the self-resize cap above).
-      const ro = new FrameResizeObserver(scheduleMeasure)
-      ro.observe(observerDocument.body)
-      ro.observe(observerDocument.documentElement)
-      // MutationObserver covers structural edits (nodes added/removed, text
-      // changed) and injected-CSS replacements (the class/user-style tags in
-      // <head>), resetting the self-resize budget so a real change always
-      // re-fits. We deliberately do NOT observe `attributes`: the canvas
-      // toggles selection/hover `data-*`/`aria-*` attributes on every pointer
-      // move, and re-measuring (a forced reflow) on each of those was a
-      // second, hover-driven source of jank on large pages.
-      const mo = observeIframeMutations(FrameMutationObserver, observerDocument, () => {
-        selfResizes = 0
-        scheduleMeasure()
-      })
-      return () => {
-        if (rafId !== null) cancelAnimationFrame(rafId)
-        ro.disconnect()
-        mo?.disconnect()
-      }
-    }, [iframeDoc, isLive])
 
     // ── Forward wheel events to the canvas gesture layer ─────────────────
     // Without this, scrolling the wheel while the cursor is over an iframe

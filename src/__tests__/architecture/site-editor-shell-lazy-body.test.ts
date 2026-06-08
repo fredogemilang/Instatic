@@ -50,18 +50,21 @@ describe('Site editor shell lazy body', () => {
     expect(body).not.toContain("import { ImportHtmlModal }")
   })
 
-  it('keeps the loading skeleton only in the pannable canvas, not a static bootstrap layer', () => {
+  it('keeps a lightweight shell skeleton while the visual editor body lazy-loads', () => {
     const layout = readAdminFile('layouts/AdminCanvasLayout/AdminCanvasLayout.tsx')
     const transformLayer = readAdminFile('pages/site/canvas/CanvasTransformLayer.tsx')
     const skeleton = readAdminFile('shared/CanvasFrameSkeleton/CanvasFrameSkeleton.tsx')
 
-    // The layout shell no longer renders its own statically-positioned bootstrap
-    // skeleton: that left-aligned row was anchored at a fixed offset and jumped
-    // to the centered canvas once content loaded. The only loading placeholder
-    // is now the pannable skeleton inside CanvasTransformLayer, which the editor
-    // centers on the default viewport — so there is no jump.
-    expect(layout).not.toContain('CanvasFrameSkeletonFrame')
+    // The body chunk contains the real canvas, sidebars, DnD context, modules,
+    // and panel graph. While that lazy import is still in flight the eager
+    // shell must still paint canvas-shaped skeleton frames; otherwise cold Site
+    // loads show only the toolbar over an empty black workspace.
+    expect(layout).toContain('<AdminCanvasEditorBodyLoading />')
+    expect(layout).toContain('@admin/shared/CanvasFrameSkeleton')
+    expect(layout).toContain('<CanvasFrameSkeletonFrame')
     expect(layout).not.toContain('<span>Loading editor</span>')
+    expect(layout).not.toContain('@core/page-tree')
+    expect(layout).not.toContain('@admin/pages/site/canvas')
 
     expect(transformLayer).toContain('@admin/shared/CanvasFrameSkeleton')
     expect(transformLayer).toContain('<CanvasFrameSkeletonFrame')

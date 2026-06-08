@@ -260,11 +260,8 @@ describe('AdminCanvasLayout — CMS site hydration gate', () => {
       renderEditorLayout({ preloadSite: false })
 
       expect(screen.getByTestId('toolbar')).toBeDefined()
-      // The static bootstrap skeleton was removed: the only loading placeholder
-      // is the pannable skeleton inside CanvasRoot (centered on the default
-      // viewport). The shell's toolbar stays mounted while the body + site
-      // hydrate; the old left-aligned "Loading editor" status must never appear.
-      expect(screen.queryByRole('status', { name: 'Loading editor' })).toBeNull()
+      expect(screen.getByRole('status', { name: 'Loading editor' })).toBeDefined()
+      expect(screen.getByTestId('canvas-loading-frame-desktop')).toBeDefined()
       expect(await screen.findByTestId('left-sidebar')).toBeDefined()
       expect(screen.getByTestId('canvas-root')).toBeDefined()
       expect(screen.getByTestId('right-sidebar')).toBeDefined()

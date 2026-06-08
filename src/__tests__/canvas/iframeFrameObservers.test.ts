@@ -49,10 +49,7 @@ describe('getIframeObserverConstructors', () => {
         return []
       }
     }
-    const iframeDoc = {
-      body: {},
-      head: {},
-    } as unknown as Document
+    const iframeDoc = document.implementation.createHTMLDocument('iframe')
 
     const observer = observeIframeMutations(
       ThrowingMutationObserver as unknown as typeof MutationObserver,
@@ -62,5 +59,37 @@ describe('getIframeObserverConstructors', () => {
 
     expect(observer).toBeNull()
     expect(disconnected).toBe(true)
+  })
+
+  it('does not construct an observer before iframe body and head targets exist', () => {
+    let constructed = false
+    class TrackingMutationObserver {
+      constructor() {
+        constructed = true
+      }
+
+      observe(): void {
+        throw new TypeError('should not observe missing iframe targets')
+      }
+
+      disconnect(): void {}
+
+      takeRecords(): MutationRecord[] {
+        return []
+      }
+    }
+    const iframeDoc = {
+      body: null,
+      head: null,
+    } as unknown as Document
+
+    const observer = observeIframeMutations(
+      TrackingMutationObserver as unknown as typeof MutationObserver,
+      iframeDoc,
+      () => {},
+    )
+
+    expect(observer).toBeNull()
+    expect(constructed).toBe(false)
   })
 })
