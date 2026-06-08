@@ -7,6 +7,17 @@ import type { SiteDocument } from './siteDocument'
 import type { VisualComponent } from '@core/visualComponents'
 import { isHomePage } from './slugs'
 
+export const STRUCTURAL_SITE_EXPLORER_SECTION_IDS = [
+  'pages',
+  'styles',
+  'scripts',
+] as const
+
+export const DECORATIVE_SITE_EXPLORER_SECTION_IDS = [
+  'templates',
+  'components',
+] as const
+
 export const SITE_EXPLORER_SECTION_IDS = [
   'pages',
   'templates',
@@ -15,6 +26,8 @@ export const SITE_EXPLORER_SECTION_IDS = [
   'scripts',
 ] as const
 
+export type StructuralSiteExplorerSectionId = (typeof STRUCTURAL_SITE_EXPLORER_SECTION_IDS)[number]
+export type DecorativeSiteExplorerSectionId = (typeof DECORATIVE_SITE_EXPLORER_SECTION_IDS)[number]
 export type SiteExplorerSectionId = (typeof SITE_EXPLORER_SECTION_IDS)[number]
 
 const SiteExplorerFolderSchema = Type.Object({
@@ -29,22 +42,37 @@ const SiteExplorerItemPlacementSchema = Type.Object({
   order: Type.Number(),
 })
 
-const SiteExplorerSectionSchema = Type.Object({
+const StructuralExplorerRowOrderSchema = Type.Object({
+  kind: Type.Union([Type.Literal('folder'), Type.Literal('item')]),
+  id: Type.String(),
+  parentPath: Type.Optional(Type.String()),
+  order: Type.Number(),
+})
+
+const StructuralExplorerSectionSchema = Type.Object({
+  expandedFolders: Type.Array(Type.String()),
+  emptyFolders: Type.Array(Type.String()),
+  rowOrder: Type.Array(StructuralExplorerRowOrderSchema),
+})
+
+const DecorativeExplorerSectionSchema = Type.Object({
   folders: Type.Array(SiteExplorerFolderSchema),
   items: Type.Array(SiteExplorerItemPlacementSchema),
 })
 
 export const SiteExplorerOrganizationSchema = Type.Object({
-  pages: SiteExplorerSectionSchema,
-  templates: SiteExplorerSectionSchema,
-  components: SiteExplorerSectionSchema,
-  styles: SiteExplorerSectionSchema,
-  scripts: SiteExplorerSectionSchema,
+  pages: StructuralExplorerSectionSchema,
+  styles: StructuralExplorerSectionSchema,
+  scripts: StructuralExplorerSectionSchema,
+  templates: DecorativeExplorerSectionSchema,
+  components: DecorativeExplorerSectionSchema,
 })
 
 export type SiteExplorerFolder = Static<typeof SiteExplorerFolderSchema>
 export type SiteExplorerItemPlacement = Static<typeof SiteExplorerItemPlacementSchema>
-type SiteExplorerSection = Static<typeof SiteExplorerSectionSchema>
+export type StructuralExplorerRowOrder = Static<typeof StructuralExplorerRowOrderSchema>
+export type StructuralExplorerSection = Static<typeof StructuralExplorerSectionSchema>
+export type DecorativeExplorerSection = Static<typeof DecorativeExplorerSectionSchema>
 export type SiteExplorerOrganization = Static<typeof SiteExplorerOrganizationSchema>
 
 type SiteExplorerRootEntry =
@@ -59,15 +87,19 @@ interface SiteExplorerSources {
 
 export function createDefaultSiteExplorerOrganization(): SiteExplorerOrganization {
   return {
-    pages: createEmptySection(),
-    templates: createEmptySection(),
-    components: createEmptySection(),
-    styles: createEmptySection(),
-    scripts: createEmptySection(),
+    pages: createEmptyStructuralSection(),
+    styles: createEmptyStructuralSection(),
+    scripts: createEmptyStructuralSection(),
+    templates: createEmptyDecorativeSection(),
+    components: createEmptyDecorativeSection(),
   }
 }
 
-function createEmptySection(): SiteExplorerSection {
+function createEmptyStructuralSection(): StructuralExplorerSection {
+  return { expandedFolders: [], emptyFolders: [], rowOrder: [] }
+}
+
+function createEmptyDecorativeSection(): DecorativeExplorerSection {
   return { folders: [], items: [] }
 }
 
@@ -76,20 +108,78 @@ export function parseSiteExplorerOrganization(raw: unknown): SiteExplorerOrganiz
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return parsed
   const record = raw as Record<string, unknown>
 
-  for (const sectionId of SITE_EXPLORER_SECTION_IDS) {
-    parsed[sectionId] = parseSection(record[sectionId])
-  }
+  parsed.pages = parseStructuralSection(record.pages)
+  parsed.styles = parseStructuralSection(record.styles)
+  parsed.scripts = parseStructuralSection(record.scripts)
+  parsed.templates = parseDecorativeSection(record.templates)
+  parsed.components = parseDecorativeSection(record.components)
 
   return parsed
 }
 
-function parseSection(raw: unknown): SiteExplorerSection {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return createEmptySection()
+function parseStructuralSection(raw: unknown): StructuralExplorerSection {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return createEmptyStructuralSection()
+  const record = raw as Record<string, unknown>
+  const expandedFolders = parseFolderPaths(record.expandedFolders)
+  const expandedSet = new Set(expandedFolders)
+  const emptyFolders = parseFolderPaths(record.emptyFolders)
+    .filter((path) => !expandedSet.has(path))
+  const rowOrder = parseStructuralRowOrder(record.rowOrder)
+  return { expandedFolders, emptyFolders, rowOrder }
+}
+
+function parseDecorativeSection(raw: unknown): DecorativeExplorerSection {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return createEmptyDecorativeSection()
   const record = raw as Record<string, unknown>
   const folders = parseFolders(record.folders)
   const folderIds = new Set(folders.map((folder) => folder.id))
   const items = parseItems(record.items, folderIds)
   return normalizeSection({ folders, items })
+}
+
+function parseFolderPaths(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const paths: string[] = []
+  for (const value of raw) {
+    if (typeof value !== 'string') continue
+    const path = normalizeExplorerPath(value)
+    if (!path || seen.has(path)) continue
+    seen.add(path)
+    paths.push(path)
+  }
+  return paths
+}
+
+function parseStructuralRowOrder(raw: unknown): StructuralExplorerRowOrder[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const rowOrder: StructuralExplorerRowOrder[] = []
+  for (const entry of raw) {
+    if (!compiledCheck(StructuralExplorerRowOrderSchema, entry)) continue
+    const item = compiledDecode(StructuralExplorerRowOrderSchema, entry)
+    const id = normalizeExplorerPath(item.id)
+    const parentPath = item.parentPath ? normalizeExplorerPath(item.parentPath) : undefined
+    if (!id || !Number.isFinite(item.order)) continue
+    const key = `${item.kind}:${parentPath ?? ''}:${id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    rowOrder.push({
+      kind: item.kind,
+      id,
+      ...(parentPath ? { parentPath } : {}),
+      order: item.order,
+    })
+  }
+  return rowOrder
+}
+
+function normalizeExplorerPath(value: string): string | null {
+  const path = value.trim().replace(/^\/+|\/+$/g, '')
+  if (!path || path.includes('\\')) return null
+  const segments = path.split('/')
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) return null
+  return segments.join('/')
 }
 
 function parseFolders(raw: unknown): SiteExplorerFolder[] {
@@ -136,16 +226,13 @@ export function reconcileSiteExplorerOrganization(
   sources: SiteExplorerSources,
 ): SiteExplorerOrganization {
   const base = parseSiteExplorerOrganization(organization)
-  const pages = reconcileSection(base.pages, pageIds(sources.pages, false))
-  const homePageId = sources.pages.find((page) => !page.template && isHomePage(page))?.id
-  if (homePageId) pinItemAtSectionRoot(pages, homePageId)
 
   return {
-    pages,
+    pages: reconcileStructuralSection(base.pages, structuralRowsForPages(sources.pages)),
+    styles: reconcileStructuralSection(base.styles, structuralRowsForFiles(sources.files, 'style')),
+    scripts: reconcileStructuralSection(base.scripts, structuralRowsForFiles(sources.files, 'script')),
     templates: reconcileSection(base.templates, pageIds(sources.pages, true)),
     components: reconcileSection(base.components, sources.visualComponents.map((component) => component.id)),
-    styles: reconcileSection(base.styles, fileIds(sources.files, 'style')),
-    scripts: reconcileSection(base.scripts, fileIds(sources.files, 'script')),
   }
 }
 
@@ -155,13 +242,76 @@ function pageIds(pages: readonly Page[], templates: boolean): string[] {
     .map((page) => page.id)
 }
 
-function fileIds(files: readonly SiteFile[], type: 'style' | 'script'): string[] {
-  return files
-    .filter((file) => file.type === type && (!file.generated || file.ejected))
-    .map((file) => file.id)
+interface StructuralRows {
+  folders: ReadonlySet<string>
+  items: ReadonlyMap<string, string | undefined>
+  itemPaths: ReadonlySet<string>
 }
 
-function reconcileSection(section: SiteExplorerSection, sourceIds: readonly string[]): SiteExplorerSection {
+function structuralRowsForPages(pages: readonly Page[]): StructuralRows {
+  const folders = new Set<string>()
+  const items = new Map<string, string | undefined>()
+  const itemPaths = new Set<string>()
+  for (const page of pages) {
+    if (page.template || isHomePage(page)) continue
+    itemPaths.add(page.slug)
+    items.set(page.id, parentPathForPath(page.slug))
+    addFolderPrefixes(folders, page.slug)
+  }
+  return { folders, items, itemPaths }
+}
+
+function structuralRowsForFiles(files: readonly SiteFile[], type: 'style' | 'script'): StructuralRows {
+  const folders = new Set<string>()
+  const items = new Map<string, string | undefined>()
+  const itemPaths = new Set<string>()
+  for (const file of files) {
+    if (file.type !== type || (file.generated && !file.ejected)) continue
+    itemPaths.add(file.path)
+    items.set(file.id, parentPathForPath(file.path))
+    addFolderPrefixes(folders, file.path)
+  }
+  return { folders, items, itemPaths }
+}
+
+function addFolderPrefixes(folders: Set<string>, path: string): void {
+  const segments = path.split('/').filter(Boolean)
+  let current = ''
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    current = current ? `${current}/${segments[index]}` : segments[index]
+    folders.add(current)
+  }
+}
+
+function reconcileStructuralSection(
+  section: StructuralExplorerSection,
+  rows: StructuralRows,
+): StructuralExplorerSection {
+  const keptEmptyFolders = section.emptyFolders.filter((path) =>
+    !rows.folders.has(path) && !rows.itemPaths.has(path)
+  )
+  const keptEmptyFolderSet = new Set(keptEmptyFolders)
+  return {
+    expandedFolders: section.expandedFolders.filter((path) =>
+      rows.folders.has(path) || keptEmptyFolderSet.has(path)
+    ),
+    emptyFolders: keptEmptyFolders,
+    rowOrder: section.rowOrder.filter((entry) => {
+      if (entry.kind === 'folder') {
+        return (rows.folders.has(entry.id) || keptEmptyFolderSet.has(entry.id))
+          && parentPathForPath(entry.id) === entry.parentPath
+      }
+      return rows.items.has(entry.id) && rows.items.get(entry.id) === entry.parentPath
+    }),
+  }
+}
+
+function parentPathForPath(path: string): string | undefined {
+  const index = path.lastIndexOf('/')
+  return index === -1 ? undefined : path.slice(0, index)
+}
+
+function reconcileSection(section: DecorativeExplorerSection, sourceIds: readonly string[]): DecorativeExplorerSection {
   const sourceSet = new Set(sourceIds)
   const folderIds = new Set(section.folders.map((folder) => folder.id))
   const seen = new Set<string>()
@@ -193,7 +343,7 @@ function reconcileSection(section: SiteExplorerSection, sourceIds: readonly stri
 
 export function createExplorerFolder(
   organization: SiteExplorerOrganization,
-  sectionId: SiteExplorerSectionId,
+  sectionId: DecorativeSiteExplorerSectionId,
   name: string,
 ): string {
   const id = nanoid()
@@ -205,7 +355,7 @@ export function createExplorerFolder(
 
 export function renameExplorerFolder(
   organization: SiteExplorerOrganization,
-  sectionId: SiteExplorerSectionId,
+  sectionId: DecorativeSiteExplorerSectionId,
   folderId: string,
   name: string,
 ): void {
@@ -216,7 +366,7 @@ export function renameExplorerFolder(
 
 export function deleteExplorerFolder(
   organization: SiteExplorerOrganization,
-  sectionId: SiteExplorerSectionId,
+  sectionId: DecorativeSiteExplorerSectionId,
   folderId: string,
 ): void {
   const section = organization[sectionId]
@@ -231,7 +381,7 @@ export function deleteExplorerFolder(
 
 export function moveExplorerFolder(
   organization: SiteExplorerOrganization,
-  sectionId: SiteExplorerSectionId,
+  sectionId: DecorativeSiteExplorerSectionId,
   folderId: string,
   nextIndex: number,
 ): void {
@@ -253,7 +403,7 @@ export function moveExplorerFolder(
 
 export function moveExplorerItem(
   organization: SiteExplorerOrganization,
-  sectionId: SiteExplorerSectionId,
+  sectionId: DecorativeSiteExplorerSectionId,
   itemId: string,
   parentFolderId: string | null,
   nextIndex: number,
@@ -291,7 +441,7 @@ export function moveExplorerItem(
 
 export function moveExplorerItems(
   organization: SiteExplorerOrganization,
-  sectionId: SiteExplorerSectionId,
+  sectionId: DecorativeSiteExplorerSectionId,
   itemIds: readonly string[],
   parentFolderId: string | null,
   nextIndex: number,
@@ -338,7 +488,7 @@ export function moveExplorerItems(
 
 export function wrapExplorerItemsInFolder(
   organization: SiteExplorerOrganization,
-  sectionId: SiteExplorerSectionId,
+  sectionId: DecorativeSiteExplorerSectionId,
   itemIds: readonly string[],
   name: string,
 ): string | null {
@@ -380,7 +530,7 @@ export function wrapExplorerItemsInFolder(
   return folderId
 }
 
-function normalizeSection(section: SiteExplorerSection): SiteExplorerSection {
+function normalizeSection(section: DecorativeExplorerSection): DecorativeExplorerSection {
   const folders = section.folders.map((folder) => ({
     id: folder.id,
     name: folder.name.trim() || 'Folder',
@@ -434,29 +584,17 @@ function normalizeSection(section: SiteExplorerSection): SiteExplorerSection {
   }
 }
 
-function normalizeSectionInPlace(section: SiteExplorerSection): void {
+function normalizeSectionInPlace(section: DecorativeExplorerSection): void {
   const normalized = normalizeSection(section)
   section.folders = normalized.folders
   section.items = normalized.items
-}
-
-function pinItemAtSectionRoot(section: SiteExplorerSection, itemId: string): void {
-  normalizeSectionInPlace(section)
-  const item = section.items.find((candidate) => candidate.id === itemId)
-  if (!item) return
-  delete item.parentFolderId
-  const rootEntries = rootEntriesForSection(section)
-    .filter((entry) => entry.kind !== 'item' || entry.item.id !== itemId)
-  rootEntries.unshift({ kind: 'item', item, order: 0 })
-  applyRootEntryOrder(rootEntries)
-  normalizeSectionInPlace(section)
 }
 
 function sortItems(items: readonly SiteExplorerItemPlacement[]): SiteExplorerItemPlacement[] {
   return [...items].sort((a, b) => a.order - b.order)
 }
 
-function rootEntriesForSection(section: SiteExplorerSection): SiteExplorerRootEntry[] {
+function rootEntriesForSection(section: DecorativeExplorerSection): SiteExplorerRootEntry[] {
   return sortRootEntries([
     ...section.folders.map((folder) => ({
       kind: 'folder' as const,
@@ -490,7 +628,7 @@ function applyRootEntryOrder(entries: readonly SiteExplorerRootEntry[]): void {
   })
 }
 
-function nextRootOrder(section: SiteExplorerSection): number {
+function nextRootOrder(section: DecorativeExplorerSection): number {
   return rootEntriesForSection(section).length
 }
 
@@ -499,7 +637,7 @@ function clampIndex(index: number, max: number): number {
 }
 
 function uniqueExistingItemIds(
-  section: SiteExplorerSection,
+  section: DecorativeExplorerSection,
   itemIds: readonly string[],
 ): string[] {
   const existingIds = new Set(section.items.map((item) => item.id))
@@ -514,7 +652,7 @@ function uniqueExistingItemIds(
 }
 
 function orderedSelectedItems(
-  section: SiteExplorerSection,
+  section: DecorativeExplorerSection,
   itemIds: readonly string[],
 ): SiteExplorerItemPlacement[] {
   const selectedIds = new Set(itemIds)

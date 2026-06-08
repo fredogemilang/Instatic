@@ -91,16 +91,16 @@ function variantStorageBase(storagePath: string): string {
 }
 
 /**
- * Generate the full responsive ladder for an uploaded image. Returns the
- * probed dimensions, the BlurHash placeholder, and the list of variant
- * records — each variant has been streamed to the elected `'variant'`
- * storage adapter by this point (default local-disk).
+ * Generate the full responsive ladder for an uploaded raster image.
+ * Returns the probed dimensions, the BlurHash placeholder, and the list of
+ * variant records — each variant has been streamed to the elected
+ * `'variant'` storage adapter by this point (default local-disk).
  *
- * On any non-image input (GIF, SVG — though we don't accept SVG today) or
- * on any worker failure, returns `null` so the caller falls back to a
- * plain row with no variants. Callers MUST handle the null case — the
- * admin grid still renders fine without variants, it just loads the
- * original.
+ * Callers gate this to raster formats. SVGs already scale as originals;
+ * animated GIFs must not be collapsed into still WebP frames. On any worker
+ * failure, returns `null` so the caller falls back to a plain row with no
+ * variants. Callers MUST handle the null case — the admin grid still
+ * renders fine without variants, it just loads the original.
  *
  * Trust boundary: the worker probes dimensions, encodes the BlurHash, and
  * (when no delegate is elected) produces the WebP ladder bytes. The host

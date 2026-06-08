@@ -16,7 +16,7 @@ The shell is stored in a single `site` row. Pages and VCs live separately in `da
   - `SiteSettings` — color tokens, typography, spacing scale, framework tokens
   - `Record<string, StyleRule>` — the style rule registry (user-defined CSS rules)
   - `SiteFile[]` — arbitrary text/CSS/JS files attached to the site
-  - `SiteExplorerOrganization` — decorative folders and ordering for Site Explorer sections
+  - `SiteExplorerOrganization` — path-derived folders for pages/styles/scripts plus decorative folders for templates/components
   - `SitePackageJson` — `package.json` for the per-site `bun install` workspace
   - `SiteRuntimeConfig` — dependency lock + scripts
 - Pages and VCs are **not** embedded. The architecture gate `no-vc-in-site-shell.test.ts` enforces this.
@@ -124,7 +124,6 @@ type SiteSettings = {
   metaTitle?:       string
   metaDescription?: string
   faviconUrl?:      string
-  fontImportUrl?:   string
   language?:        string
   framework?:       FrameworkSettings       // colors, typography, spacing, preferences — absent when disabled
   fonts?:           SiteFontsSettings       // installed font library + editable font tokens
@@ -205,7 +204,9 @@ Generated files (e.g. `package.json`, `vite.config.ts`) are hidden in the Site E
 
 ### Site Explorer organization — `SiteExplorerOrganization`
 
-Decorative folders and ordering for the Site Explorer. This is editor organization only; it does not change page routing, component identity, file paths, or published URLs.
+Site Explorer organization is split by whether a section owns URL/file paths.
+
+Pages, styles, and scripts are structural sections: folders are derived from page slugs or file paths, and changing a folder or item path rewrites those slugs/paths after a confirmation dialog lists the exact changes. Deleting a structural folder deletes every page or file under that path. Templates and Visual Components stay decorative: folders only organize rows in the editor and do not change template routing or component identity.
 
 ```ts
 type SiteExplorerSectionId =
@@ -214,6 +215,15 @@ type SiteExplorerSectionId =
   | 'components'
   | 'styles'
   | 'scripts'
+
+type StructuralSiteExplorerSectionId =
+  | 'pages'
+  | 'styles'
+  | 'scripts'
+
+type DecorativeSiteExplorerSectionId =
+  | 'templates'
+  | 'components'
 
 type SiteExplorerFolder = {
   id: string
@@ -227,20 +237,42 @@ type SiteExplorerItemPlacement = {
   order: number
 }
 
-type SiteExplorerOrganization = Record<SiteExplorerSectionId, {
+type StructuralExplorerRowOrder = {
+  kind: 'folder' | 'item'
+  id: string
+  parentPath?: string
+  order: number
+}
+
+type StructuralExplorerSection = {
+  expandedFolders: string[]
+  emptyFolders: string[]
+  rowOrder: StructuralExplorerRowOrder[]
+}
+
+type DecorativeExplorerSection = {
   folders: SiteExplorerFolder[]
   items: SiteExplorerItemPlacement[]
-}>
+}
+
+type SiteExplorerOrganization = {
+  pages: StructuralExplorerSection
+  styles: StructuralExplorerSection
+  scripts: StructuralExplorerSection
+  templates: DecorativeExplorerSection
+  components: DecorativeExplorerSection
+}
 ```
 
-`src/core/page-tree/siteExplorer.ts` owns the schema and reconciliation helpers. On load and after item lifecycle mutations, the editor reconciles placements against the current pages, templates, Visual Components, styles, and scripts:
+`src/core/page-tree/siteExplorer.ts` owns the schema and reconciliation helpers. On load and after item lifecycle mutations, the editor reconciles structural folders/rows and decorative placements against the current pages, templates, Visual Components, styles, and scripts:
 
-- stale item placements are dropped
-- missing items are appended in current item order
+- structural folder rows are rebuilt from slash-delimited slugs/paths plus persisted empty folders
+- stale structural row order and decorative item placements are dropped
+- missing decorative items are appended in current item order
 - generated non-ejected files stay hidden
 - the homepage (`slug: 'index'`) is pinned to the root of the Pages section and rendered first
 
-Folders are intentionally flat and decorative. Pages remain individual rows with flat slugs; putting a page in a folder does not create a parent route.
+Structural page folders create parent routes because page slugs are URL paths. Structural style/script folders create file path directories. Decorative template/component folders are intentionally flat editor organization.
 
 ### `SitePackageJson` — the per-site `package.json`
 

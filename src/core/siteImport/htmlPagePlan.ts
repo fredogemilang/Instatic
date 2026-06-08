@@ -4,7 +4,7 @@
  * Steps:
  *   1. Parse the full HTML with DOMParser (browser/happy-dom) to extract
  *      `<title>` text, `<link rel="stylesheet">` hrefs from `<head>`, and
- *      `<script src>` tags from the full document.
+ *      executable `<script>` tags from the full document.
  *      In environments without DOMParser, falls back to a minimal regex
  *      scanner so the module stays headless.
  *   2. Resolve each stylesheet href relative to the HTML file's path, then
@@ -17,7 +17,7 @@
 import { importHtml } from '@core/htmlImport'
 import type { ImportFragment } from '@core/htmlImport'
 import { normalizePageSlug } from '@core/page-tree'
-import type { FileMap, ImportWarning, PagePlan } from './types'
+import type { FileMap, ImportWarning, PagePlan, PageScript } from './types'
 import type { SiteScriptFormat } from '@core/site-runtime'
 
 // ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ export function makeHtmlPagePlan(
   const warnings: ImportWarning[] = []
 
   // --- Step 1: extract <title>, stylesheet links, and script references ---
-  const { title: extractedTitle, linkHrefs, scriptRefs } = extractDocumentMeta(htmlSource)
+  const { title: extractedTitle, linkHrefs, scriptRefs } = extractDocumentMeta(htmlSource, htmlPath)
 
   // --- Step 2: resolve stylesheet hrefs to FileMap keys ---
   const linkedCssPaths: string[] = []
@@ -70,11 +70,15 @@ export function makeHtmlPagePlan(
     // href that couldn't be resolved (external, absolute, etc.) is silently ignored
   }
 
-  const linkedScripts: PagePlan['linkedScripts'] = []
+  const scripts: PageScript[] = []
   for (const script of scriptRefs) {
+    if (script.kind === 'inline') {
+      scripts.push(script)
+      continue
+    }
     const resolved = resolveHref(script.src, htmlPath)
     if (resolved && fileMap.files[resolved]) {
-      linkedScripts.push({ path: resolved, format: script.format })
+      scripts.push({ kind: 'external', path: resolved, format: script.format })
     } else if (resolved) {
       warnings.push({
         kind: 'missing-script',
@@ -102,7 +106,7 @@ export function makeHtmlPagePlan(
     title,
     slug,
     linkedCssPaths,
-    linkedScripts,
+    scripts,
     nodeFragment,
   }
 
@@ -113,10 +117,18 @@ export function makeHtmlPagePlan(
 // Document metadata extraction
 // ---------------------------------------------------------------------------
 
-interface ScriptRef {
-  src: string
-  format: SiteScriptFormat
-}
+type ScriptRef =
+  | {
+    kind: 'external'
+    src: string
+    format: SiteScriptFormat
+  }
+  | {
+    kind: 'inline'
+    path: string
+    content: string
+    format: SiteScriptFormat
+  }
 
 interface DocumentMeta {
   title: string | null
@@ -131,20 +143,42 @@ interface DocumentMeta {
  * Uses DOMParser when available (browser + happy-dom test environment).
  * Falls back to regex for server-side or other environments without a DOM.
  */
-function extractDocumentMeta(htmlSource: string): DocumentMeta {
+function extractDocumentMeta(htmlSource: string, htmlPath: string): DocumentMeta {
   // Try DOMParser (browser, happy-dom)
   if (typeof DOMParser !== 'undefined') {
-    return extractDocumentMetaFromDom(htmlSource)
+    return extractDocumentMetaFromDom(htmlSource, htmlPath)
   }
   // Fallback: lightweight regex extraction
-  return extractDocumentMetaFromRegex(htmlSource)
+  return extractDocumentMetaFromRegex(htmlSource, htmlPath)
 }
 
-function scriptFormatFromType(type: string | null): SiteScriptFormat {
-  return type?.trim().toLowerCase() === 'module' ? 'module' : 'classic'
+const CLASSIC_JAVASCRIPT_TYPES = new Set([
+  'application/ecmascript',
+  'application/javascript',
+  'application/x-ecmascript',
+  'application/x-javascript',
+  'text/ecmascript',
+  'text/javascript',
+  'text/javascript1.0',
+  'text/javascript1.1',
+  'text/javascript1.2',
+  'text/javascript1.3',
+  'text/javascript1.4',
+  'text/javascript1.5',
+  'text/jscript',
+  'text/livescript',
+  'text/x-ecmascript',
+  'text/x-javascript',
+])
+
+function scriptFormatFromType(type: string | null): SiteScriptFormat | null {
+  const normalized = type?.trim().toLowerCase().split(';', 1)[0] ?? ''
+  if (normalized === '' || CLASSIC_JAVASCRIPT_TYPES.has(normalized)) return 'classic'
+  if (normalized === 'module') return 'module'
+  return null
 }
 
-function extractDocumentMetaFromDom(htmlSource: string): DocumentMeta {
+function extractDocumentMetaFromDom(htmlSource: string, htmlPath: string): DocumentMeta {
   try {
     const doc = new DOMParser().parseFromString(htmlSource, 'text/html')
     const titleEl = doc.querySelector('title')
@@ -158,25 +192,38 @@ function extractDocumentMetaFromDom(htmlSource: string): DocumentMeta {
     }
 
     const scriptRefs: ScriptRef[] = []
-    const scripts = doc.querySelectorAll('script[src]')
+    const scripts = doc.querySelectorAll('script')
+    let inlineIndex = 0
     for (const script of Array.from(scripts)) {
+      const format = scriptFormatFromType(script.getAttribute('type'))
+      if (!format) continue
+
       const src = script.getAttribute('src')
-      if (!src || src.trim().length === 0) continue
+      if (src && src.trim().length > 0) {
+        scriptRefs.push({ kind: 'external', src: src.trim(), format })
+        continue
+      }
+
+      const content = script.textContent?.trim() ?? ''
+      if (content.length === 0) continue
+      inlineIndex += 1
       scriptRefs.push({
-        src: src.trim(),
-        format: scriptFormatFromType(script.getAttribute('type')),
+        kind: 'inline',
+        path: inlineScriptPath(htmlPath, inlineIndex),
+        content,
+        format,
       })
     }
 
     return { title, linkHrefs, scriptRefs }
   } catch {
     // DOM parse failed — fall through to regex
-    return extractDocumentMetaFromRegex(htmlSource)
+    return extractDocumentMetaFromRegex(htmlSource, htmlPath)
   }
 }
 
 /** Minimal regex fallback for environments without DOMParser. */
-function extractDocumentMetaFromRegex(htmlSource: string): DocumentMeta {
+function extractDocumentMetaFromRegex(htmlSource: string, htmlPath: string): DocumentMeta {
   // Extract <title>
   const titleMatch = htmlSource.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
   const title = titleMatch ? titleMatch[1].replace(/\s+/g, ' ').trim() : null
@@ -196,20 +243,42 @@ function extractDocumentMetaFromRegex(htmlSource: string): DocumentMeta {
   }
 
   const scriptRefs: ScriptRef[] = []
-  const scriptRe = /<script\s[^>]*>/gi
+  const scriptRe = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi
   let scriptMatch: RegExpExecArray | null
+  let inlineIndex = 0
   while ((scriptMatch = scriptRe.exec(htmlSource)) !== null) {
-    const tag = scriptMatch[0]
-    const srcMatch = tag.match(/src=["']([^"']+)["']/i)
-    if (!srcMatch) continue
-    const typeMatch = tag.match(/type=["']([^"']+)["']/i)
+    const attrs = scriptMatch[1] ?? ''
+    const format = scriptFormatFromType(attrValue(attrs, 'type'))
+    if (!format) continue
+
+    const src = attrValue(attrs, 'src')?.trim()
+    if (src) {
+      scriptRefs.push({ kind: 'external', src, format })
+      continue
+    }
+
+    const content = (scriptMatch[2] ?? '').trim()
+    if (content.length === 0) continue
+    inlineIndex += 1
     scriptRefs.push({
-      src: srcMatch[1].trim(),
-      format: scriptFormatFromType(typeMatch?.[1] ?? null),
+      kind: 'inline',
+      path: inlineScriptPath(htmlPath, inlineIndex),
+      content,
+      format,
     })
   }
 
   return { title, linkHrefs, scriptRefs }
+}
+
+function inlineScriptPath(htmlPath: string, index: number): string {
+  return `${htmlPath}-inline-script-${index}.js`
+}
+
+function attrValue(attrs: string, name: string): string | null {
+  const re = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>]+))`, 'i')
+  const match = attrs.match(re)
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null
 }
 
 // ---------------------------------------------------------------------------

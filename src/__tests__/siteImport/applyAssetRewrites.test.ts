@@ -25,7 +25,7 @@ function planWith(
         title: 'Home',
         slug: 'index',
         linkedCssPaths: [],
-        linkedScripts: [],
+        scripts: [],
         nodeFragment: {
           rootIds: ['n1'],
           nodes: {
@@ -55,6 +55,7 @@ function planWith(
       : [],
     styleRuleSources: cssStyles && Object.keys(cssStyles).length > 0 ? ['styles.css'] : [],
     fonts: [],
+    googleFonts: [],
     conditions: [],
     assets: [],
     conflicts: { pages: [], rules: [], tokens: [] },
@@ -175,6 +176,7 @@ describe('applyAssetRewrites — CSS styles', () => {
       ],
       styleRuleSources: ['styles.css'],
       fonts: [],
+      googleFonts: [],
       conditions: [],
       assets: [],
       conflicts: { pages: [], rules: [], tokens: [] },
@@ -217,7 +219,7 @@ describe('applyAssetRewrites — inline background node.inlineStyles', () => {
           title: 'Home',
           slug: 'index',
           linkedCssPaths: [],
-          linkedScripts: [],
+          scripts: [],
           nodeFragment: {
             rootIds: ['n1'],
             nodes: {
@@ -237,6 +239,7 @@ describe('applyAssetRewrites — inline background node.inlineStyles', () => {
       styleRules: [],
       styleRuleSources: [],
       fonts: [],
+      googleFonts: [],
       conditions: [],
       assets: [],
       conflicts: { pages: [], rules: [], tokens: [] },

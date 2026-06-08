@@ -80,6 +80,16 @@ export const IMAGE_MIMES: ReadonlyArray<AcceptedMediaMime> = [
   'image/svg+xml',
 ]
 
+const RESPONSIVE_VARIANT_MIMES: ReadonlySet<AcceptedMediaMime> = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+])
+
+function shouldProcessResponsiveVariants(mime: AcceptedMediaMime): boolean {
+  return RESPONSIVE_VARIANT_MIMES.has(mime)
+}
+
 /**
  * Magic-byte signatures for each accepted MIME. Each signature is a list of
  * `(offset, byte)` constraints — the file passes the signature if every
@@ -300,12 +310,13 @@ export async function acceptUploadedMedia(
     externallyHosted: dispatched.externallyHosted,
   })
 
-  // Responsive pipeline (docs/responsive-media.md). Image-only for v1 —
-  // video posters / multi-bitrate ladders ship later. Failure inside the
-  // pipeline is non-fatal: the asset row is already written; the worst
-  // case is the row has no variants and consumers fall back to the
-  // original. Logged at the boundary in `mediaVariants.ts`.
-  if (validated.detectedMime.startsWith('image/')) {
+  // Responsive pipeline (docs/features/media.md). Raster-only for v1:
+  // SVGs already scale without a bitmap ladder, and GIF conversion would
+  // collapse animation to a still. Failure inside the pipeline is
+  // non-fatal: the asset row is already written; the worst case is the row
+  // has no variants and consumers fall back to the original. Logged at the
+  // boundary in `mediaVariants.ts`.
+  if (shouldProcessResponsiveVariants(validated.detectedMime)) {
     const processed = await processImageVariants(db, validated.bytes, dispatched.storagePath)
     if (processed) {
       const upgraded = await setMediaAssetVariants(db, asset.id, {
@@ -403,7 +414,7 @@ export async function acceptReplacementMedia(
   // so a crash mid-pipeline leaves the asset with the new original but no
   // variants — consumers fall back to the original gracefully.
   let finalAsset = updated
-  if (validated.detectedMime.startsWith('image/')) {
+  if (shouldProcessResponsiveVariants(validated.detectedMime)) {
     const processed = await processImageVariants(db, validated.bytes, dispatched.storagePath)
     if (processed) {
       const upgraded = await setMediaAssetVariants(db, assetId, {

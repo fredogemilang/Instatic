@@ -10,7 +10,11 @@ import type { IconComponent } from 'pixel-art-icons/types'
 import {
   SITE_EXPLORER_SECTION_IDS,
   isHomePage,
+  type DecorativeSiteExplorerSectionId,
+  type ExplorerPathChangePlan,
   type SiteExplorerSectionId,
+  type SiteDocument,
+  type StructuralSiteExplorerSectionId,
 } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 
@@ -73,6 +77,15 @@ export interface SiteExplorerDropTarget {
 
 interface UseSiteExplorerDndOptions {
   enabled: boolean
+  onStructuralPathPlan: (plan: ExplorerPathChangePlan) => void
+}
+
+interface StructuralDndRow {
+  kind: 'folder' | 'item'
+  id: string
+  parentPath?: string
+  order: number
+  naturalOrder: number
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -81,6 +94,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isSectionId(value: unknown): value is SiteExplorerSectionId {
   return SITE_EXPLORER_SECTION_IDS.some((sectionId) => sectionId === value)
+}
+
+function isStructuralSection(sectionId: SiteExplorerSectionId): sectionId is StructuralSiteExplorerSectionId {
+  return sectionId === 'pages' || sectionId === 'styles' || sectionId === 'scripts'
+}
+
+function isDecorativeSection(sectionId: SiteExplorerSectionId): sectionId is DecorativeSiteExplorerSectionId {
+  return sectionId === 'templates' || sectionId === 'components'
 }
 
 function readDragData(value: unknown): SiteExplorerDragData | null {
@@ -165,7 +186,7 @@ function readDropData(value: unknown): SiteExplorerDropData | null {
 }
 
 function itemIndexInParent(
-  sectionId: SiteExplorerSectionId,
+  sectionId: DecorativeSiteExplorerSectionId,
   itemId: string,
   parentFolderId: string | null,
 ): number {
@@ -180,7 +201,7 @@ function itemIndexInParent(
 }
 
 function rootEntryIndex(
-  sectionId: SiteExplorerSectionId,
+  sectionId: DecorativeSiteExplorerSectionId,
   kind: 'folder' | 'item',
   id: string,
 ): number {
@@ -194,7 +215,7 @@ function rootEntryIndex(
       order: folder.order,
     })),
     ...section.items
-      .filter((item) => !item.parentFolderId && !(sectionId === 'pages' && isPinnedHomepage(item.id)))
+      .filter((item) => !item.parentFolderId)
       .map((item) => ({
         kind: 'item' as const,
         id: item.id,
@@ -203,13 +224,6 @@ function rootEntryIndex(
   ].sort((a, b) => a.order - b.order)
 
   return entries.findIndex((entry) => entry.kind === kind && entry.id === id)
-}
-
-function storageRootIndex(sectionId: SiteExplorerSectionId, uiRootIndex: number): number {
-  if (sectionId !== 'pages') return uiRootIndex
-  const site = useEditorStore.getState().site
-  const hasHomepage = Boolean(site?.pages.some((page) => isHomePage(page)))
-  return uiRootIndex + (hasHomepage ? 1 : 0)
 }
 
 function adjustedIndex(
@@ -229,13 +243,18 @@ function isPinnedHomepage(itemId: string): boolean {
 function handleItemDrop(
   active: Extract<SiteExplorerDragData, { kind: 'siteExplorerItem' }>,
   target: SiteExplorerDropTarget,
+  onStructuralPathPlan: (plan: ExplorerPathChangePlan) => void,
 ) {
   const over = target.drop
   if (active.sectionId !== over.sectionId) return
-  if (active.sectionId === 'pages' && isPinnedHomepage(active.itemId)) return
+  if (isStructuralSection(active.sectionId)) {
+    handleStructuralItemDrop(active, target, onStructuralPathPlan)
+    return
+  }
+  if (!isDecorativeSection(active.sectionId)) return
 
   const state = useEditorStore.getState()
-  const draggedIds = active.itemIds.filter((itemId) => !(active.sectionId === 'pages' && isPinnedHomepage(itemId)))
+  const draggedIds = active.itemIds
   if (draggedIds.length === 0) return
 
   if (over.kind === 'siteExplorerRoot') {
@@ -245,7 +264,7 @@ function handleItemDrop(
       active.sectionId,
       draggedIds,
       null,
-      storageRootIndex(active.sectionId, nextUiIndex),
+      nextUiIndex,
     )
     return
   }
@@ -267,7 +286,7 @@ function handleItemDrop(
       active.sectionId,
       draggedIds,
       null,
-      storageRootIndex(active.sectionId, nextUiIndex),
+      nextUiIndex,
     )
     return
   }
@@ -285,18 +304,51 @@ function handleItemDrop(
     active.sectionId,
     draggedIds,
     over.parentFolderId,
-    over.parentFolderId === null
-      ? storageRootIndex(active.sectionId, nextUiIndex)
-      : nextUiIndex,
+    nextUiIndex,
+  )
+}
+
+function handleStructuralItemDrop(
+  active: Extract<SiteExplorerDragData, { kind: 'siteExplorerItem' }>,
+  target: SiteExplorerDropTarget,
+  onStructuralPathPlan: (plan: ExplorerPathChangePlan) => void,
+) {
+  const sectionId = active.sectionId
+  if (!isStructuralSection(sectionId)) return
+  const over = target.drop
+  const state = useEditorStore.getState()
+  const nextParentPath = structuralNextParentPath(over, target.position)
+  const currentParentPath = structuralItemParentPath(state.site, sectionId, active.itemId)
+  if (!samePath(currentParentPath, nextParentPath)) {
+    onStructuralPathPlan(state.previewMoveExplorerItem(sectionId, active.itemId, nextParentPath))
+    return
+  }
+
+  const currentIndex = structuralRowIndexInParent(state.site, sectionId, {
+    kind: 'item',
+    id: active.itemId,
+    ...(currentParentPath ? { parentPath: currentParentPath } : {}),
+  })
+  const targetIndex = structuralTargetIndex(over, target.position)
+  state.moveStructuralExplorerRow(
+    sectionId,
+    { kind: 'item', id: active.itemId, ...(currentParentPath ? { parentPath: currentParentPath } : {}) },
+    adjustedIndex(currentIndex, targetIndex, currentIndex !== -1),
   )
 }
 
 function handleFolderDrop(
   active: Extract<SiteExplorerDragData, { kind: 'siteExplorerFolder' }>,
   target: SiteExplorerDropTarget,
+  onStructuralPathPlan: (plan: ExplorerPathChangePlan) => void,
 ) {
   const over = target.drop
   if (active.sectionId !== over.sectionId) return
+  if (isStructuralSection(active.sectionId)) {
+    handleStructuralFolderDrop(active, target, onStructuralPathPlan)
+    return
+  }
+  if (!isDecorativeSection(active.sectionId)) return
 
   if (over.kind === 'siteExplorerItem' && over.parentFolderId !== null) return
   if (over.kind === 'siteExplorerRoot') return
@@ -310,18 +362,171 @@ function handleFolderDrop(
   useEditorStore.getState().moveExplorerFolder(
     active.sectionId,
     active.folderId,
-    storageRootIndex(active.sectionId, nextUiIndex),
+    nextUiIndex,
   )
 }
 
-function handleExplorerDrop(active: SiteExplorerDragData, target: SiteExplorerDropTarget | null) {
+function handleStructuralFolderDrop(
+  active: Extract<SiteExplorerDragData, { kind: 'siteExplorerFolder' }>,
+  target: SiteExplorerDropTarget,
+  onStructuralPathPlan: (plan: ExplorerPathChangePlan) => void,
+) {
+  const sectionId = active.sectionId
+  if (!isStructuralSection(sectionId)) return
+  const over = target.drop
+  if (over.kind === 'siteExplorerFolder' && active.folderId === over.folderId) return
+
+  const state = useEditorStore.getState()
+  const currentParentPath = parentPathForPath(active.folderId)
+  const nextParentPath = structuralNextParentPath(over, target.position)
+  if (!samePath(currentParentPath, nextParentPath)) {
+    onStructuralPathPlan(state.previewMoveExplorerFolder(sectionId, active.folderId, nextParentPath))
+    return
+  }
+
+  const currentIndex = structuralRowIndexInParent(state.site, sectionId, {
+    kind: 'folder',
+    id: active.folderId,
+    ...(currentParentPath ? { parentPath: currentParentPath } : {}),
+  })
+  const targetIndex = structuralTargetIndex(over, target.position)
+  state.moveStructuralExplorerRow(
+    sectionId,
+    { kind: 'folder', id: active.folderId, ...(currentParentPath ? { parentPath: currentParentPath } : {}) },
+    adjustedIndex(currentIndex, targetIndex, currentIndex !== -1),
+  )
+}
+
+function handleExplorerDrop(
+  active: SiteExplorerDragData,
+  target: SiteExplorerDropTarget | null,
+  onStructuralPathPlan: (plan: ExplorerPathChangePlan) => void,
+) {
   if (!target) return
 
   if (active.kind === 'siteExplorerItem') {
-    handleItemDrop(active, target)
+    handleItemDrop(active, target, onStructuralPathPlan)
   } else {
-    handleFolderDrop(active, target)
+    handleFolderDrop(active, target, onStructuralPathPlan)
   }
+}
+
+function structuralNextParentPath(
+  over: SiteExplorerDropData,
+  position: SiteExplorerDropPosition,
+): string | undefined {
+  if (over.kind === 'siteExplorerRoot') return undefined
+  if (over.kind === 'siteExplorerFolder') {
+    return position === 'inside' ? over.folderId : parentPathForPath(over.folderId)
+  }
+  return over.parentFolderId ?? undefined
+}
+
+function structuralTargetIndex(
+  over: SiteExplorerDropData,
+  position: SiteExplorerDropPosition,
+): number {
+  if (over.kind === 'siteExplorerRoot') return over.index
+  if (over.kind === 'siteExplorerFolder') {
+    return position === 'inside'
+      ? over.itemCount
+      : over.rootIndex + (position === 'after' ? 1 : 0)
+  }
+  return over.index + (position === 'after' ? 1 : 0)
+}
+
+function structuralItemParentPath(
+  site: SiteDocument | null,
+  sectionId: StructuralSiteExplorerSectionId,
+  itemId: string,
+): string | undefined {
+  if (!site) return undefined
+  if (sectionId === 'pages') {
+    const page = site.pages.find((candidate) => candidate.id === itemId)
+    return page ? parentPathForPath(page.slug) : undefined
+  }
+  const file = site.files.find((candidate) => candidate.id === itemId)
+  return file ? parentPathForPath(file.path) : undefined
+}
+
+function structuralRowIndexInParent(
+  site: SiteDocument | null,
+  sectionId: StructuralSiteExplorerSectionId,
+  row: { kind: 'folder' | 'item'; id: string; parentPath?: string },
+): number {
+  if (!site) return -1
+  return structuralRowsForDnd(site, sectionId)
+    .filter((entry) => samePath(entry.parentPath, row.parentPath))
+    .sort(compareStructuralRows)
+    .findIndex((entry) => entry.kind === row.kind && entry.id === row.id)
+}
+
+function structuralRowsForDnd(
+  site: SiteDocument,
+  sectionId: StructuralSiteExplorerSectionId,
+): StructuralDndRow[] {
+  const rows: Array<Omit<StructuralDndRow, 'order' | 'naturalOrder'>> = []
+  const folders = new Set(site.explorer[sectionId].emptyFolders)
+
+  if (sectionId === 'pages') {
+    for (const page of site.pages) {
+      if (page.template || isHomePage(page)) continue
+      rows.push({ kind: 'item', id: page.id, ...optionalParentPath(parentPathForPath(page.slug)) })
+      addFolderPrefixes(folders, page.slug)
+    }
+  } else {
+    const type = sectionId === 'styles' ? 'style' : 'script'
+    for (const file of site.files) {
+      if (file.type !== type || (file.generated && !file.ejected)) continue
+      rows.push({ kind: 'item', id: file.id, ...optionalParentPath(parentPathForPath(file.path)) })
+      addFolderPrefixes(folders, file.path)
+    }
+  }
+
+  for (const folderPath of folders) {
+    rows.push({ kind: 'folder', id: folderPath, ...optionalParentPath(parentPathForPath(folderPath)) })
+  }
+
+  const orderByKey = new Map(
+    site.explorer[sectionId].rowOrder.map((entry) => [structuralRowKey(entry), entry.order]),
+  )
+  return rows.map((row, naturalOrder) => ({
+    ...row,
+    order: orderByKey.get(structuralRowKey(row)) ?? Number.POSITIVE_INFINITY,
+    naturalOrder,
+  }))
+}
+
+function addFolderPrefixes(folders: Set<string>, path: string): void {
+  const segments = path.split('/').filter(Boolean)
+  let current = ''
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    current = current ? `${current}/${segments[index]}` : segments[index]
+    folders.add(current)
+  }
+}
+
+function optionalParentPath(parentPath: string | undefined): { parentPath?: string } {
+  return parentPath ? { parentPath } : {}
+}
+
+function parentPathForPath(path: string): string | undefined {
+  const index = path.lastIndexOf('/')
+  return index === -1 ? undefined : path.slice(0, index)
+}
+
+function structuralRowKey(row: { kind: 'folder' | 'item'; id: string; parentPath?: string }): string {
+  return `${row.kind}:${row.parentPath ?? ''}:${row.id}`
+}
+
+function samePath(left: string | undefined, right: string | undefined): boolean {
+  return (left ?? '') === (right ?? '')
+}
+
+function compareStructuralRows(left: StructuralDndRow, right: StructuralDndRow): number {
+  return left.order - right.order
+    || left.naturalOrder - right.naturalOrder
+    || left.id.localeCompare(right.id)
 }
 
 function positionForRect(rect: DropRect, point: Point | null): 'before' | 'after' {
@@ -355,12 +560,22 @@ function resolveDropTarget(
   if (drop.kind === 'siteExplorerFolder') {
     if (drag.kind === 'siteExplorerFolder') {
       if (drag.folderId === drop.folderId) return null
-      return { drag, drop, position: positionForRect(event.over.rect, point) }
+      return {
+        drag,
+        drop,
+        position: isStructuralSection(drag.sectionId)
+          ? folderPositionForRect(event.over.rect, point)
+          : positionForRect(event.over.rect, point),
+      }
     }
     return { drag, drop, position: folderPositionForRect(event.over.rect, point) }
   }
 
-  if (drag.kind === 'siteExplorerFolder' && drop.parentFolderId !== null) return null
+  if (
+    drag.kind === 'siteExplorerFolder'
+    && drop.parentFolderId !== null
+    && !isStructuralSection(drag.sectionId)
+  ) return null
   if (drag.kind === 'siteExplorerItem' && drop.itemId === drag.itemId) return null
   if (drop.sectionId === 'pages' && isPinnedHomepage(drop.itemId)) return null
   return { drag, drop, position: positionForRect(event.over.rect, point) }
@@ -388,7 +603,7 @@ function getEventPoint(event: Event): Point | null {
   return null
 }
 
-export function useSiteExplorerDnd({ enabled }: UseSiteExplorerDndOptions) {
+export function useSiteExplorerDnd({ enabled, onStructuralPathPlan }: UseSiteExplorerDndOptions) {
   const startPointRef = useRef<Point | null>(null)
   const latestTargetRef = useRef<SiteExplorerDropTarget | null>(null)
   const [active, setActive] = useState<SiteExplorerDragData | null>(null)
@@ -427,7 +642,7 @@ export function useSiteExplorerDnd({ enabled }: UseSiteExplorerDndOptions) {
       const drag = readDragData(event.active.data.current)
       const point = getDragPoint(event, startPointRef.current)
       const finalTarget = latestTargetRef.current ?? resolveDropTarget(drag, event, point)
-      if (drag) handleExplorerDrop(drag, finalTarget)
+      if (drag) handleExplorerDrop(drag, finalTarget, onStructuralPathPlan)
       resetDragState()
     },
     onDragCancel(_event: DragCancelEvent) {

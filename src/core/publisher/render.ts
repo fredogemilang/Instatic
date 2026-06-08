@@ -9,7 +9,7 @@
  *
  *   - template-context defaulting (page / site / route frames)
  *   - `<body>`-tag class injection from the root node's classIds
- *   - `<head>` meta tags (title, description, favicon, font import, lang)
+ *   - `<head>` meta tags (title, description, favicon, lang)
  *   - runtime asset `<script>` tags + the importmap
  *   - Content-Security-Policy `<meta>` tag
  *   - inline `<style>` block OR `<link>` tags for the site CSS bundle
@@ -285,7 +285,7 @@ function computeBodyOpenTag(page: Page, site: SiteDocument): string {
  * `<head>` metadata tags derived from site settings + page.
  *
  * - `title` falls back through metaTitle → page.title → site.name.
- * - URL-typed settings (faviconUrl, fontImportUrl) are validated by
+ * - URL-typed settings (faviconUrl) are validated by
  *   isSafeUrl() (blocks `javascript:` / `vbscript:` schemes) and then
  *   escapeHtml()'d for safe attribute interpolation.
  * - `lang` honours WCAG 2.1 AA SC 3.1.1 and escapes the BCP-47 tag
@@ -295,7 +295,6 @@ interface DocumentMetaTags {
   pageTitle: string
   metaDesc: string
   favicon: string
-  fontImport: string
   langAttr: string
 }
 
@@ -308,15 +307,10 @@ function buildDocumentMetaTags(site: SiteDocument, page: Page): DocumentMetaTags
     settings.faviconUrl && isSafeUrl(settings.faviconUrl)
       ? `\n  <link rel="icon" href="${escapeHtml(settings.faviconUrl)}">`
       : ''
-  const fontImport =
-    settings.fontImportUrl && isSafeUrl(settings.fontImportUrl)
-      ? `\n  <link rel="stylesheet" href="${escapeHtml(settings.fontImportUrl)}">`
-      : ''
   return {
     pageTitle: escapeHtml(settings.metaTitle ?? page.title ?? site.name),
     metaDesc,
     favicon,
-    fontImport,
     langAttr: escapeHtml(settings.language ?? 'en'),
   }
 }
@@ -422,7 +416,6 @@ interface AssembledDocumentParts {
   pageTitle: string
   metaDesc: string
   favicon: string
-  fontImport: string
   styleHeadHtml: string
   importmapTag: string
   headRuntimeScripts: string
@@ -441,7 +434,7 @@ function assembleHtmlDocument(parts: AssembledDocumentParts): string {
     `<head>\n` +
     `  <meta charset="UTF-8">\n` +
     `  <meta name="viewport" content="width=device-width, initial-scale=1.0">${parts.csp}\n` +
-    `  <title>${parts.pageTitle}</title>${parts.metaDesc}${parts.favicon}${parts.fontImport}\n` +
+    `  <title>${parts.pageTitle}</title>${parts.metaDesc}${parts.favicon}\n` +
     parts.styleHeadHtml +
     lineOrEmpty(parts.importmapTag) +
     lineOrEmpty(parts.headRuntimeScripts) +
@@ -535,7 +528,6 @@ export function publishPage(
     pageTitle: meta.pageTitle,
     metaDesc: meta.metaDesc,
     favicon: meta.favicon,
-    fontImport: meta.fontImport,
     styleHeadHtml,
     importmapTag: runtime.importmapTag,
     headRuntimeScripts: runtime.headRuntimeScripts,

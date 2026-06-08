@@ -9,7 +9,22 @@
 import type { StoreApi } from 'zustand'
 import type { Draft, Patches } from 'mutative'
 import type { FrameworkColorToken, FrameworkColorUtilityType, FrameworkPreferencesSettings, FrameworkScaleManualSize, FrameworkScaleMode, FrameworkSpacingClassGenerator, FrameworkSpacingGroup, FrameworkTypographyClassGenerator, FrameworkTypographyGroup } from '@core/framework-schema'
-import type { SiteDocument, Page, PageNode, NodeTree, Breakpoint, SiteSettings, PageTemplateConfig, DynamicPropBinding, ConditionDef, SiteExplorerSectionId } from '@core/page-tree'
+import type {
+  DecorativeSiteExplorerSectionId,
+  DynamicPropBinding,
+  ExplorerPathChangePlan,
+  Page,
+  PageNode,
+  NodeTree,
+  Breakpoint,
+  SiteDocument,
+  SiteExplorerSectionId,
+  SiteSettings,
+  PageTemplateConfig,
+  ConditionDef,
+  StructuralExplorerRowOrder,
+  StructuralSiteExplorerSectionId,
+} from '@core/page-tree'
 import type { FontEntry, FontToken } from '@core/fonts'
 import type { ImportFragment } from '@core/htmlImport'
 import type {
@@ -69,17 +84,17 @@ export interface SuperImportHelpers {
   addConditions(conditions: ConditionDef[]): void
 
   /**
-   * Set the site-level external font stylesheet URL extracted from imported
-   * CSS @import rules.
-   */
-  setFontImportUrl(url: string): void
-
-  /**
    * Add custom font families (from imported `@font-face` blocks) to
    * `site.settings.fonts`. Each file's `src` is already a final media URL.
    * @returns The committed `{ id, family }` for each added font.
    */
   addFonts(fonts: ImportFontFamily[]): { id: string; family: string }[]
+
+  /**
+   * Merge already-installed font entries into `site.settings.fonts`.
+   * @returns The committed `{ id, family }` for each added/replaced font.
+   */
+  addInstalledFonts(fonts: FontEntry[]): { id: string; family: string }[]
 
   /**
    * Add font tokens to `site.settings.fonts.tokens`, resolving token.family to
@@ -228,23 +243,49 @@ export interface SiteSlice {
   reorderPages: (fromIndex: number, toIndex: number) => void
   convertPageToTemplate: (pageId: string, config: PageTemplateConfig) => void
   convertTemplateToPage: (pageId: string) => void
-  createExplorerFolder: (sectionId: SiteExplorerSectionId, name: string) => string
-  renameExplorerFolder: (sectionId: SiteExplorerSectionId, folderId: string, name: string) => void
-  deleteExplorerFolder: (sectionId: SiteExplorerSectionId, folderId: string) => void
-  moveExplorerFolder: (sectionId: SiteExplorerSectionId, folderId: string, nextIndex: number) => void
+  createExplorerFolder: (sectionId: SiteExplorerSectionId, name: string, parentPath?: string) => string
+  renameExplorerFolder: (sectionId: DecorativeSiteExplorerSectionId, folderId: string, name: string) => void
+  deleteExplorerFolder: (sectionId: DecorativeSiteExplorerSectionId, folderId: string) => void
+  moveExplorerFolder: (sectionId: DecorativeSiteExplorerSectionId, folderId: string, nextIndex: number) => void
   moveExplorerItem: (
-    sectionId: SiteExplorerSectionId,
+    sectionId: DecorativeSiteExplorerSectionId,
     itemId: string,
     parentFolderId: string | null,
     nextIndex: number,
   ) => void
   moveExplorerItems: (
-    sectionId: SiteExplorerSectionId,
+    sectionId: DecorativeSiteExplorerSectionId,
     itemIds: string[],
     parentFolderId: string | null,
     nextIndex: number,
   ) => void
-  wrapExplorerItemsInFolder: (sectionId: SiteExplorerSectionId, itemIds: string[], name: string) => string | null
+  wrapExplorerItemsInFolder: (sectionId: DecorativeSiteExplorerSectionId, itemIds: string[], name: string) => string | null
+  previewRenameExplorerFolder: (
+    sectionId: StructuralSiteExplorerSectionId,
+    folderPath: string,
+    nextFolderPath: string,
+  ) => ExplorerPathChangePlan
+  previewMoveExplorerFolder: (
+    sectionId: StructuralSiteExplorerSectionId,
+    folderPath: string,
+    nextParentPath: string | undefined,
+  ) => ExplorerPathChangePlan
+  previewMoveExplorerItem: (
+    sectionId: StructuralSiteExplorerSectionId,
+    itemId: string,
+    nextParentPath: string | undefined,
+  ) => ExplorerPathChangePlan
+  previewDeleteExplorerFolder: (
+    sectionId: StructuralSiteExplorerSectionId,
+    folderPath: string,
+  ) => ExplorerPathChangePlan
+  commitExplorerPathChange: (plan: ExplorerPathChangePlan) => void
+  toggleStructuralExplorerFolder: (sectionId: StructuralSiteExplorerSectionId, folderPath: string) => void
+  moveStructuralExplorerRow: (
+    sectionId: StructuralSiteExplorerSectionId,
+    row: Omit<StructuralExplorerRowOrder, 'order'>,
+    nextIndex: number,
+  ) => void
   setPageAsHomepage: (pageId: string) => void
 
   // Node mutations (operate on the active page)

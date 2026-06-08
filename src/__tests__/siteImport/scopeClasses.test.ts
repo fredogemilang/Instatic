@@ -33,7 +33,7 @@ function page(source: string, linkedCssPaths: string[], classIds: string[]): Pag
   const node = createNode('base.button')
   node.classIds = classIds
   const fragment: ImportFragment = { nodes: { [node.id]: node }, rootIds: [node.id] }
-  return { source, title: source, slug: source, linkedCssPaths, linkedScripts: [], nodeFragment: fragment }
+  return { source, title: source, slug: source, linkedCssPaths, scripts: [], nodeFragment: fragment }
 }
 
 function tokensOf(plan: PagePlan): string[] {

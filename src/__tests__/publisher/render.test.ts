@@ -896,19 +896,6 @@ describe('publishPage', () => {
     expect(html).not.toContain('cf-theme')
   })
 
-  it('includes font import link when fontImportUrl is set', () => {
-    const proj = makeSite({
-      settings: {
-        ...makeSite().settings,
-        fontImportUrl: 'https://fonts.googleapis.com/css2?family=Inter',
-      },
-    })
-    const page = makePage({ root: { moduleId: 'base.text', props: { text: 'Hi' } } })
-    const { html } = publishPage(page, proj, registry)
-    expect(html).toContain('fonts.googleapis.com')
-    expect(html).toContain('rel="stylesheet"')
-  })
-
   it('CSP: every published page includes Content-Security-Policy meta tag (Constraint #227)', () => {
     const page = makePage({ root: { moduleId: 'base.text', props: { text: 'CSP test' } } })
     const { html } = publishPage(page, site, registry)
@@ -963,16 +950,6 @@ describe('publishPage', () => {
     expect(html).not.toContain('javascript:')
     // No <link rel="icon"> emitted when faviconUrl is unsafe
     expect(html).not.toContain('rel="icon"')
-  })
-
-  it('URL validation: javascript: in fontImportUrl is dropped (Advisory B)', () => {
-    const proj = makeSite({
-      settings: { ...makeSite().settings, fontImportUrl: 'javascript:alert(1)' },
-    })
-    const page = makePage({ root: { moduleId: 'base.text', props: { text: 'Hi' } } })
-    const { html } = publishPage(page, proj, registry)
-    expect(html).not.toContain('javascript:')
-    expect(html).not.toContain('rel="stylesheet"')
   })
 
   // WCAG 2.1 AA SC 3.1.1 — lang attribute (Constraint #317 / UX review)

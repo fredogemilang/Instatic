@@ -263,7 +263,10 @@ export function SiteImportModal({ onCmsBundleImportComplete }: SiteImportModalPr
       styles: { done: 0, total: resolvedPlan.styleRules.length },
       media: { done: 0, total: resolvedPlan.assets.length },
       colors: { done: 0, total: resolvedPlan.colors.length },
-      fonts: { done: 0, total: resolvedPlan.fonts.length + resolvedPlan.fontTokens.length },
+      fonts: {
+        done: 0,
+        total: resolvedPlan.fonts.length + resolvedPlan.googleFonts.length + resolvedPlan.fontTokens.length,
+      },
       scripts: { done: 0, total: resolvedPlan.scripts.length },
     }
     setLogOpen(false)

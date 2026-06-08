@@ -23,9 +23,10 @@
  */
 
 import type { SiteDocument, ConditionDef } from '@core/page-tree'
+import { compareVariants, type FontEntry } from '@core/fonts'
 import { cssToStyleRules } from './cssToStyleRules'
 import { extractRootColorTokens } from './colorTokens'
-import { extractExternalFontImportUrls, stripExternalFontImportRules } from './fontImports'
+import { extractGoogleFontImports, stripGoogleFontImportRules } from './fontImports'
 import { extractRootFontTokens } from './fontTokens'
 import { classifyFiles } from './classifyFiles'
 import { makeHtmlPagePlan } from './htmlPagePlan'
@@ -42,6 +43,7 @@ import type {
   ImportWarning,
   ImportColorToken,
   ImportFontToken,
+  ImportGoogleFont,
   ImportScript,
   PageConflict,
   RuleConflict,
@@ -104,18 +106,23 @@ export function buildImportPlan({ fileMap, currentSite, options }: BuildImportPl
     rawPagePlans.push(pagePlan)
     if (inlineCss.trim().length > 0) inlineCssByPage.set(pagePlan.source, inlineCss)
     for (const cssPath of pagePlan.linkedCssPaths) allLinkedCssPaths.add(cssPath)
-    for (const linkedScript of pagePlan.linkedScripts) {
-      const file = fileMap.files[linkedScript.path]
-      if (!file) continue
-      const existing = scriptsByPath.get(linkedScript.path)
+    for (const pageScript of pagePlan.scripts) {
+      const scriptPath = pageScript.path
+      const existing = scriptsByPath.get(scriptPath)
       if (existing) {
         existing.pageSources.add(pagePlan.source)
         continue
       }
-      scriptsByPath.set(linkedScript.path, {
-        path: linkedScript.path,
-        content: decodeUtf8(file.bytes),
-        format: linkedScript.format,
+
+      const content = pageScript.kind === 'inline'
+        ? pageScript.content
+        : decodeExternalScript(fileMap, pageScript.path)
+      if (content === null) continue
+
+      scriptsByPath.set(scriptPath, {
+        path: scriptPath,
+        content,
+        format: pageScript.format,
         pageSources: new Set([pagePlan.source]),
         priority: nextScriptPriority,
       })
@@ -136,7 +143,20 @@ export function buildImportPlan({ fileMap, currentSite, options }: BuildImportPl
   const colorsBySlug = new Map<string, ImportColorToken>()
   // Font tokens pulled from root-scope rules, deduped by normalized variable.
   const fontTokensByVariable = new Map<string, ImportFontToken>()
-  const fontImportUrls = new Set<string>()
+  const googleFontsByFamily = new Map<string, ImportGoogleFont>()
+
+  function collectGoogleFonts(cssSource: string): void {
+    for (const font of extractGoogleFontImports(cssSource)) {
+      const key = font.family.toLowerCase()
+      const existing = googleFontsByFamily.get(key)
+      if (!existing) {
+        googleFontsByFamily.set(key, font)
+        continue
+      }
+      existing.variants = [...new Set([...existing.variants, ...font.variants])].sort(compareVariants)
+      existing.subsets = [...new Set([...existing.subsets, ...font.subsets])]
+    }
+  }
 
   for (const f of classified) {
     if (f.role !== 'css') continue
@@ -145,8 +165,8 @@ export function buildImportPlan({ fileMap, currentSite, options }: BuildImportPl
       continue
     }
     const cssSource = decodeUtf8(f.bytes)
-    for (const url of extractExternalFontImportUrls(cssSource)) fontImportUrls.add(url)
-    const cssForStyleRules = stripExternalFontImportRules(cssSource)
+    collectGoogleFonts(cssSource)
+    const cssForStyleRules = stripGoogleFontImportRules(cssSource)
     const { rules, warnings: cssWarnings, assetRefs, conditions: cssConditions, fontFaces } = cssToStyleRules(cssForStyleRules, {
       breakpoints: breakpointHints,
       mediaTolerance,
@@ -186,8 +206,8 @@ export function buildImportPlan({ fileMap, currentSite, options }: BuildImportPl
     const inlineCss = inlineCssByPage.get(plan.source)
     if (!inlineCss) continue
     const syntheticPath = `${plan.source}::inline`
-    for (const url of extractExternalFontImportUrls(inlineCss)) fontImportUrls.add(url)
-    const cssForStyleRules = stripExternalFontImportRules(inlineCss)
+    collectGoogleFonts(inlineCss)
+    const cssForStyleRules = stripGoogleFontImportRules(inlineCss)
     const { rules, warnings: cssWarnings, assetRefs, conditions: cssConditions, fontFaces } =
       cssToStyleRules(cssForStyleRules, { breakpoints: breakpointHints, mediaTolerance })
     warnings.push(...cssWarnings)
@@ -240,11 +260,11 @@ export function buildImportPlan({ fileMap, currentSite, options }: BuildImportPl
     styleRules: normalizedStyleRules,
     styleRuleSources,
     fonts,
+    googleFonts: [...googleFontsByFamily.values()],
     conditions: [...conditionsById.values()],
     assets,
     colors: [...colorsBySlug.values()],
     fontTokens: [...fontTokensByVariable.values()],
-    ...(fontImportUrls.size > 0 ? { fontImportUrl: [...fontImportUrls][0] } : {}),
     scripts,
     conflicts,
     warnings,
@@ -318,6 +338,7 @@ export async function commitImportPlan(
   // the Done step and can re-upload manually.
   const rewriteMap: Record<string, string> = {}
   const uploadWarnings: import('./types').ImportWarning[] = []
+  const fontInstallWarnings: import('./types').ImportWarning[] = []
 
   for (const asset of plan.assets) {
     try {
@@ -339,6 +360,20 @@ export async function commitImportPlan(
 
   // ── Step B: Rewrite plan URLs ──────────────────────────────────────────────
   const rewrittenPlan = applyAssetRewrites(plan, rewriteMap)
+
+  const installedGoogleFonts: FontEntry[] = []
+  for (const font of rewrittenPlan.googleFonts) {
+    try {
+      installedGoogleFonts.push(await adapter.installGoogleFont(font))
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'Unknown font install error'
+      fontInstallWarnings.push({
+        kind: 'font-install-failed',
+        message: `Failed to install Google font ${font.family}: ${reason}`,
+        path: font.family,
+      })
+    }
+  }
 
   // ── Step C: Commit pages + style rules (single atomic transaction) ─────────
   const resultPages: ImportResult['pages'] = []
@@ -386,10 +421,6 @@ export async function commitImportPlan(
   const linkedPages = rewriteInternalLinks(rewrittenPlan.pages, pageIdBySource)
 
   await adapter.commit((tx) => {
-    if (rewrittenPlan.fontImportUrl) {
-      tx.setFontImportUrl(rewrittenPlan.fontImportUrl)
-    }
-
     // Merge reusable conditions first so rule contextStyles keys resolve.
     if ((rewrittenPlan.conditions ?? []).length > 0) {
       tx.addConditions(rewrittenPlan.conditions)
@@ -425,6 +456,9 @@ export async function commitImportPlan(
       .filter((font) => font.files.length > 0)
     if (commitableFonts.length > 0) {
       resultFonts.push(...tx.addFonts(commitableFonts))
+    }
+    if (installedGoogleFonts.length > 0) {
+      resultFonts.push(...tx.addInstalledFonts(installedGoogleFonts))
     }
 
     // Font tokens: register after fonts so tokens can bind to a matching
@@ -520,13 +554,12 @@ export async function commitImportPlan(
     assets: resultAssets,
     colors: resultColors,
     fontTokens: resultFontTokens,
-    ...(rewrittenPlan.fontImportUrl ? { fontImportUrl: rewrittenPlan.fontImportUrl } : {}),
     scripts: resultScripts,
     conflicts: plan.conflicts,
     // Carry forward the plan-level warnings (CSS parser / asset planner /
     // missing stylesheet …) AND surface any per-asset upload failures from
     // Step A above. The wizard's Done step renders this list verbatim.
-    warnings: [...plan.warnings, ...uploadWarnings],
+    warnings: [...plan.warnings, ...uploadWarnings, ...fontInstallWarnings],
   }
 }
 
@@ -543,6 +576,11 @@ export { applyConflictResolutions } from './conflicts'
 /** Decode UTF-8 bytes to a string. */
 function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+}
+
+function decodeExternalScript(fileMap: FileMap, path: string): string | null {
+  const file = fileMap.files[path]
+  return file ? decodeUtf8(file.bytes) : null
 }
 
 /**

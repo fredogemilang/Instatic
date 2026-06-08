@@ -52,7 +52,7 @@ export { extractRootColorTokens, isCssColorValue } from './colorTokens'
 // ── Phase 2 — font-token extraction ───────────────────────────────────────────
 
 export { extractRootFontTokens } from './fontTokens'
-export { extractExternalFontImportUrls, stripExternalFontImportRules } from './fontImports'
+export { extractGoogleFontImports, stripGoogleFontImportRules } from './fontImports'
 
 // ── Phase 2 — conflict detection + resolution ─────────────────────────────────
 
@@ -82,6 +82,7 @@ export type {
   FileRole,
   ClassifiedFile,
   PagePlan,
+  PageScript,
   ConflictResolution,
   PageConflict,
   RuleConflict,
@@ -92,6 +93,7 @@ export type {
   ParsedFontFace,
   ImportFontFile,
   ImportFontFamily,
+  ImportGoogleFont,
   // colour tokens + scripts
   ImportColorToken,
   ImportFontToken,

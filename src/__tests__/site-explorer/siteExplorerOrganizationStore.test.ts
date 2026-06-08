@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
 import { createDefaultSiteExplorerOrganization, type SiteDocument } from '@core/page-tree'
+import { DEFAULT_SCRIPT_RUNTIME_CONFIG } from '@core/site-runtime'
 import type { VisualComponent } from '@core/visualComponents'
 import { makeNode, makePage, makeSite } from '../fixtures'
 
@@ -80,28 +81,69 @@ function loadExplorerSite(overrides: Partial<SiteDocument> = {}) {
 beforeEach(resetStore)
 
 describe('Site Explorer organization store actions', () => {
-  it('creates folders and moves page placements into them', () => {
-    loadExplorerSite()
+  it('commits a structural page folder rename by rewriting descendant slugs', () => {
+    loadExplorerSite({
+      pages: [
+        makePage({ id: 'home', slug: 'index', title: 'Home' }),
+        makePage({ id: 'docs', slug: 'documentation', title: 'Docs' }),
+        makePage({ id: 'setup', slug: 'documentation/setup', title: 'Setup' }),
+      ],
+    })
 
-    const folderId = useEditorStore.getState().createExplorerFolder('pages', 'Marketing')
-    useEditorStore.getState().moveExplorerItem('pages', 'pricing', folderId, 0)
+    const plan = useEditorStore.getState().previewRenameExplorerFolder('pages', 'documentation', 'docs')
+    useEditorStore.getState().commitExplorerPathChange(plan)
 
-    const explorer = useEditorStore.getState().site?.explorer
-    expect(explorer?.pages.folders).toEqual([{ id: folderId, name: 'Marketing', order: 1 }])
-    expect(explorer?.pages.items.find((item) => item.id === 'pricing')?.parentFolderId).toBe(folderId)
+    const slugs = useEditorStore.getState().site!.pages.map((page) => page.slug).sort()
+    expect(slugs).toEqual(['docs', 'docs/setup', 'index'])
   })
 
-  it('deleting a folder keeps its pages at the section root', () => {
-    loadExplorerSite()
-    const store = useEditorStore.getState()
-    const folderId = store.createExplorerFolder('pages', 'Marketing')
-    store.moveExplorerItem('pages', 'pricing', folderId, 0)
+  it('commits a structural page folder delete by deleting descendants', () => {
+    loadExplorerSite({
+      pages: [
+        makePage({ id: 'home', slug: 'index', title: 'Home' }),
+        makePage({ id: 'docs', slug: 'documentation', title: 'Docs' }),
+        makePage({ id: 'setup', slug: 'documentation/setup', title: 'Setup' }),
+        makePage({ id: 'pricing', slug: 'pricing', title: 'Pricing' }),
+      ],
+      explorer: {
+        ...createDefaultSiteExplorerOrganization(),
+        pages: {
+          expandedFolders: ['documentation'],
+          emptyFolders: [],
+          rowOrder: [{ kind: 'folder', id: 'documentation', order: 0 }],
+        },
+      },
+    })
 
-    useEditorStore.getState().deleteExplorerFolder('pages', folderId)
+    const plan = useEditorStore.getState().previewDeleteExplorerFolder('pages', 'documentation')
+    useEditorStore.getState().commitExplorerPathChange(plan)
 
-    const explorer = useEditorStore.getState().site?.explorer
-    expect(explorer?.pages.folders).toEqual([])
-    expect(explorer?.pages.items.find((item) => item.id === 'pricing')?.parentFolderId).toBeUndefined()
+    const site = useEditorStore.getState().site!
+    expect(site.pages.map((page) => page.id)).toEqual(['home', 'pricing'])
+    expect(site.explorer.pages).toEqual({ expandedFolders: [], emptyFolders: [], rowOrder: [] })
+  })
+
+  it('commits a structural scripts folder delete and removes runtime config', () => {
+    loadExplorerSite({
+      files: [
+        { id: 'main', path: 'documentation/assets/js/main.js', type: 'script', content: '', createdAt: 1, updatedAt: 1 },
+        { id: 'theme', path: 'src/styles/theme.css', type: 'style', content: '', createdAt: 1, updatedAt: 1 },
+      ],
+      runtime: {
+        dependencyLock: { version: 1, packages: {}, updatedAt: 0 },
+        scripts: {
+          main: DEFAULT_SCRIPT_RUNTIME_CONFIG,
+        },
+        styles: {},
+      },
+    })
+
+    const plan = useEditorStore.getState().previewDeleteExplorerFolder('scripts', 'documentation/assets/js')
+    useEditorStore.getState().commitExplorerPathChange(plan)
+
+    expect(useEditorStore.getState().site!.files.some((file) => file.id === 'main')).toBe(false)
+    expect(useEditorStore.getState().site!.runtime.scripts.main).toBeUndefined()
+    expect(useEditorStore.getState().siteRuntime.scripts.main).toBeUndefined()
   })
 
   it('moves organization placement when a page becomes a template and back', () => {
@@ -114,14 +156,14 @@ describe('Site Explorer organization store actions', () => {
     })
 
     let explorer = useEditorStore.getState().site?.explorer
-    expect(explorer?.pages.items.some((item) => item.id === 'pricing')).toBe(false)
+    expect(explorer?.pages.rowOrder.some((item) => item.id === 'pricing')).toBe(false)
     expect(explorer?.templates.items.some((item) => item.id === 'pricing')).toBe(true)
 
     useEditorStore.getState().convertTemplateToPage('pricing')
 
     explorer = useEditorStore.getState().site?.explorer
     expect(explorer?.templates.items.some((item) => item.id === 'pricing')).toBe(false)
-    expect(explorer?.pages.items.some((item) => item.id === 'pricing')).toBe(true)
+    expect(explorer?.pages.rowOrder.some((item) => item.id === 'pricing')).toBe(false)
   })
 
   it('updates file and component placements when items are created and deleted', () => {
@@ -131,41 +173,75 @@ describe('Site Explorer organization store actions', () => {
     const componentId = useEditorStore.getState().createVisualComponent('Promo')
 
     let explorer = useEditorStore.getState().site?.explorer
-    expect(explorer?.scripts.items.some((item) => item.id === scriptId)).toBe(true)
+    expect(useEditorStore.getState().site?.files.some((file) => file.id === scriptId)).toBe(true)
+    expect(explorer?.scripts).toEqual({ expandedFolders: [], emptyFolders: [], rowOrder: [] })
     expect(explorer?.components.items.some((item) => item.id === componentId)).toBe(true)
 
     useEditorStore.getState().deleteFile(scriptId)
     useEditorStore.getState().deleteVisualComponent(componentId)
 
     explorer = useEditorStore.getState().site?.explorer
-    expect(explorer?.scripts.items.some((item) => item.id === scriptId)).toBe(false)
+    expect(useEditorStore.getState().site?.files.some((file) => file.id === scriptId)).toBe(false)
     expect(explorer?.components.items.some((item) => item.id === componentId)).toBe(false)
   })
 
-  it('sets a page as homepage and clears its folder placement', () => {
+  it('keeps decorative template folders using placement metadata', () => {
     loadExplorerSite()
-    const folderId = useEditorStore.getState().createExplorerFolder('pages', 'Marketing')
-    useEditorStore.getState().moveExplorerItem('pages', 'pricing', folderId, 0)
+    useEditorStore.getState().convertPageToTemplate('pricing', {
+      enabled: true,
+      target: { kind: 'postTypes', tableSlugs: ['posts'] },
+      priority: 0,
+    })
+
+    const folderId = useEditorStore.getState().createExplorerFolder('templates', 'Layouts')
+    useEditorStore.getState().moveExplorerItem('templates', 'pricing', folderId, 0)
+
+    const explorer = useEditorStore.getState().site!.explorer
+    expect(explorer.templates.folders).toEqual([{ id: folderId, name: 'Layouts', order: 0 }])
+    expect(explorer.templates.items.find((item) => item.id === 'pricing')?.parentFolderId).toBe(folderId)
+  })
+
+  it('creates structural empty folders without creating page placements', () => {
+    loadExplorerSite()
+
+    const folderPath = useEditorStore.getState().createExplorerFolder('pages', 'Marketing')
+
+    expect(folderPath).toBe('marketing')
+    expect(useEditorStore.getState().site?.explorer.pages).toEqual({
+      expandedFolders: [],
+      emptyFolders: ['marketing'],
+      rowOrder: [],
+    })
+  })
+
+  it('sets a page as homepage and keeps pages structural', () => {
+    loadExplorerSite()
 
     useEditorStore.getState().setPageAsHomepage('pricing')
 
     const site = useEditorStore.getState().site
     const pricing = site?.pages.find((page) => page.id === 'pricing')
     const previousHome = site?.pages.find((page) => page.id === 'home')
-    const pricingPlacement = site?.explorer.pages.items.find((item) => item.id === 'pricing')
     expect(pricing?.slug).toBe('index')
     expect(previousHome?.slug).toBe('home')
-    expect(pricingPlacement?.parentFolderId).toBeUndefined()
+    expect(site?.explorer.pages).toEqual({ expandedFolders: [], emptyFolders: [], rowOrder: [] })
   })
 
-  it('ignores attempts to move the homepage into a folder', () => {
+  it('blocks attempts to move the homepage into a folder', () => {
     loadExplorerSite()
-    const folderId = useEditorStore.getState().createExplorerFolder('pages', 'Marketing')
 
-    useEditorStore.getState().moveExplorerItem('pages', 'home', folderId, 0)
+    const plan = useEditorStore.getState().previewMoveExplorerItem('pages', 'home', 'marketing')
 
-    const homePlacement = useEditorStore.getState().site?.explorer.pages.items.find((item) => item.id === 'home')
-    expect(homePlacement?.parentFolderId).toBeUndefined()
-    expect(homePlacement?.order).toBe(0)
+    expect(plan.blockers).toEqual([
+      {
+        code: 'homepage-protected',
+        message: 'The homepage cannot be moved by folder operations.',
+        target: 'index',
+      },
+    ])
+    expect(() => useEditorStore.getState().commitExplorerPathChange(plan)).toThrow(
+      '[SiteExplorer] Cannot commit a blocked path change plan',
+    )
+    expect(useEditorStore.getState().site?.pages.find((page) => page.id === 'home')?.slug).toBe('index')
   })
 })

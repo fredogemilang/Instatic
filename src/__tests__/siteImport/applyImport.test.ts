@@ -25,6 +25,7 @@ import type {
   PageConflict,
   RuleConflict,
 } from '@core/siteImport'
+import type { FontEntry } from '@core/fonts'
 import type { ImportFragment } from '@core/htmlImport'
 import { makeSampleFileMap, makeEmptySiteDocument, makeMockSiteDocument } from './mockSite'
 import { makeSinglePageFileMap } from './fixtures'
@@ -41,10 +42,10 @@ interface MockTxOp {
     | 'addStyleRule'
     | 'overwriteStyleRule'
     | 'addFonts'
+    | 'addInstalledFonts'
     | 'addFontTokens'
     | 'overwriteFontTokens'
     | 'addConditions'
-    | 'setFontImportUrl'
     | 'addColorTokens'
     | 'overwriteColorTokens'
     | 'addScripts'
@@ -55,14 +56,38 @@ interface MockTxOp {
 function makeMockAdapter(opts?: {
   uploadFail?: boolean
   commitFail?: boolean
-}): SiteImportAdapter & { uploads: string[]; ops: MockTxOp[] } {
+}): SiteImportAdapter & {
+  uploads: string[]
+  installs: { family: string; variants: string[]; subsets: string[] }[]
+  ops: MockTxOp[]
+} {
   let idCounter = 0
   const nextId = () => `mock-id-${++idCounter}`
   const uploads: string[] = []
+  const installs: { family: string; variants: string[]; subsets: string[] }[] = []
   const ops: MockTxOp[] = []
 
   return {
     uploads,
+    installs,
+    async installGoogleFont(request) {
+      installs.push(request)
+      return {
+        id: `font-${request.family.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+        source: 'google',
+        family: request.family,
+        variants: request.variants,
+        subsets: request.subsets,
+        files: request.variants.map((variant) => ({
+          variant,
+          subset: request.subsets[0] ?? 'latin',
+          path: `/uploads/fonts/${request.family.toLowerCase().replace(/[^a-z0-9]+/g, '-')}/${variant}.woff2`,
+          format: 'woff2',
+        })),
+        createdAt: 1,
+        updatedAt: 1,
+      } satisfies FontEntry
+    },
     ops,
     async uploadAsset(file) {
       if (opts?.uploadFail) throw new Error('upload failure')
@@ -93,6 +118,10 @@ function makeMockAdapter(opts?: {
           ops.push({ type: 'addFonts', args: { fonts }, id: '' })
           return fonts.map((f) => ({ id: nextId(), family: f.family }))
         },
+        addInstalledFonts(fonts) {
+          ops.push({ type: 'addInstalledFonts', args: { fonts }, id: '' })
+          return fonts.map((f) => ({ id: f.id, family: f.family }))
+        },
         addFontTokens(tokens) {
           ops.push({ type: 'addFontTokens', args: { tokens }, id: '' })
           return tokens.map((t) => ({ id: nextId(), name: t.name, variable: t.variable }))
@@ -107,9 +136,6 @@ function makeMockAdapter(opts?: {
         },
         addConditions(conditions) {
           ops.push({ type: 'addConditions', args: { conditions }, id: '' })
-        },
-        setFontImportUrl(url) {
-          ops.push({ type: 'setFontImportUrl', args: { url }, id: '' })
         },
         addColorTokens(colors) {
           ops.push({ type: 'addColorTokens', args: { colors }, id: '' })
@@ -202,6 +228,47 @@ describe('buildImportPlan — structure', () => {
     expect(plan.scripts.map((s) => s.path)).not.toContain('scripts/unused.js')
   })
 
+  it('imports executable inline scripts before the linked scripts that follow them', () => {
+    const html = `<!doctype html><html><body>
+      <script>var duration='500',easing='swing';</script>
+      <script src="scripts/app.js"></script>
+      <script type="application/json">{"ignored": true}</script>
+    </body></html>`
+    const encoder = new TextEncoder()
+    const p = buildImportPlan({
+      fileMap: {
+        files: {
+          'index.html': { bytes: encoder.encode(html), mimeType: 'text/html' },
+          'scripts/app.js': { bytes: encoder.encode('duration = parseInt(duration, 10);'), mimeType: 'text/javascript' },
+        },
+      },
+      currentSite,
+    })
+
+    expect(p.scripts.map((s) => ({
+      path: s.path,
+      content: s.content,
+      format: s.format,
+      pageSources: s.pageSources,
+      priority: s.priority,
+    }))).toEqual([
+      {
+        path: 'index.html-inline-script-1.js',
+        content: "var duration='500',easing='swing';",
+        format: 'classic',
+        pageSources: ['index.html'],
+        priority: 100,
+      },
+      {
+        path: 'scripts/app.js',
+        content: 'duration = parseInt(duration, 10);',
+        format: 'classic',
+        pageSources: ['index.html'],
+        priority: 101,
+      },
+    ])
+  })
+
   it('has empty conflicts on a fresh site', () => {
     expect(plan.conflicts.pages).toHaveLength(0)
     expect(plan.conflicts.rules).toHaveLength(0)
@@ -245,7 +312,7 @@ describe('buildImportPlan — structure', () => {
     expect(p.styleRules.find((rule) => rule.selector === 'h1')?.styles.fontFamily).toBe('var(--font-display)')
   })
 
-  it('preserves external Google Fonts @import as the site font import URL', () => {
+  it('plans Google Fonts @import as installed font requests', () => {
     const html = `<!doctype html><html><head><link rel="stylesheet" href="style.css"></head><body><h1>Home</h1></body></html>`
     const css = `
       @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap");
@@ -260,9 +327,34 @@ describe('buildImportPlan — structure', () => {
       currentSite: makeEmptySiteDocument(),
     })
 
-    expect(p.fontImportUrl).toBe(
-      'https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap',
-    )
+    expect(p.googleFonts).toEqual([
+      {
+        family: 'Manrope',
+        variants: ['200', '300', '400', '500', '600', '700', '800'],
+        subsets: ['latin'],
+      },
+      {
+        family: 'Plus Jakarta Sans',
+        variants: [
+          '200',
+          '200italic',
+          '300',
+          '300italic',
+          '400',
+          '400italic',
+          '500',
+          '500italic',
+          '600',
+          '600italic',
+          '700',
+          '700italic',
+          '800',
+          '800italic',
+        ],
+        subsets: ['latin'],
+      },
+    ])
+    expect('fontImportUrl' in p).toBe(false)
     expect(p.styleRules.find((rule) => rule.selector === ':root')?.styles).toMatchObject({
       '--title-font': '"Plus Jakarta Sans", serif',
       '--body-font': '"Manrope", sans-serif',
@@ -416,10 +508,14 @@ describe('commitImportPlan — happy path', () => {
     ])
   })
 
-  it('commits imported Google Fonts stylesheet URL into site settings', async () => {
+  it('commits imported Google Fonts through installed font entries before font tokens', async () => {
     const html = `<!doctype html><html><head><link rel="stylesheet" href="style.css"></head><body><h1>Home</h1></body></html>`
     const fontUrl = 'https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&display=swap'
-    const css = `@import url("${fontUrl}"); h1 { font-family: "Manrope", sans-serif; }`
+    const css = `
+      @import url("${fontUrl}");
+      :root { --font-body: "Manrope", sans-serif; }
+      h1 { font-family: var(--font-body); }
+    `
     const plan = buildImportPlan({
       fileMap: makeSinglePageFileMap(html, css),
       currentSite: makeEmptySiteDocument(),
@@ -427,9 +523,19 @@ describe('commitImportPlan — happy path', () => {
     const adapter = makeMockAdapter()
     const result = await commitImportPlan(plan, adapter)
 
-    const op = adapter.ops.find((o) => o.type === 'setFontImportUrl')
-    expect(op?.args).toEqual({ url: fontUrl })
-    expect(result.fontImportUrl).toBe(fontUrl)
+    expect(adapter.installs).toEqual([
+      {
+        family: 'Manrope',
+        variants: ['200', '300', '400', '500', '600', '700', '800'],
+        subsets: ['latin'],
+      },
+    ])
+    expect(adapter.ops.map((o) => o.type)).toContain('addInstalledFonts')
+    expect(adapter.ops.findIndex((o) => o.type === 'addInstalledFonts')).toBeLessThan(
+      adapter.ops.findIndex((o) => o.type === 'addFontTokens'),
+    )
+    expect(result.fonts).toEqual([{ id: 'font-manrope', family: 'Manrope' }])
+    expect('fontImportUrl' in result).toBe(false)
   })
 
   it('returns ImportResult with correct shape', async () => {

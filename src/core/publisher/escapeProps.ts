@@ -102,7 +102,7 @@ export function escapeProps(
       // escapeProps() contract for non-URL string props; URL props deliberately skip
       // the escapeHtml() step here to avoid double-escaping when modules call safeUrl()
       // (which also applies escapeHtml internally).
-      // Note: publishPage() manually escapeHtml()'s faviconUrl/fontImportUrl because
+      // Note: publishPage() manually escapeHtml()'s faviconUrl because
       // those are not passed to module render() — they go directly into HTML template
       // strings that never pass through a module's safeUrl() call.
       escaped[key] = isSafeUrl(value) ? value : '#'

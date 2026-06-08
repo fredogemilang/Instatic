@@ -32,7 +32,7 @@ function makePage(slug: string, source = ''): PagePlan {
     title: slug,
     slug,
     linkedCssPaths: [],
-    linkedScripts: [],
+    scripts: [],
     nodeFragment: emptyFragment(),
   }
 }
@@ -155,6 +155,7 @@ describe('applyConflictResolutions', () => {
       styleRuleSources: styleRules.map(() => 'styles.css'),
       assets: [],
       fonts: [],
+      googleFonts: [],
       conditions: [],
       conflicts: { pages: [], rules: [], tokens: [] },
       warnings: [],
@@ -219,7 +220,7 @@ describe('applyConflictResolutions', () => {
       title: 'Index',
       slug: 'index',
       linkedCssPaths: [],
-      linkedScripts: [],
+      scripts: [],
       nodeFragment: {
         rootIds: ['btn-node'],
         nodes: {
@@ -268,7 +269,7 @@ describe('applyConflictResolutions', () => {
       title: 'Index',
       slug: 'index',
       linkedCssPaths: [],
-      linkedScripts: [],
+      scripts: [],
       nodeFragment: {
         rootIds: ['btn-node'],
         nodes: {
@@ -385,6 +386,7 @@ function makeTokenPlan(
     styleRuleSources: (overrides.styleRules ?? []).map(() => 'styles.css'),
     assets: [],
     fonts: [],
+    googleFonts: [],
     conditions: [],
     conflicts: { pages: [], rules: [], tokens: [] },
     warnings: [],
@@ -465,7 +467,7 @@ describe('applyConflictResolutions — design tokens', () => {
       title: 'Index',
       slug: 'index',
       linkedCssPaths: [],
-      linkedScripts: [],
+      scripts: [],
       nodeFragment: {
         rootIds: ['n'],
         nodes: {

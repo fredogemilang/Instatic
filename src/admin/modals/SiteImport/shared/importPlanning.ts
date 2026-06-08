@@ -46,7 +46,10 @@ export function makeDefaultSelection(plan: ImportPlan): ImportSelection {
     pagesIncluded: new Set(plan.pages.map((p) => p.source)),
     styleRulesIncluded: new Set(plan.styleRules.map((_, i) => i)),
     assetsIncluded: new Set(plan.assets.map((a) => a.sourcePath)),
-    fontsIncluded: new Set(plan.fonts.map((f) => f.family)),
+    fontsIncluded: new Set([
+      ...plan.fonts.map((f) => f.family),
+      ...plan.googleFonts.map((f) => f.family),
+    ]),
     scriptsIncluded: new Set(plan.scripts.map((s) => s.path)),
   }
 }
@@ -66,6 +69,7 @@ export function filterPlanBySelection(plan: ImportPlan, selection: ImportSelecti
     styleRuleSources: plan.styleRuleSources.filter((_, i) => selection.styleRulesIncluded.has(i)),
     assets: plan.assets.filter((a) => selection.assetsIncluded.has(a.sourcePath)),
     fonts: plan.fonts.filter((f) => selection.fontsIncluded.has(f.family)),
+    googleFonts: plan.googleFonts.filter((f) => selection.fontsIncluded.has(f.family)),
     fontTokens,
     scripts: plan.scripts
       .filter((s) => selection.scriptsIncluded.has(s.path))

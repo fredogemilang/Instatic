@@ -9,7 +9,7 @@ The static-site pipeline has two parts: a pure analysis function (`buildImportPl
 ## TL;DR
 
 - Entry: global admin-shell modal, opened from Spotlight or workspace actions. Drop files, a folder, a `.zip`, or a CMS-exported `.json` bundle. Static files use the four-stage modal (Drop → Review → Conflicts → Import, with completion shown inside the Import stage). CMS bundles use Drop → Review bundle → Import.
-- `buildImportPlan({ fileMap, currentSite })` — pure, synchronous — produces an `ImportPlan` with pages, style rules, media, color tokens, fonts, font tokens, external font imports, and scripts.
+- `buildImportPlan({ fileMap, currentSite })` — pure, synchronous — produces an `ImportPlan` with pages, style rules, media, color tokens, custom fonts, Google font install requests, font tokens, and scripts.
 - `commitImportPlan(plan, adapter)` — uploads assets, then wraps all store writes in a single `adapter.commit` call → one Cmd+Z reverts the whole import.
 - Static imports load the current CMS draft into the editor store on demand when launched outside `/admin/site`; if no draft exists, the modal creates an empty site before analysis.
 - Conflict resolution: rename with a numeric suffix (default), overwrite, skip, or custom-rename — per page slug, per class name, and per design token (colour / font CSS variable), with category-level bulk actions for rename / skip / overwrite. Token renames rewrite `var(--x)` references so imports stay faithful.
@@ -33,7 +33,7 @@ src/core/siteImport/
 ├── cssToStyleRules.ts   — single-file CSS → StyleRule[] + AssetRef[] + warnings
 ├── colorTokens.ts       — extract root custom-property color tokens from :root/html/body rules
 ├── fontTokens.ts        — extract root --font-* custom properties as ImportFontToken[] from :root/html/body rules
-├── fontImports.ts       — preserve safe external font-provider @import URLs as site.settings.fontImportUrl
+├── fontImports.ts       — resolve trusted Google CSS2 @import rules into installed-font requests
 ├── scopeClasses.ts      — scope colliding class names across per-page stylesheets
 ├── mimeTypes.ts         — extension → MIME fallback for FileMap entries that carry no MIME type (e.g. ZIP)
 ├── assetPlan.ts         — normalise URL props/data attributes in node fragments + CSS url(); resolve @font-face; collect assets
@@ -86,8 +86,8 @@ User drops files / folder / .zip / CMS bundle JSON
     └───────────────────────────────────────────────────────────────┘
             │
     ┌── per linked CSS file ─────────────────────────────────────────┐
-    │   extractExternalFontImportUrls(css)                            │
-    │   → site fontImportUrl when a known font provider @import exists│
+    │   extractGoogleFontImports(css)                                  │
+    │   → ImportGoogleFont[] install requests for trusted CSS2 imports │
     │                                                                │
     │   cssToStyleRules(css, { breakpoints })                        │
     │   → rules[], assetRefs[], conditions[], fontFaces[]            │
@@ -136,6 +136,7 @@ interface ImportPlan {
   styleRules:      NewStyleRule[]
   styleRuleSources: string[]   // index-aligned with styleRules: source CSS path per rule
   fonts:           ImportFontFamily[]
+  googleFonts:     ImportGoogleFont[]
   fontTokens:      ImportFontToken[]
   conditions:      ConditionDef[]
   assets:          { sourcePath: string; mimeType: string; bytes: Uint8Array }[]
@@ -162,7 +163,7 @@ All URL-shaped values inside `pages[].nodeFragment` props, hidden imported `data
 | **Style rules** | All rules from linked CSS files | `cssToStyleRules` maps each declaration block to a `NewStyleRule` (class or ambient kind) |
 | **Media** | Images, fonts, binaries — and any unreferenced files in the bundle | `buildAssetPlan` collects them; unreferenced files are swept up even if nothing in the HTML/CSS references them |
 | **Color tokens** | CSS custom properties on `:root` / `html` / `body` that look like colours | `extractRootColorTokens` pulls them into `ImportColorToken[]`; they become framework palette tokens. A `--<slug>` that collides with an existing colour token surfaces as a `TokenConflict` (rename / skip / overwrite) |
-| **Fonts** | Self-hosted `@font-face` families with at least one bundled file | `buildFontFamilies` in `assetPlan.ts` picks the best format (woff2 → woff → ttf → otf); committed via `tx.addFonts` |
+| **Fonts** | Self-hosted `@font-face` families with at least one bundled file, plus trusted Google CSS2 imports | `buildFontFamilies` in `assetPlan.ts` picks the best bundled format (woff2 → woff → ttf → otf); `extractGoogleFontImports` turns Google CSS2 `@import` rules into install requests. Commit uploads custom files via `tx.addFonts`, installs Google families through the CMS Google-font installer, then merges those returned `FontEntry` records via `tx.addInstalledFonts` |
 | **Font tokens** | Root `--font-*` variables with font-family stacks | `extractRootFontTokens` pulls them into `ImportFontToken[]`; committed via `tx.addFontTokens` after fonts so matching imported families can be assigned. A `--font-*` that collides with an existing font token surfaces as a `TokenConflict` (rename / skip / overwrite) |
 | **Scripts** | JS files linked by imported HTML via `<script src>` | Decoded as UTF-8; committed via `tx.addScripts` with page scope from the source HTML. Classic scripts remain plain `<script>` assets and bypass bundling; `type="module"` scripts keep module semantics. |
 
@@ -177,7 +178,7 @@ All URL-shaped values inside `pages[].nodeFragment` props, hidden imported `data
 | `.foo { … }` (single class) | `StyleRule{ kind:'class', name:'foo', selector:'.foo' }` |
 | `h1`, `body`, `a:hover`, `.hero .title` | `StyleRule{ kind:'ambient', selector: verbatim }` |
 | `@media ... { … }` | Merged into a matching viewport context's `contextStyles` when it matches a configured media query (or an older/default max-width threshold); otherwise preserved as a reusable media condition |
-| Known external font-provider `@import` | Captured as `fontImportUrl` and committed to `site.settings.fontImportUrl` |
+| Trusted Google CSS2 `@import` | Parsed into `ImportGoogleFont` install requests and committed as self-hosted installed font entries |
 | Arbitrary/local `@import`, `@keyframes`, `@layer` | Dropped; source text added to `droppedAtRules`; a `dropped-at-rule` warning emitted when surfaced by the CSS engine |
 | `@font-face` | Captured as `ParsedFontFace`; resolved into `ImportFontFamily` by `buildAssetPlan` |
 
@@ -302,7 +303,7 @@ On success the same step switches to its **complete** state — a success mark, 
   - `src/core/siteImport/adapter.ts` — `SiteImportAdapter`, `SiteImportTransaction` interfaces
   - `src/core/siteImport/colorTokens.ts` — `extractRootColorTokens`
   - `src/core/siteImport/fontTokens.ts` — `extractRootFontTokens`
-  - `src/core/siteImport/fontImports.ts` — `extractExternalFontImportUrls`
+  - `src/core/siteImport/fontImports.ts` — `extractGoogleFontImports`
   - `src/core/siteImport/conflicts.ts` — `detectConflicts`, `applyConflictResolutions`
   - `src/admin/modals/SiteImport/SiteImportModal.tsx` — wizard shell
   - `src/admin/modals/SiteImport/steps/AnalyzeStep.tsx` — category navigator + detail panes

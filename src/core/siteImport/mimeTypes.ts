@@ -15,6 +15,9 @@ const EXT_TO_MIME: Record<string, string> = {
   svg: 'image/svg+xml',
   gif: 'image/gif',
   ico: 'image/x-icon',
+  // Video
+  mp4: 'video/mp4',
+  webm: 'video/webm',
   // Fonts
   woff: 'font/woff',
   woff2: 'font/woff2',
@@ -26,17 +29,43 @@ const EXT_TO_MIME: Record<string, string> = {
   zip: 'application/zip',
   csv: 'text/csv',
   txt: 'text/plain',
+  md: 'text/markdown',
+  ini: 'text/plain',
   json: 'application/json',
   // Web
   html: 'text/html',
   htm: 'text/html',
   css: 'text/css',
+  scss: 'text/x-scss',
+  sass: 'text/x-sass',
+  less: 'text/x-less',
   js: 'text/javascript',
   mjs: 'text/javascript',
+  map: 'application/json',
+  php: 'text/x-php',
 }
+
+const IMPORT_UPLOADABLE_MIME_TYPES: ReadonlySet<string> = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+  'video/mp4',
+  'video/webm',
+  'font/woff',
+  'font/woff2',
+  'font/ttf',
+  'font/otf',
+])
 
 /** Return a MIME type for the given file path based on its extension. */
 export function guessMimeType(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase()
   return (ext && EXT_TO_MIME[ext]) ?? 'application/octet-stream'
+}
+
+/** Whether the site importer can upload this MIME through the CMS media endpoint. */
+export function isImportUploadableMimeType(mimeType: string): boolean {
+  return IMPORT_UPLOADABLE_MIME_TYPES.has(mimeType.toLowerCase().split(';', 1)[0].trim())
 }

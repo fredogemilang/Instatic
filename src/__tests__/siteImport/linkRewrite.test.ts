@@ -16,7 +16,7 @@ function page(source: string, href: string): PagePlan {
     title: source,
     slug: source.replace('.html', ''),
     linkedCssPaths: [],
-    linkedScripts: [],
+    scripts: [],
     nodeFragment: fragment,
   }
 }

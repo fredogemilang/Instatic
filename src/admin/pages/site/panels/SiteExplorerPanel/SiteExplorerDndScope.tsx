@@ -2,6 +2,7 @@ import { type ReactNode } from 'react'
 import { DragOverlay } from '@dnd-kit/core'
 import { TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
 import { useSiteExplorerDnd, type SiteExplorerDragData, type SiteExplorerDropTarget } from './useSiteExplorerDnd'
+import type { ExplorerPathChangePlan } from '@core/page-tree'
 import styles from './SiteExplorerPanel.module.css'
 
 const EMPTY_DND: SiteExplorerDndState = { active: null, target: null }
@@ -13,16 +14,24 @@ export interface SiteExplorerDndState {
 
 interface SiteExplorerDndScopeProps {
   enabled: boolean
+  onStructuralPathPlan: (plan: ExplorerPathChangePlan) => void
   children: (dnd: SiteExplorerDndState) => ReactNode
 }
 
-export function SiteExplorerDndScope({ enabled, children }: SiteExplorerDndScopeProps) {
+export function SiteExplorerDndScope({ enabled, onStructuralPathPlan, children }: SiteExplorerDndScopeProps) {
   if (!enabled) return <>{children(EMPTY_DND)}</>
-  return <SiteExplorerDndEnabled>{children}</SiteExplorerDndEnabled>
+  return (
+    <SiteExplorerDndEnabled onStructuralPathPlan={onStructuralPathPlan}>
+      {children}
+    </SiteExplorerDndEnabled>
+  )
 }
 
-function SiteExplorerDndEnabled({ children }: Pick<SiteExplorerDndScopeProps, 'children'>) {
-  const explorerDnd = useSiteExplorerDnd({ enabled: true })
+function SiteExplorerDndEnabled({
+  onStructuralPathPlan,
+  children,
+}: Pick<SiteExplorerDndScopeProps, 'children' | 'onStructuralPathPlan'>) {
+  const explorerDnd = useSiteExplorerDnd({ enabled: true, onStructuralPathPlan })
 
   return (
     <>

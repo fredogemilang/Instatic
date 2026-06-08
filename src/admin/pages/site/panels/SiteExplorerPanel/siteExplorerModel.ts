@@ -1,5 +1,8 @@
 import type { IconComponent } from 'pixel-art-icons/types'
 import type {
+  StructuralExplorerRowOrder,
+  StructuralExplorerSection,
+  StructuralSiteExplorerSectionId,
   SiteExplorerFolder,
   SiteExplorerItemPlacement,
   SiteExplorerSectionId,
@@ -22,6 +25,7 @@ export interface SiteExplorerTreeFolder {
 }
 
 export interface SiteExplorerTreeSectionModel<TTarget> {
+  kind: 'decorative'
   sectionId: SiteExplorerSectionId
   folders: SiteExplorerTreeFolder[]
   pinnedItems: SiteExplorerTreeItem<TTarget>[]
@@ -34,6 +38,32 @@ export interface SiteExplorerTreeSectionModel<TTarget> {
     folder: SiteExplorerTreeFolder
     items: SiteExplorerTreeItem<TTarget>[]
   }>
+}
+
+export interface SiteExplorerStructuralItem<TTarget> extends SiteExplorerTreeItem<TTarget> {
+  path: string
+}
+
+export interface SiteExplorerStructuralFolder extends SiteExplorerTreeFolder {
+  path: string
+}
+
+export type SiteExplorerStructuralEntry<TTarget> =
+  | {
+    kind: 'folder'
+    folder: SiteExplorerStructuralFolder
+    landingItem?: SiteExplorerStructuralItem<TTarget>
+    children: SiteExplorerStructuralEntry<TTarget>[]
+    empty: boolean
+  }
+  | { kind: 'item'; item: SiteExplorerStructuralItem<TTarget> }
+
+export interface SiteExplorerStructuralSectionModel<TTarget> {
+  kind: 'structural'
+  sectionId: StructuralSiteExplorerSectionId
+  expandedFolderPaths: string[]
+  pinnedItems: SiteExplorerStructuralItem<TTarget>[]
+  rootEntries: SiteExplorerStructuralEntry<TTarget>[]
 }
 
 export function buildSiteExplorerTreeSection<TTarget>(
@@ -102,6 +132,7 @@ export function buildSiteExplorerTreeSection<TTarget>(
     })
 
   return {
+    kind: 'decorative',
     sectionId,
     folders: sortedFolders,
     pinnedItems,
@@ -112,4 +143,114 @@ export function buildSiteExplorerTreeSection<TTarget>(
       items: byFolder.get(folder.id) ?? [],
     })),
   }
+}
+
+export function buildStructuralExplorerTreeSection<TTarget>(
+  sectionId: StructuralSiteExplorerSectionId,
+  section: StructuralExplorerSection,
+  items: readonly SiteExplorerStructuralItem<TTarget>[],
+): SiteExplorerStructuralSectionModel<TTarget> {
+  const pinnedItems = items.filter((item) => item.pinned)
+  const pinnedIds = new Set(pinnedItems.map((item) => item.id))
+  const unpinnedItems = items.filter((item) => !pinnedIds.has(item.id))
+  const folderByPath = new Map<string, Extract<SiteExplorerStructuralEntry<TTarget>, { kind: 'folder' }>>()
+  const rootEntries: SiteExplorerStructuralEntry<TTarget>[] = []
+
+  function ensureFolder(path: string): Extract<SiteExplorerStructuralEntry<TTarget>, { kind: 'folder' }> {
+    const existing = folderByPath.get(path)
+    if (existing) return existing
+    const parent = parentPathForPath(path)
+    const folder = {
+      kind: 'folder' as const,
+      folder: { id: path, path, name: basename(path) },
+      children: [],
+      empty: section.emptyFolders.includes(path),
+    }
+    folderByPath.set(path, folder)
+    if (parent) {
+      ensureFolder(parent).children.push(folder)
+    } else {
+      rootEntries.push(folder)
+    }
+    return folder
+  }
+
+  for (const path of section.emptyFolders) ensureFolder(path)
+  for (const item of unpinnedItems) {
+    const parent = parentPathForPath(item.path)
+    if (parent) ensureFolder(parent)
+  }
+
+  for (const item of unpinnedItems) {
+    const folderForItemPath = folderByPath.get(item.path)
+    if (folderForItemPath) {
+      folderForItemPath.landingItem = item
+      continue
+    }
+
+    const parent = parentPathForPath(item.path)
+    const entry = { kind: 'item' as const, item }
+    if (parent) {
+      ensureFolder(parent).children.push(entry)
+    } else {
+      rootEntries.push(entry)
+    }
+  }
+
+  return {
+    kind: 'structural',
+    sectionId,
+    expandedFolderPaths: [...section.expandedFolders],
+    pinnedItems,
+    rootEntries: orderStructuralEntries(rootEntries, section.rowOrder, undefined),
+  }
+}
+
+function orderStructuralEntries<TTarget>(
+  entries: readonly SiteExplorerStructuralEntry<TTarget>[],
+  rowOrder: readonly StructuralExplorerRowOrder[],
+  parentPath: string | undefined,
+): SiteExplorerStructuralEntry<TTarget>[] {
+  const orderByKey = new Map(
+    rowOrder
+      .filter((entry) => (entry.parentPath ?? '') === (parentPath ?? ''))
+      .map((entry) => [`${entry.kind}:${entry.id}`, entry.order]),
+  )
+
+  return entries
+    .map((entry) => {
+      if (entry.kind === 'item') return entry
+      return {
+        ...entry,
+        children: orderStructuralEntries(entry.children, rowOrder, entry.folder.path),
+      }
+    })
+    .sort((left, right) =>
+      structuralEntryOrder(left, orderByKey) - structuralEntryOrder(right, orderByKey)
+      || structuralEntryLabel(left).localeCompare(structuralEntryLabel(right))
+    )
+}
+
+function structuralEntryOrder<TTarget>(
+  entry: SiteExplorerStructuralEntry<TTarget>,
+  orderByKey: ReadonlyMap<string, number>,
+): number {
+  const key = entry.kind === 'folder'
+    ? `folder:${entry.folder.path}`
+    : `item:${entry.item.id}`
+  return orderByKey.get(key) ?? Number.POSITIVE_INFINITY
+}
+
+function structuralEntryLabel<TTarget>(entry: SiteExplorerStructuralEntry<TTarget>): string {
+  return entry.kind === 'folder' ? entry.folder.name : entry.item.label
+}
+
+function parentPathForPath(path: string): string | undefined {
+  const index = path.lastIndexOf('/')
+  return index === -1 ? undefined : path.slice(0, index)
+}
+
+function basename(path: string): string {
+  const index = path.lastIndexOf('/')
+  return index === -1 ? path : path.slice(index + 1)
 }

@@ -37,7 +37,6 @@ export const SiteSettingsSchema = Type.Object({
   metaTitle: Type.Optional(Type.String()),
   metaDescription: Type.Optional(Type.String()),
   faviconUrl: Type.Optional(Type.String()),
-  fontImportUrl: Type.Optional(Type.String()),
   language: Type.Optional(Type.String()),
   /** Structured framework token settings — absent means framework disabled. */
   framework: Type.Optional(FrameworkSettingsSchema),
@@ -91,7 +90,6 @@ export function parseSiteSettings(raw: unknown): SiteSettings {
     ...(typeof r.metaTitle === 'string' ? { metaTitle: r.metaTitle } : {}),
     ...(typeof r.metaDescription === 'string' ? { metaDescription: r.metaDescription } : {}),
     ...(typeof r.faviconUrl === 'string' ? { faviconUrl: r.faviconUrl } : {}),
-    ...(typeof r.fontImportUrl === 'string' ? { fontImportUrl: r.fontImportUrl } : {}),
     ...(typeof r.language === 'string' ? { language: r.language } : {}),
     framework,
     fonts,

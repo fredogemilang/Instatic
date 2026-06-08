@@ -171,11 +171,11 @@ All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<P
 
 `src/core/page-tree/slugs.ts` (exported via `@core/page-tree`):
 
-- `pagePublicPath(slug)` — maps a slug to its public URL path: `'index'` → `'/'`, everything else → `'/<slug>'`.
+- `pagePublicPath(slug)` — maps a slug to its public URL path: `'index'` → `'/'`, everything else → `'/<slug>'`. Slash-delimited slugs are public paths (`'docs/api'` → `'/docs/api'`).
 - `isHomePage(page)` — returns `true` when `page.slug === 'index'`. The home page is the one published at the site root.
 - `findHomePage(pages)` — returns the `Page` with `slug === 'index'`, or `undefined`. Used by `lifecycleActions` to default the editor to the home page on load and by `SiteExplorerPanel` to pin it to the top of the list.
-- `normalizePageSlug(value)` — lowercases, strips invalid characters, and collapses hyphens.
-- `pageSlugError(slug)` — returns a validation error message or `null` if the slug is valid.
+- `normalizePageSlug(value)` — lowercases, normalises each slash-delimited path segment, strips invalid characters, and collapses hyphens.
+- `pageSlugError(slug)` — returns a validation error message or `null` if the slug is valid. Valid page slugs are lowercase hyphenated segments separated by single slashes; the first segment cannot be a reserved public route (`admin`, `api`, `assets`, `health`).
 - `pageSlugDuplicateError(slug, pages, currentPageId?)` — checks for slug collisions across the page list.
 - `createUniquePageSlug(title, pages)` — generates a collision-free slug from a page title (normalises + reserved-slug guard + uniqueness).
 

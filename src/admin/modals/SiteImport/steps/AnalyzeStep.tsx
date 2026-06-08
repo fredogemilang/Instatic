@@ -117,7 +117,7 @@ export function AnalyzeStep({
     styles: plan.styleRules.length,
     media: plan.assets.length,
     colors: plan.colors.length,
-    fonts: plan.fonts.length,
+    fonts: plan.fonts.length + plan.googleFonts.length,
     scripts: plan.scripts.length,
   }
   const includeOn: Record<Exclude<Category, 'skipped'>, boolean> = {
@@ -493,6 +493,9 @@ export function AnalyzeStep({
   }
 
   function renderFonts() {
+    const includedFontCount =
+      plan.fonts.filter((font) => selection.fontsIncluded.has(font.family)).length +
+      plan.googleFonts.filter((font) => selection.fontsIncluded.has(font.family)).length
     const includedFontTokenCount = plan.fontTokens.filter(
       (token) => !token.family || selection.fontsIncluded.has(token.family),
     ).length
@@ -501,14 +504,19 @@ export function AnalyzeStep({
       <>
         <DetailHead
           title="Fonts"
-          sub="Embedded families and root font variables"
-          count={selection.fontsIncluded.size + includedFontTokenCount}
-          total={plan.fonts.length + plan.fontTokens.length}
-          onAll={() => patch({ fontsIncluded: new Set(plan.fonts.map((f) => f.family)) })}
+          sub="Installed families and root font variables"
+          count={includedFontCount + includedFontTokenCount}
+          total={plan.fonts.length + plan.googleFonts.length + plan.fontTokens.length}
+          onAll={() => patch({
+            fontsIncluded: new Set([
+              ...plan.fonts.map((f) => f.family),
+              ...plan.googleFonts.map((f) => f.family),
+            ]),
+          })}
           onNone={() => patch({ fontsIncluded: new Set() })}
         />
-        {plan.fonts.length === 0 && plan.fontTokens.length === 0 ? (
-          <p className={styles.empty}>No self-hosted fonts or font tokens in this import.</p>
+        {plan.fonts.length === 0 && plan.googleFonts.length === 0 && plan.fontTokens.length === 0 ? (
+          <p className={styles.empty}>No installable fonts or font tokens in this import.</p>
         ) : (
           <div className={styles.rows}>
             {plan.fonts.map((f) => (
@@ -520,6 +528,25 @@ export function AnalyzeStep({
                   <span className={styles.title}>{f.family}</span>
                   <span className={styles.meta}>
                     {f.files.length} {f.files.length === 1 ? 'file' : 'files'}
+                  </span>
+                </div>
+                <Switch
+                  checked={selection.fontsIncluded.has(f.family)}
+                  switchSize="sm"
+                  onCheckedChange={() => toggleFont(f.family)}
+                  aria-label={`Include font ${f.family}`}
+                />
+              </div>
+            ))}
+            {plan.googleFonts.map((f) => (
+              <div className={styles.listRow} key={`google:${f.family}`}>
+                <span className={styles.listIcon}>
+                  <HeadingIcon size={14} />
+                </span>
+                <div className={styles.info}>
+                  <span className={styles.title}>{f.family}</span>
+                  <span className={styles.meta}>
+                    Google font · {f.variants.length} {f.variants.length === 1 ? 'variant' : 'variants'} · {f.subsets.join(', ')}
                   </span>
                 </div>
                 <Switch

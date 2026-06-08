@@ -18,12 +18,14 @@
 import type {
   NewStyleRule,
   ImportFontFamily,
+  ImportGoogleFont,
   ImportColorToken,
   ImportFontToken,
   ImportScript,
 } from './types'
 import type { ConditionDef } from '@core/page-tree'
 import type { ImportFragment } from '@core/htmlImport'
+import type { FontEntry } from '@core/fonts'
 
 // ---------------------------------------------------------------------------
 // SiteImportAdapter
@@ -41,6 +43,16 @@ export interface SiteImportAdapter {
    *          `"/uploads/abc123.png"` or `"https://cdn.example.com/..."`).
    */
   uploadAsset(file: { path: string; bytes: Uint8Array; mimeType: string }): Promise<string>
+
+  /**
+   * Install a Google font request extracted from a trusted CSS2 @import.
+   *
+   * Implementations should call the same CMS Google-font install endpoint used
+   * by the Typography panel. This returns a fully-shaped FontEntry but does not
+   * mutate the site; the entry is merged by `tx.addInstalledFonts` inside the
+   * single import transaction.
+   */
+  installGoogleFont(font: ImportGoogleFont): Promise<FontEntry>
 
   /**
    * Execute all page and style-rule mutations in a single atomic step.
@@ -130,12 +142,6 @@ export interface SiteImportTransaction {
   addConditions(conditions: ConditionDef[]): void
 
   /**
-   * Set the site-level external font stylesheet URL extracted from imported
-   * CSS @import rules. The publisher emits this as a head stylesheet link.
-   */
-  setFontImportUrl(url: string): void
-
-  /**
    * Add custom font families (from imported `@font-face` blocks) to
    * `site.settings.fonts`. Each file's `src` is already a final media URL.
    *
@@ -143,6 +149,13 @@ export interface SiteImportTransaction {
    *          import summary.
    */
   addFonts(fonts: ImportFontFamily[]): { id: string; family: string }[]
+
+  /**
+   * Merge already-installed font entries into `site.settings.fonts`. Used for
+   * Google CSS2 imports after the adapter has downloaded them through the CMS
+   * Google-font installer.
+   */
+  addInstalledFonts(fonts: FontEntry[]): { id: string; family: string }[]
 
   /**
    * Add font tokens extracted from root `--font-*` variables. Called after

@@ -149,9 +149,38 @@ describe('makeHtmlPagePlan', () => {
 
   it('resolves linked script paths with classic/module format', () => {
     const { pagePlan } = makeHtmlPagePlan('index.html', new TextDecoder().decode(fileMap.files['index.html']!.bytes), fileMap)
-    expect(pagePlan.linkedScripts).toEqual([
-      { path: 'scripts/vendor.js', format: 'classic' },
-      { path: 'scripts/app.js', format: 'module' },
+    expect(pagePlan.scripts).toEqual([
+      { kind: 'external', path: 'scripts/vendor.js', format: 'classic' },
+      { kind: 'external', path: 'scripts/app.js', format: 'module' },
+    ])
+  })
+
+  it('preserves executable inline scripts in source order with linked scripts', () => {
+    const html = `<html><body>
+      <script>var duration = '500', easing = 'swing';</script>
+      <script src="scripts/vendor.js"></script>
+      <script type="application/json">{"duration": 500}</script>
+      <script type="module">window.inlineModuleLoaded = true</script>
+      <script src="scripts/app.js" type="module"></script>
+    </body></html>`
+
+    const { pagePlan } = makeHtmlPagePlan('index.html', html, fileMap)
+
+    expect(pagePlan.scripts).toEqual([
+      {
+        kind: 'inline',
+        path: 'index.html-inline-script-1.js',
+        content: "var duration = '500', easing = 'swing';",
+        format: 'classic',
+      },
+      { kind: 'external', path: 'scripts/vendor.js', format: 'classic' },
+      {
+        kind: 'inline',
+        path: 'index.html-inline-script-2.js',
+        content: 'window.inlineModuleLoaded = true',
+        format: 'module',
+      },
+      { kind: 'external', path: 'scripts/app.js', format: 'module' },
     ])
   })
 

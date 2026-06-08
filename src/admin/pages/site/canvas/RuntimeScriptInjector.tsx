@@ -30,6 +30,7 @@
 
 import { useEffect } from 'react'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
+import { withCanvasDomReadyReplay } from './canvasDomReadyReplay'
 
 interface RuntimeScriptInjectorProps {
   /** The iframe document to inject into. `null` until the iframe has loaded. */
@@ -39,14 +40,14 @@ interface RuntimeScriptInjectorProps {
 
 const RUNTIME_SCRIPT_MARKER = 'data-instatic-canvas-runtime-script'
 
-export function RuntimeScriptInjector({ targetDocument, scripts }: RuntimeScriptInjectorProps) {
-  useEffect(() => {
-    if (!targetDocument) return
-    const head = targetDocument.head
-    const body = targetDocument.body
-    if (!head || !body) return
-
-    const elements = scripts.map((script) => {
+function injectScriptsWithDomReadyReplay(
+  targetDocument: Document,
+  scripts: InjectableRuntimeScript[],
+  head: HTMLHeadElement,
+  body: HTMLElement,
+): HTMLScriptElement[] {
+  return withCanvasDomReadyReplay(targetDocument, () =>
+    scripts.map((script) => {
       const el = targetDocument.createElement('script')
       if (script.format !== 'classic') el.type = 'module'
       el.setAttribute(RUNTIME_SCRIPT_MARKER, script.id)
@@ -54,7 +55,18 @@ export function RuntimeScriptInjector({ targetDocument, scripts }: RuntimeScript
       const parent = script.placement === 'head' ? head : body
       parent.appendChild(el)
       return el
-    })
+    }),
+  )
+}
+
+export function RuntimeScriptInjector({ targetDocument, scripts }: RuntimeScriptInjectorProps) {
+  useEffect(() => {
+    if (!targetDocument) return
+    const head = targetDocument.head
+    const body = targetDocument.body
+    if (!head || !body) return
+
+    const elements = injectScriptsWithDomReadyReplay(targetDocument, scripts, head, body)
 
     return () => {
       for (const el of elements) el.remove()

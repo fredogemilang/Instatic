@@ -174,7 +174,6 @@ function diffSettings(
   // Structural fields — install identity / runtime config / editor prefs.
   const structuralKeys: Array<keyof SiteShell['settings']> = [
     'faviconUrl',
-    'fontImportUrl',
     'language',
     'shortcuts',
   ]

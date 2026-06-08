@@ -256,7 +256,7 @@ mediaUploadDispatch.ts     ← dispatches to the elected storage adapter
 mediaUploadExecutor.ts     ← executes write (local disk or plugin adapter)
     │
     ▼
-mediaVariants.ts (host)    ← coordinates variant generation
+mediaVariants.ts (host)    ← coordinates raster variant generation
     │                       (delegate election runs host-side: when a
     │                       Tier-3 delegate is elected, the worker skips
     │                       the local ladder and we emit URL-template
@@ -274,8 +274,10 @@ mediaVariants.ts (host)    ← streams each returned variant through
                              elected adapter writes the bytes
     │
     ▼
-media_assets row created, variants_json populated
+media_assets row created, variants_json populated for raster sources
 ```
+
+SVG uploads are sanitized and stored as originals only. GIF uploads also stay original-only so animation is preserved; the responsive WebP ladder is generated only for JPEG, PNG, and WebP uploads.
 
 The image-variant worker pool is sized by `IMAGE_VARIANT_WORKER_POOL_SIZE` (default 2, hard cap 8). Workers are spawned lazily on first use and reused for the life of the process; a crashed worker is dropped from the pool and a replacement spawns on the next submission.
 

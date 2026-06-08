@@ -1,12 +1,11 @@
 import { useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
 import type { SiteFile } from '@core/files/schemas'
-import type { Page, SiteExplorerSectionId } from '@core/page-tree'
+import type { ExplorerPathChangePlan, Page, SiteExplorerSectionId, StructuralSiteExplorerSectionId } from '@core/page-tree'
 import { createUniquePageSlug, pagePublicPath, isHomePage } from '@core/page-tree'
 import { templateTargetLabel } from '@core/templates'
 import { Panel, useAutoFocusPanel } from '@admin/shared/Panel'
 import { SkeletonBlock } from '@ui/components/Skeleton'
-import { FilePlusSolidIcon } from 'pixel-art-icons/icons/file-plus-solid'
 import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
 import { FolderGlyphIcon } from 'pixel-art-icons/icons/folder-glyph'
 import { BracesIcon } from 'pixel-art-icons/icons/braces'
@@ -19,23 +18,25 @@ import type { ExplorerContextMenuItem } from '@site/explorer-actions'
 import { TemplateSettingsDialog, type TemplateSettingsPayload } from '@admin/shared/dialogs/TemplateSettingsDialog'
 import { useVCDeletionConfirm } from '@admin/shared/dialogs/VCDeletionConfirmDialog'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
-import { buildSiteExplorerTreeSection, type SiteExplorerTreeFolder, type SiteExplorerTreeItem, type SiteExplorerTreeSectionModel } from './siteExplorerModel'
-import { SiteExplorerTreeSection, type SiteExplorerInlineRenameTarget } from './SiteExplorerTreeSection'
+import {
+  buildSiteExplorerTreeSection,
+  buildStructuralExplorerTreeSection,
+  type SiteExplorerTreeFolder,
+  type SiteExplorerTreeItem,
+} from './siteExplorerModel'
+import type { SiteExplorerInlineRenameTarget } from './SiteExplorerTreeSection'
 import { SiteExplorerDndScope, type SiteExplorerDndState } from './SiteExplorerDndScope'
 import { bulkDeleteConfirmDescription, bulkDeleteConfirmLabel, bulkDeleteConfirmTitle, bulkWrapLabel, fileName, groupSiteFiles, keyboardMenuPosition, pathFromRenameInput } from './siteExplorerPanelUtils'
 import { useSiteExplorerSelection, type SiteExplorerMenuSelection } from './siteExplorerSelection'
 import { SiteExplorerContextMenu, type SiteExplorerContextMenuState } from './SiteExplorerContextMenu'
+import { SiteExplorerPathConfirmDialog } from './SiteExplorerPathConfirmDialog'
+import { SiteExplorerPanelSections } from './SiteExplorerPanelSections'
+import type { SiteExplorerAnySectionModel, SiteExplorerContextTarget } from './siteExplorerPanelTypes'
 
 interface SiteExplorerPanelProps {
   variant?: 'docked'
   organizationDndEnabled?: boolean
 }
-
-type SiteExplorerContextTarget =
-  | { kind: 'page'; id: string; title: string; slug: string }
-  | { kind: 'component'; id: string; name: string }
-  | { kind: 'file'; id: string; path: string }
-  | { kind: 'folder'; sectionId: SiteExplorerSectionId; id: string; name: string }
 
 type ContextMenuState = SiteExplorerContextMenuState<SiteExplorerContextTarget>
 
@@ -50,6 +51,26 @@ function renameValueForTarget(target: SiteExplorerContextTarget): string {
 
 function folderTarget(sectionId: SiteExplorerSectionId, folder: SiteExplorerTreeFolder): SiteExplorerContextTarget {
   return { kind: 'folder', sectionId, id: folder.id, name: folder.name }
+}
+
+function isStructuralSection(sectionId: SiteExplorerSectionId): sectionId is StructuralSiteExplorerSectionId {
+  return sectionId === 'pages' || sectionId === 'styles' || sectionId === 'scripts'
+}
+
+function renamedFolderPath(
+  sectionId: StructuralSiteExplorerSectionId,
+  currentPath: string,
+  nextName: string,
+): string {
+  const index = currentPath.lastIndexOf('/')
+  const parentPath = index === -1 ? '' : currentPath.slice(0, index)
+  const segment = nextName
+    .trim()
+    .toLowerCase()
+    .replace(sectionId === 'pages' ? /[^a-z0-9-]+/g : /[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'new-folder'
+  return parentPath ? `${parentPath}/${segment}` : segment
 }
 
 export function SiteExplorerPanel({
@@ -80,6 +101,9 @@ export function SiteExplorerPanel({
   const renameExplorerFolder = useEditorStore((s) => s.renameExplorerFolder)
   const deleteExplorerFolder = useEditorStore((s) => s.deleteExplorerFolder)
   const wrapExplorerItemsInFolder = useEditorStore((s) => s.wrapExplorerItemsInFolder)
+  const previewRenameExplorerFolder = useEditorStore((s) => s.previewRenameExplorerFolder)
+  const previewDeleteExplorerFolder = useEditorStore((s) => s.previewDeleteExplorerFolder)
+  const commitExplorerPathChange = useEditorStore((s) => s.commitExplorerPathChange)
   const setPageAsHomepage = useEditorStore((s) => s.setPageAsHomepage)
   const confirmVCDeletion = useVCDeletionConfirm()
   const confirmDelete = useConfirmDelete()
@@ -87,6 +111,7 @@ export function SiteExplorerPanel({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [inlineRenameTarget, setInlineRenameTarget] = useState<SiteExplorerContextTarget | null>(null)
   const [templateSettingsTarget, setTemplateSettingsTarget] = useState<Page | null>(null)
+  const [pathConfirmPlan, setPathConfirmPlan] = useState<ExplorerPathChangePlan | null>(null)
   const explorerSelection = useSiteExplorerSelection<SiteExplorerContextTarget>()
   const panelRef = useRef<HTMLElement>(null)
 
@@ -201,7 +226,12 @@ export function SiteExplorerPanel({
       } else if (inlineRenameTarget.kind === 'component') {
         renameVisualComponent(inlineRenameTarget.id, value)
       } else if (inlineRenameTarget.kind === 'folder') {
-        renameExplorerFolder(inlineRenameTarget.sectionId, inlineRenameTarget.id, value)
+        if (isStructuralSection(inlineRenameTarget.sectionId)) {
+          const nextFolderPath = renamedFolderPath(inlineRenameTarget.sectionId, inlineRenameTarget.id, value)
+          setPathConfirmPlan(previewRenameExplorerFolder(inlineRenameTarget.sectionId, inlineRenameTarget.id, nextFolderPath))
+        } else {
+          renameExplorerFolder(inlineRenameTarget.sectionId, inlineRenameTarget.id, value)
+        }
       } else {
         renameFile(inlineRenameTarget.id, pathFromRenameInput(inlineRenameTarget.path, value))
       }
@@ -225,11 +255,25 @@ export function SiteExplorerPanel({
         },
       })
     } else if (target.kind === 'folder') {
-      deleteExplorerFolder(target.sectionId, target.id)
+      if (isStructuralSection(target.sectionId)) {
+        setPathConfirmPlan(previewDeleteExplorerFolder(target.sectionId, target.id))
+      } else {
+        deleteExplorerFolder(target.sectionId, target.id)
+      }
     } else {
       deleteFile(target.id)
     }
     setContextMenu(null)
+  }
+
+  function handleConfirmPathChange() {
+    if (!pathConfirmPlan) return
+    try {
+      commitExplorerPathChange(pathConfirmPlan)
+      setPathConfirmPlan(null)
+    } catch (err) {
+      console.error('[SiteExplorerPanel] commit explorer path change error:', err)
+    }
   }
 
   function handleDeleteContext(menu: ContextMenuState) {
@@ -266,6 +310,7 @@ export function SiteExplorerPanel({
   }
 
   function handleWrapSelectionInFolder(selection: SiteExplorerMenuSelection) {
+    if (selection.sectionId !== 'templates' && selection.sectionId !== 'components') return
     const folderId = wrapExplorerItemsInFolder(selection.sectionId, selection.itemIds, 'New folder')
     setContextMenu(null)
     if (!folderId) return
@@ -378,9 +423,8 @@ export function SiteExplorerPanel({
   }
 
   function wrappableSelectionIds(selection: SiteExplorerMenuSelection) {
-    return selection.itemIds.filter(
-      (itemId) => !(selection.sectionId === 'pages' && pages.some((page) => page.id === itemId && isHomePage(page))),
-    )
+    if (selection.sectionId !== 'templates' && selection.sectionId !== 'components') return []
+    return selection.itemIds
   }
 
   function handleCreateFolder(sectionId: SiteExplorerSectionId) {
@@ -389,7 +433,7 @@ export function SiteExplorerPanel({
   }
 
   function openExplorerItem(
-    model: SiteExplorerTreeSectionModel<SiteExplorerContextTarget>,
+    model: SiteExplorerAnySectionModel,
     item: SiteExplorerTreeItem<SiteExplorerContextTarget>,
     event: MouseEvent<HTMLButtonElement>,
   ) {
@@ -407,7 +451,7 @@ export function SiteExplorerPanel({
   }
 
   function contextMenuForItem(
-    model: SiteExplorerTreeSectionModel<SiteExplorerContextTarget>,
+    model: SiteExplorerAnySectionModel,
     item: SiteExplorerTreeItem<SiteExplorerContextTarget>,
     event: MouseEvent<HTMLButtonElement>,
   ) {
@@ -425,7 +469,7 @@ export function SiteExplorerPanel({
   }
 
   function keyboardContextMenuForItem(
-    model: SiteExplorerTreeSectionModel<SiteExplorerContextTarget>,
+    model: SiteExplorerAnySectionModel,
     item: SiteExplorerTreeItem<SiteExplorerContextTarget>,
     event: KeyboardEvent<HTMLButtonElement>,
   ) {
@@ -443,13 +487,13 @@ export function SiteExplorerPanel({
   }
 
   const pageTreeModel = site
-    ? buildSiteExplorerTreeSection<SiteExplorerContextTarget>(
+    ? buildStructuralExplorerTreeSection<SiteExplorerContextTarget>(
       'pages',
-      site.explorer.pages.folders,
-      site.explorer.pages.items,
+      site.explorer.pages,
       normalPages.map((page) => ({
         id: page.id,
         label: page.title,
+        path: page.slug,
         meta: pagePublicPath(page.slug),
         icon: FileTextSolidIcon,
         active: page.id === activePageId && activeDocument?.kind !== 'visualComponent',
@@ -492,13 +536,13 @@ export function SiteExplorerPanel({
     )
     : null
   const styleTreeModel = site
-    ? buildSiteExplorerTreeSection<SiteExplorerContextTarget>(
+    ? buildStructuralExplorerTreeSection<SiteExplorerContextTarget>(
       'styles',
-      site.explorer.styles.folders,
-      site.explorer.styles.items,
+      site.explorer.styles,
       fileBuckets.styles.map((file) => ({
         id: file.id,
         label: fileName(file.path),
+        path: file.path,
         meta: file.path,
         icon: PaintBucketSolidIcon,
         active: activeEditorFileId === file.id,
@@ -508,13 +552,13 @@ export function SiteExplorerPanel({
     )
     : null
   const scriptTreeModel = site
-    ? buildSiteExplorerTreeSection<SiteExplorerContextTarget>(
+    ? buildStructuralExplorerTreeSection<SiteExplorerContextTarget>(
       'scripts',
-      site.explorer.scripts.folders,
-      site.explorer.scripts.items,
+      site.explorer.scripts,
       fileBuckets.scripts.map((file) => ({
         id: file.id,
         label: fileName(file.path),
+        path: file.path,
         meta: file.path,
         icon: CodeIcon,
         active: activeEditorFileId === file.id,
@@ -538,127 +582,36 @@ export function SiteExplorerPanel({
         {!site ? (
             <SkeletonBlock minHeight={160} ariaLabel="Loading site" />
           ) : (
-            <>
-              {pageTreeModel && (
-                <SiteExplorerTreeSection
-                title="Pages"
-                count={normalPages.length}
-                actionLabel="New page"
-                actionIcon={FilePlusSolidIcon}
-                onAction={() => setCreateKind('page')}
-                model={pageTreeModel}
-                dropTarget={explorerDnd.target}
-                inlineRenameTarget={inlineRenameSectionTarget('pages')}
-                selectedItemIds={explorerSelection.selectedItemIdsForSection('pages')}
-                onCreateFolder={() => handleCreateFolder('pages')}
-                onRenameItem={renameExplorerItem}
-                onRenameFolder={(folder) => renameExplorerFolderTarget('pages', folder)}
-                onCommitInlineRename={handleInlineRename}
-                onCancelInlineRename={() => setInlineRenameTarget(null)}
-                onOpenItem={(item, event) => openExplorerItem(pageTreeModel, item, event)}
-                onContextMenuItem={(item, event) => contextMenuForItem(pageTreeModel, item, event)}
-                onKeyDownItem={(item, event) => keyboardContextMenuForItem(pageTreeModel, item, event)}
-                onContextMenuFolder={(folder, event) => openContextMenu(folderTarget('pages', folder), event)}
-                onKeyDownFolder={(folder, event) => openKeyboardContextMenu(folderTarget('pages', folder), event)}
-              />
-              )}
-
-              {templateTreeModel && (
-                <SiteExplorerTreeSection
-                title="Templates"
-                count={templatePages.length}
-                actionLabel="New template"
-                actionIcon={FilePlusSolidIcon}
-                onAction={handleCreateTemplate}
-                model={templateTreeModel}
-                dropTarget={explorerDnd.target}
-                inlineRenameTarget={inlineRenameSectionTarget('templates')}
-                selectedItemIds={explorerSelection.selectedItemIdsForSection('templates')}
-                onCreateFolder={() => handleCreateFolder('templates')}
-                onRenameItem={renameExplorerItem}
-                onRenameFolder={(folder) => renameExplorerFolderTarget('templates', folder)}
-                onCommitInlineRename={handleInlineRename}
-                onCancelInlineRename={() => setInlineRenameTarget(null)}
-                onOpenItem={(item, event) => openExplorerItem(templateTreeModel, item, event)}
-                onContextMenuItem={(item, event) => contextMenuForItem(templateTreeModel, item, event)}
-                onKeyDownItem={(item, event) => keyboardContextMenuForItem(templateTreeModel, item, event)}
-                onContextMenuFolder={(folder, event) => openContextMenu(folderTarget('templates', folder), event)}
-                onKeyDownFolder={(folder, event) => openKeyboardContextMenu(folderTarget('templates', folder), event)}
-              />
-              )}
-
-              {componentTreeModel && (
-                <SiteExplorerTreeSection
-                title="Components"
-                count={components.length}
-                actionLabel="New component"
-                actionIcon={BracesIcon}
-                onAction={() => setCreateKind('component')}
-                model={componentTreeModel}
-                dropTarget={explorerDnd.target}
-                inlineRenameTarget={inlineRenameSectionTarget('components')}
-                selectedItemIds={explorerSelection.selectedItemIdsForSection('components')}
-                onCreateFolder={() => handleCreateFolder('components')}
-                onRenameItem={renameExplorerItem}
-                onRenameFolder={(folder) => renameExplorerFolderTarget('components', folder)}
-                onCommitInlineRename={handleInlineRename}
-                onCancelInlineRename={() => setInlineRenameTarget(null)}
-                onOpenItem={(item, event) => openExplorerItem(componentTreeModel, item, event)}
-                onContextMenuItem={(item, event) => contextMenuForItem(componentTreeModel, item, event)}
-                onKeyDownItem={(item, event) => keyboardContextMenuForItem(componentTreeModel, item, event)}
-                onContextMenuFolder={(folder, event) => openContextMenu(folderTarget('components', folder), event)}
-                onKeyDownFolder={(folder, event) => openKeyboardContextMenu(folderTarget('components', folder), event)}
-              />
-              )}
-
-              {styleTreeModel && (
-                <SiteExplorerTreeSection
-                title="Styles"
-                count={fileBuckets.styles.length}
-                actionLabel="New stylesheet"
-                actionIcon={PaintBucketSolidIcon}
-                onAction={() => setCreateKind('style')}
-                model={styleTreeModel}
-                dropTarget={explorerDnd.target}
-                inlineRenameTarget={inlineRenameSectionTarget('styles')}
-                selectedItemIds={explorerSelection.selectedItemIdsForSection('styles')}
-                onCreateFolder={() => handleCreateFolder('styles')}
-                onRenameItem={renameExplorerItem}
-                onRenameFolder={(folder) => renameExplorerFolderTarget('styles', folder)}
-                onCommitInlineRename={handleInlineRename}
-                onCancelInlineRename={() => setInlineRenameTarget(null)}
-                onOpenItem={(item, event) => openExplorerItem(styleTreeModel, item, event)}
-                onContextMenuItem={(item, event) => contextMenuForItem(styleTreeModel, item, event)}
-                onKeyDownItem={(item, event) => keyboardContextMenuForItem(styleTreeModel, item, event)}
-                onContextMenuFolder={(folder, event) => openContextMenu(folderTarget('styles', folder), event)}
-                onKeyDownFolder={(folder, event) => openKeyboardContextMenu(folderTarget('styles', folder), event)}
-              />
-              )}
-
-              {scriptTreeModel && (
-                <SiteExplorerTreeSection
-                title="Scripts"
-                count={fileBuckets.scripts.length}
-                actionLabel="New script"
-                actionIcon={CodeIcon}
-                onAction={() => setCreateKind('script')}
-                model={scriptTreeModel}
-                dropTarget={explorerDnd.target}
-                inlineRenameTarget={inlineRenameSectionTarget('scripts')}
-                selectedItemIds={explorerSelection.selectedItemIdsForSection('scripts')}
-                onCreateFolder={() => handleCreateFolder('scripts')}
-                onRenameItem={renameExplorerItem}
-                onRenameFolder={(folder) => renameExplorerFolderTarget('scripts', folder)}
-                onCommitInlineRename={handleInlineRename}
-                onCancelInlineRename={() => setInlineRenameTarget(null)}
-                onOpenItem={(item, event) => openExplorerItem(scriptTreeModel, item, event)}
-                onContextMenuItem={(item, event) => contextMenuForItem(scriptTreeModel, item, event)}
-                onKeyDownItem={(item, event) => keyboardContextMenuForItem(scriptTreeModel, item, event)}
-                onContextMenuFolder={(folder, event) => openContextMenu(folderTarget('scripts', folder), event)}
-                onKeyDownFolder={(folder, event) => openKeyboardContextMenu(folderTarget('scripts', folder), event)}
-              />
-              )}
-            </>
+            <SiteExplorerPanelSections
+              explorerDnd={explorerDnd}
+              pageTreeModel={pageTreeModel}
+              templateTreeModel={templateTreeModel}
+              componentTreeModel={componentTreeModel}
+              styleTreeModel={styleTreeModel}
+              scriptTreeModel={scriptTreeModel}
+              normalPageCount={normalPages.length}
+              templatePageCount={templatePages.length}
+              componentCount={components.length}
+              styleCount={fileBuckets.styles.length}
+              scriptCount={fileBuckets.scripts.length}
+              inlineRenameTargetForSection={inlineRenameSectionTarget}
+              selectedItemIdsForSection={(sectionId) => explorerSelection.selectedItemIdsForSection(sectionId)}
+              onCreatePage={() => setCreateKind('page')}
+              onCreateTemplate={handleCreateTemplate}
+              onCreateComponent={() => setCreateKind('component')}
+              onCreateStyle={() => setCreateKind('style')}
+              onCreateScript={() => setCreateKind('script')}
+              onCreateFolder={handleCreateFolder}
+              onRenameItem={renameExplorerItem}
+              onRenameFolder={renameExplorerFolderTarget}
+              onCommitInlineRename={handleInlineRename}
+              onCancelInlineRename={() => setInlineRenameTarget(null)}
+              onOpenItem={openExplorerItem}
+              onContextMenuItem={contextMenuForItem}
+              onKeyDownItem={keyboardContextMenuForItem}
+              onContextMenuFolder={(sectionId, folder, event) => openContextMenu(folderTarget(sectionId, folder), event)}
+              onKeyDownFolder={(sectionId, folder, event) => openKeyboardContextMenu(folderTarget(sectionId, folder), event)}
+            />
           )}
       </Panel>
       {createKind && (
@@ -687,13 +640,23 @@ export function SiteExplorerPanel({
           onSave={handleSaveTemplateSettings}
         />
       )}
+      {pathConfirmPlan && (
+        <SiteExplorerPathConfirmDialog
+          plan={pathConfirmPlan}
+          onCancel={() => setPathConfirmPlan(null)}
+          onConfirm={handleConfirmPathChange}
+        />
+      )}
 
       </>
     )
   }
 
   return (
-    <SiteExplorerDndScope enabled={organizationDndEnabled}>
+    <SiteExplorerDndScope
+      enabled={organizationDndEnabled}
+      onStructuralPathPlan={setPathConfirmPlan}
+    >
       {renderPanel}
     </SiteExplorerDndScope>
   )

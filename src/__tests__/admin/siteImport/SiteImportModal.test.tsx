@@ -91,6 +91,7 @@ function makeMinimalPlan(overrides: Partial<ImportPlan> = {}): ImportPlan {
     styleRules: overrides.styleRules ?? [],
     styleRuleSources: overrides.styleRuleSources ?? [],
     fonts: overrides.fonts ?? [],
+    googleFonts: overrides.googleFonts ?? [],
     fontTokens: overrides.fontTokens ?? [],
     conditions: overrides.conditions ?? [],
     assets: overrides.assets ?? [],
@@ -570,7 +571,7 @@ describe('filterPlanBySelection — page filtering', () => {
     title: 'Page A',
     slug: 'a',
     linkedCssPaths: [],
-    linkedScripts: [],
+    scripts: [],
     nodeFragment: { rootNodeId: 'r', nodes: {} },
   }
   const pageB = {
@@ -578,7 +579,7 @@ describe('filterPlanBySelection — page filtering', () => {
     title: 'Page B',
     slug: 'b',
     linkedCssPaths: [],
-    linkedScripts: [],
+    scripts: [],
     nodeFragment: { rootNodeId: 'r', nodes: {} },
   }
   const rule0 = makeStyleRule({ name: 'rule-0' })
@@ -612,6 +613,7 @@ describe('filterPlanBySelection — page filtering', () => {
       styleRules: p.styleRules.filter((_, i) => sel.styleRulesIncluded.has(i)),
       assets: p.assets.filter((a) => sel.assetsIncluded.has(a.sourcePath)),
       fonts: p.fonts.filter((f) => sel.fontsIncluded.has(f.family)),
+      googleFonts: p.googleFonts.filter((f) => sel.fontsIncluded.has(f.family)),
       scripts: p.scripts
         .filter((script) => sel.scriptsIncluded.has(script.path))
         .map((script) => ({
@@ -709,8 +711,8 @@ describe('makeDefaultSelection — selects all items in the plan', () => {
   it('selects all pages by source path', () => {
     const plan = makeMinimalPlan({
       pages: [
-        { source: 'a.html', title: 'A', slug: 'a', linkedCssPaths: [], linkedScripts: [], nodeFragment: { rootNodeId: 'r', nodes: {} } },
-        { source: 'b.html', title: 'B', slug: 'b', linkedCssPaths: [], linkedScripts: [], nodeFragment: { rootNodeId: 'r', nodes: {} } },
+        { source: 'a.html', title: 'A', slug: 'a', linkedCssPaths: [], scripts: [], nodeFragment: { rootNodeId: 'r', nodes: {} } },
+        { source: 'b.html', title: 'B', slug: 'b', linkedCssPaths: [], scripts: [], nodeFragment: { rootNodeId: 'r', nodes: {} } },
       ],
     })
     const sel = makeDefaultSelection(plan)
@@ -1325,7 +1327,7 @@ describe('AnalyzeStep — MEDIA group renders from plan.assets only', () => {
         title: 'Home',
         slug: 'index',
         linkedCssPaths: ['styles/main.css'],
-        linkedScripts: [{ path: 'scripts/app.js', format: 'classic' }],
+        scripts: [{ kind: 'external', path: 'scripts/app.js', format: 'classic' }],
         nodeFragment: { nodes: {}, rootIds: [] },
       },
       {
@@ -1333,7 +1335,7 @@ describe('AnalyzeStep — MEDIA group renders from plan.assets only', () => {
         title: 'About',
         slug: 'about',
         linkedCssPaths: ['styles/main.css'],
-        linkedScripts: [],
+        scripts: [],
         nodeFragment: { nodes: {}, rootIds: [] },
       },
       {
@@ -1341,7 +1343,7 @@ describe('AnalyzeStep — MEDIA group renders from plan.assets only', () => {
         title: 'Pricing',
         slug: 'pricing',
         linkedCssPaths: ['styles/main.css'],
-        linkedScripts: [],
+        scripts: [],
         nodeFragment: { nodes: {}, rootIds: [] },
       },
     ],
@@ -1455,7 +1457,7 @@ describe('commitImportPlan — uploadAsset called only for entries in plan.asset
           title: 'Home',
           slug: 'index',
           linkedCssPaths: [],
-          linkedScripts: [{ path: 'scripts/app.js', format: 'classic' }],
+          scripts: [{ kind: 'external', path: 'scripts/app.js', format: 'classic' }],
           nodeFragment: { nodes: {}, rootIds: [] },
         },
         {
@@ -1463,7 +1465,7 @@ describe('commitImportPlan — uploadAsset called only for entries in plan.asset
           title: 'About',
           slug: 'about',
           linkedCssPaths: [],
-          linkedScripts: [],
+          scripts: [],
           nodeFragment: { nodes: {}, rootIds: [] },
         },
         {
@@ -1471,7 +1473,7 @@ describe('commitImportPlan — uploadAsset called only for entries in plan.asset
           title: 'Pricing',
           slug: 'pricing',
           linkedCssPaths: [],
-          linkedScripts: [],
+          scripts: [],
           nodeFragment: { nodes: {}, rootIds: [] },
         },
       ],
@@ -1493,6 +1495,16 @@ describe('commitImportPlan — uploadAsset called only for entries in plan.asset
 
     const uploadedPaths: string[] = []
     const mockAdapter: SiteImportAdapter = {
+      installGoogleFont: async (font) => ({
+        id: `font-${font.family}`,
+        source: 'google',
+        family: font.family,
+        variants: font.variants,
+        subsets: font.subsets,
+        files: [],
+        createdAt: 1,
+        updatedAt: 1,
+      }),
       uploadAsset: async ({ path }) => {
         uploadedPaths.push(path)
         return `/uploads/logo.png`
@@ -1505,7 +1517,11 @@ describe('commitImportPlan — uploadAsset called only for entries in plan.asset
           overwriteStyleRule: () => {},
           addConditions: () => {},
           addFonts: () => [],
+          addInstalledFonts: () => [],
+          addFontTokens: () => [],
+          overwriteFontTokens: () => [],
           addColorTokens: () => [],
+          overwriteColorTokens: () => [],
           addScripts: () => [],
         })
       },
@@ -1541,6 +1557,16 @@ describe('commitImportPlan — overwrite with no existing target falls back to a
     const addedPageIds: (string | undefined)[] = []
     const overwroteRuleIds: string[] = []
     const adapter: SiteImportAdapter = {
+      installGoogleFont: async (font) => ({
+        id: `font-${font.family}`,
+        source: 'google',
+        family: font.family,
+        variants: font.variants,
+        subsets: font.subsets,
+        files: [],
+        createdAt: 1,
+        updatedAt: 1,
+      }),
       uploadAsset: async ({ path }) => `/uploads/${path}`,
       commit: async (recipe) => {
         recipe({
@@ -1559,7 +1585,11 @@ describe('commitImportPlan — overwrite with no existing target falls back to a
           },
           addConditions: () => {},
           addFonts: () => [],
+          addInstalledFonts: () => [],
+          addFontTokens: () => [],
+          overwriteFontTokens: () => [],
           addColorTokens: () => [],
+          overwriteColorTokens: () => [],
           addScripts: () => [],
         })
       },
@@ -1575,7 +1605,7 @@ describe('commitImportPlan — overwrite with no existing target falls back to a
           title: 'Home',
           slug: 'home',
           linkedCssPaths: [],
-          linkedScripts: [],
+          scripts: [],
           nodeFragment: { nodes: {}, rootIds: [] },
         },
       ],
@@ -1612,7 +1642,7 @@ describe('commitImportPlan — overwrite with no existing target falls back to a
           title: 'Home',
           slug: 'home',
           linkedCssPaths: [],
-          linkedScripts: [],
+          scripts: [],
           nodeFragment: { nodes: {}, rootIds: [] },
         },
       ],

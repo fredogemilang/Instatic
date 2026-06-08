@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
@@ -496,10 +496,13 @@ describe('CMS media handlers', () => {
     const uploadsDir = mkdtempSync(join(tmpdir(), 'instatic-uploads-'))
     mediaStorageRegistry.configureLocalDisk({ uploadsDir })
     const body = new FormData()
+    const originalConsoleError = console.error
+    const loggedErrors = mock(() => {})
+    console.error = loggedErrors as typeof console.error
     body.set(
       'file',
       new File(
-        ['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><rect width="10" height="10"/></svg>'],
+        ['<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0"><script>alert(1)</script><rect width="10" height="10"/></svg>'],
         'logo.svg',
         { type: 'image/svg+xml' },
       ),
@@ -527,7 +530,11 @@ describe('CMS media handlers', () => {
       expect(onDisk).not.toContain('alert(1)')
       // The benign geometry survives.
       expect(onDisk.toLowerCase()).toContain('rect')
+      expect(
+        loggedErrors.mock.calls.some(([prefix]) => String(prefix).startsWith('[mediaVariants]')),
+      ).toBe(false)
     } finally {
+      console.error = originalConsoleError
       rmSync(uploadsDir, { recursive: true, force: true })
     }
   })

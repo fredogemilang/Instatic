@@ -70,6 +70,10 @@ export type NewStyleRule = Omit<StyleRule, 'id' | 'createdAt' | 'updatedAt'>
  *   referenced in the source HTML/CSS by its original FileMap path so the
  *   import doesn't degrade pages or rules. Surface the warning in the
  *   wizard's Done step so the user can re-upload manually.
+ * - `font-install-failed`: a Google Fonts CSS2 import was understood, but the
+ *   CMS Google-font installer could not download/register the self-hosted
+ *   files. The import continues; affected font tokens fall back to their
+ *   authored fallback stacks.
  * - `external-font`: an `@font-face` whose every `src` is an external URL
  *   (or `local(...)` only) — nothing to upload, so the face is skipped rather
  *   than imported. The user can re-add the font by hand. Self-hosted faces
@@ -87,6 +91,7 @@ export type ImportWarningKind =
   | 'missing-stylesheet'
   | 'missing-script'
   | 'asset-upload-failed'
+  | 'font-install-failed'
   | 'external-font'
 
 export interface ImportWarning {
@@ -201,6 +206,18 @@ export interface ImportFontFamily {
 }
 
 /**
+ * A Google Fonts CSS2 family request extracted from a trusted
+ * `fonts.googleapis.com/css2` @import. Commit resolves these through the same
+ * CMS Google-font installer used by the Typography panel, producing self-hosted
+ * font entries instead of leaving an external stylesheet in the site.
+ */
+export interface ImportGoogleFont {
+  family: string
+  variants: string[]
+  subsets: string[]
+}
+
+/**
  * A colour-valued custom property pulled from a root-scope rule (`:root`,
  * `html`, `body`). Committed into the CMS colours system
  * (`site.settings.framework.colors`) as a plain base token that re-emits
@@ -248,6 +265,28 @@ export interface ImportScript {
   /** Runtime ordering; lower runs earlier. Derived from first HTML occurrence. */
   priority: number
 }
+
+/**
+ * A script tag discovered while planning one HTML page, preserving source
+ * order across inline executable JavaScript and external `<script src>` tags.
+ */
+export type PageScript =
+  | {
+    kind: 'external'
+    /** FileMap path of the linked JavaScript file. */
+    path: string
+    /** Loader semantics from the source HTML. */
+    format: SiteScriptFormat
+  }
+  | {
+    kind: 'inline'
+    /** Stable synthetic SiteFile path derived from the source HTML file. */
+    path: string
+    /** Inline JavaScript source. */
+    content: string
+    /** Loader semantics from the source HTML. */
+    format: SiteScriptFormat
+  }
 
 // ---------------------------------------------------------------------------
 // Phase 2 — Site-import pipeline types
@@ -307,11 +346,12 @@ export interface PagePlan {
    */
   linkedCssPaths: string[]
   /**
-   * JavaScript files linked by `<script src>` tags, in source order. Only paths
-   * that exist in the FileMap are included; missing hrefs produce
-   * `missing-script` warnings instead.
+   * Executable JavaScript tags in source order. External entries only include
+   * paths that exist in the FileMap; missing hrefs produce `missing-script`
+   * warnings instead. Non-executable script data (`application/json`,
+   * import maps, templates, etc.) is intentionally skipped.
    */
-  linkedScripts: { path: string; format: SiteScriptFormat }[]
+  scripts: PageScript[]
   /**
    * The body content as a flat node fragment.
    *
@@ -422,6 +462,12 @@ export interface ImportPlan {
    */
   fonts: ImportFontFamily[]
   /**
+   * Google font families extracted from trusted CSS2 `@import` rules. Commit
+   * installs these into `site.settings.fonts.items` through the normal CMS
+   * Google-font installer before font tokens are added.
+   */
+  googleFonts: ImportGoogleFont[]
+  /**
    * Reusable site-level conditions referenced by `styleRules[].contextStyles`
    * keys (custom @media / @container / @supports). Merged into `site.conditions`
    * on commit.
@@ -439,11 +485,6 @@ export interface ImportPlan {
    * `site.settings.fonts.tokens`.
    */
   fontTokens: ImportFontToken[]
-  /**
-   * Safe external font stylesheet URL extracted from CSS @import, if present.
-   * Currently limited to known font providers such as Google Fonts.
-   */
-  fontImportUrl?: string
   /**
    * JavaScript files linked by imported pages, committed as page-scoped site
    * scripts. Unlinked JS files stay as imported media assets instead of being
@@ -470,15 +511,13 @@ export interface ImportPlan {
 export interface ImportResult {
   pages: { id: string; title: string; slug: string; source: string }[]
   styleRules: { id: string; selector: string; kind: 'class' | 'ambient' }[]
-  /** Custom fonts imported from `@font-face` blocks. */
+  /** Fonts imported into the installed font library. */
   fonts: { id: string; family: string }[]
   assets: { sourcePath: string; mediaUrl: string }[]
   /** Colour tokens committed into the framework colours system. */
   colors: { slug: string; value: string }[]
   /** Font tokens committed into `site.settings.fonts.tokens`. */
   fontTokens: { id: string; name: string; variable: string }[]
-  /** External font stylesheet committed into `site.settings.fontImportUrl`. */
-  fontImportUrl?: string
   /** Site scripts committed from imported JS files. */
   scripts: { id: string; path: string }[]
   /** Resolved conflicts (mirrors ImportPlan.conflicts with final actions). */

@@ -31,7 +31,7 @@ import type { EditorStore } from '@site/store/types'
 import { MAX_HISTORY } from './defaults'
 import { reconcileFrameworkClasses } from './framework/reconcile'
 import { indexStyleRulesByName, linkImportedClassNames } from './importLinking'
-import { addImportedFonts, addImportedFontTokens, overwriteImportedFontTokens } from './importedFonts'
+import { addImportedFonts, addImportedFontTokens, addInstalledFontEntries, overwriteImportedFontTokens } from './importedFonts'
 import type { HistoryEntry, SiteMutationResult, SiteSliceHelpers, SiteSliceRecipe, SuperImportHelpers } from './types'
 
 /**
@@ -414,14 +414,14 @@ export function buildSiteHelpers(
           }
         },
 
-        setFontImportUrl(url): void {
-          if (site.settings.fontImportUrl === url) return
-          site.settings.fontImportUrl = url
-          didMutate = true
-        },
-
         addFonts(fonts): { id: string; family: string }[] {
           const committed = addImportedFonts(site, fonts)
+          if (committed.length > 0) didMutate = true
+          return committed
+        },
+
+        addInstalledFonts(fonts): { id: string; family: string }[] {
+          const committed = addInstalledFontEntries(site, fonts)
           if (committed.length > 0) didMutate = true
           return committed
         },

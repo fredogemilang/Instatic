@@ -38,8 +38,46 @@ function makeVisualComponent(id: string, name: string): VisualComponent {
 describe('site explorer organization', () => {
   it('parses missing explorer data to empty sections', () => {
     expect(parseSiteExplorerOrganization(undefined).pages).toEqual({
+      expandedFolders: [],
+      emptyFolders: [],
+      rowOrder: [],
+    })
+    expect(parseSiteExplorerOrganization(undefined).components).toEqual({
       folders: [],
       items: [],
+    })
+  })
+
+  it('parses structural sections as path state and decorative sections as folder placements', () => {
+    const parsed = parseSiteExplorerOrganization({
+      pages: {
+        expandedFolders: ['docs', '/docs/', 'bad\\path', '../bad'],
+        emptyFolders: ['drafts', 'docs', 'drafts'],
+        rowOrder: [
+          { kind: 'folder', id: 'docs', order: 1 },
+          { kind: 'item', id: 'intro', parentPath: 'docs', order: 0 },
+          { kind: 'item', id: 'intro', parentPath: 'docs', order: 9 },
+          { kind: 'folder', id: 'bad\\path', order: 2 },
+          { kind: 'other', id: 'ignored', order: 3 },
+        ],
+      },
+      components: {
+        folders: [{ id: 'folder-1', name: 'Shared', order: 0 }],
+        items: [{ id: 'hero', parentFolderId: 'folder-1', order: 0 }],
+      },
+    })
+
+    expect(parsed.pages).toEqual({
+      expandedFolders: ['docs'],
+      emptyFolders: ['drafts'],
+      rowOrder: [
+        { kind: 'folder', id: 'docs', order: 1 },
+        { kind: 'item', id: 'intro', parentPath: 'docs', order: 0 },
+      ],
+    })
+    expect(parsed.components).toEqual({
+      folders: [{ id: 'folder-1', name: 'Shared', order: 0 }],
+      items: [{ id: 'hero', parentFolderId: 'folder-1', order: 0 }],
     })
   })
 
@@ -92,18 +130,70 @@ describe('site explorer organization', () => {
       site,
     )
 
-    expect(explorer.pages.items.map((item) => item.id)).toEqual(['home', 'pricing'])
+    expect(explorer.pages).toEqual({
+      expandedFolders: [],
+      emptyFolders: [],
+      rowOrder: [],
+    })
     expect(explorer.templates.items.map((item) => item.id)).toEqual(['post-template'])
     expect(explorer.components.items.map((item) => item.id)).toEqual(['hero'])
-    expect(explorer.styles.items.map((item) => item.id)).toEqual(['theme'])
-    expect(explorer.scripts.items.map((item) => item.id)).toEqual(['analytics'])
+    expect(explorer.styles).toEqual({
+      expandedFolders: [],
+      emptyFolders: [],
+      rowOrder: [],
+    })
+    expect(explorer.scripts).toEqual({
+      expandedFolders: [],
+      emptyFolders: [],
+      rowOrder: [],
+    })
+  })
+
+  it('reconciles structural page rows against current slugs', () => {
+    const site = makeSite({
+      pages: [
+        makePage({ id: 'home', slug: 'index' }),
+        makePage({ id: 'docs', slug: 'docs' }),
+        makePage({ id: 'intro', slug: 'docs/intro' }),
+        makePage({ id: 'start', slug: 'docs/guides/start' }),
+      ],
+      explorer: {
+        ...createDefaultSiteExplorerOrganization(),
+        pages: {
+          expandedFolders: ['docs', 'stale'],
+          emptyFolders: ['drafts', 'docs'],
+          rowOrder: [
+            { kind: 'folder', id: 'docs', order: 1 },
+            { kind: 'folder', id: 'docs/guides', parentPath: 'docs', order: 2 },
+            { kind: 'item', id: 'intro', parentPath: 'docs', order: 0 },
+            { kind: 'item', id: 'docs', parentPath: 'docs', order: 3 },
+            { kind: 'item', id: 'home', order: 4 },
+            { kind: 'folder', id: 'drafts', order: 5 },
+            { kind: 'folder', id: 'stale', order: 6 },
+          ],
+        },
+      },
+    })
+
+    const explorer = reconcileSiteExplorerOrganization(site.explorer, site)
+
+    expect(explorer.pages).toEqual({
+      expandedFolders: ['docs'],
+      emptyFolders: ['drafts'],
+      rowOrder: [
+        { kind: 'folder', id: 'docs', order: 1 },
+        { kind: 'folder', id: 'docs/guides', parentPath: 'docs', order: 2 },
+        { kind: 'item', id: 'intro', parentPath: 'docs', order: 0 },
+        { kind: 'folder', id: 'drafts', order: 5 },
+      ],
+    })
   })
 
   it('moves items into folders without changing site item arrays', () => {
     const site = makeSite({
-      pages: [
-        makePage({ id: 'home', slug: 'index' }),
-        makePage({ id: 'pricing', slug: 'pricing' }),
+      visualComponents: [
+        makeVisualComponent('hero', 'Hero'),
+        makeVisualComponent('footer', 'Footer'),
       ],
     })
     const explorer = reconcileSiteExplorerOrganization(
@@ -111,33 +201,33 @@ describe('site explorer organization', () => {
       site,
     )
 
-    const folderId = createExplorerFolder(explorer, 'pages', 'Marketing')
-    moveExplorerItem(explorer, 'pages', 'pricing', folderId, 0)
+    const folderId = createExplorerFolder(explorer, 'components', 'Marketing')
+    moveExplorerItem(explorer, 'components', 'footer', folderId, 0)
 
-    expect(explorer.pages.items.find((item) => item.id === 'pricing')?.parentFolderId).toBe(folderId)
-    expect(site.pages.map((page) => page.id)).toEqual(['home', 'pricing'])
+    expect(explorer.components.items.find((item) => item.id === 'footer')?.parentFolderId).toBe(folderId)
+    expect(site.visualComponents.map((component) => component.id)).toEqual(['hero', 'footer'])
   })
 
   it('wraps selected root items in a new folder at the first selected item position', () => {
     const explorer = createDefaultSiteExplorerOrganization()
-    explorer.pages = {
+    explorer.components = {
       folders: [{ id: 'folder-1', name: 'Existing', order: 2 }],
       items: [
-        { id: 'home', order: 0 },
+        { id: 'hero', order: 0 },
         { id: 'pricing', order: 1 },
         { id: 'about', order: 3 },
       ],
     }
 
-    const folderId = wrapExplorerItemsInFolder(explorer, 'pages', ['pricing', 'about'], 'Marketing')
+    const folderId = wrapExplorerItemsInFolder(explorer, 'components', ['pricing', 'about'], 'Marketing')
 
     expect(typeof folderId).toBe('string')
-    expect(explorer.pages.folders).toEqual([
+    expect(explorer.components.folders).toEqual([
       { id: folderId, name: 'Marketing', order: 1 },
       { id: 'folder-1', name: 'Existing', order: 2 },
     ])
-    expect(explorer.pages.items).toEqual([
-      { id: 'home', order: 0 },
+    expect(explorer.components.items).toEqual([
+      { id: 'hero', order: 0 },
       { id: 'pricing', parentFolderId: folderId, order: 0 },
       { id: 'about', parentFolderId: folderId, order: 1 },
     ])
@@ -145,19 +235,19 @@ describe('site explorer organization', () => {
 
   it('moves selected items as one ordered group', () => {
     const explorer = createDefaultSiteExplorerOrganization()
-    const folderId = createExplorerFolder(explorer, 'pages', 'Marketing')
-    explorer.pages.folders[0].order = 4
-    explorer.pages.items = [
-      { id: 'home', order: 0 },
+    const folderId = createExplorerFolder(explorer, 'components', 'Marketing')
+    explorer.components.folders[0].order = 4
+    explorer.components.items = [
+      { id: 'hero', order: 0 },
       { id: 'pricing', order: 1 },
       { id: 'about', order: 2 },
       { id: 'contact', order: 3 },
     ]
 
-    moveExplorerItems(explorer, 'pages', ['about', 'pricing'], folderId, 0)
+    moveExplorerItems(explorer, 'components', ['about', 'pricing'], folderId, 0)
 
-    expect(explorer.pages.items).toEqual([
-      { id: 'home', order: 0 },
+    expect(explorer.components.items).toEqual([
+      { id: 'hero', order: 0 },
       { id: 'contact', order: 1 },
       { id: 'pricing', parentFolderId: folderId, order: 0 },
       { id: 'about', parentFolderId: folderId, order: 1 },
@@ -197,14 +287,14 @@ describe('site explorer organization', () => {
 
   it('drops stale placements and appends missing items in current item order', () => {
     const site = makeSite({
-      pages: [
-        makePage({ id: 'home', slug: 'index' }),
-        makePage({ id: 'pricing', slug: 'pricing' }),
-        makePage({ id: 'about', slug: 'about' }),
+      visualComponents: [
+        makeVisualComponent('hero', 'Hero'),
+        makeVisualComponent('pricing', 'Pricing'),
+        makeVisualComponent('about', 'About'),
       ],
       explorer: {
         ...createDefaultSiteExplorerOrganization(),
-        pages: {
+        components: {
           folders: [{ id: 'folder-1', name: 'Marketing', order: 0 }],
           items: [
             { id: 'missing', order: 0 },
@@ -216,14 +306,14 @@ describe('site explorer organization', () => {
 
     const explorer = reconcileSiteExplorerOrganization(site.explorer, site)
 
-    expect(explorer.pages.items).toEqual([
-      { id: 'home', order: 0 },
+    expect(explorer.components.items).toEqual([
       { id: 'about', parentFolderId: 'folder-1', order: 0 },
+      { id: 'hero', order: 1 },
       { id: 'pricing', order: 2 },
     ])
   })
 
-  it('pins the homepage at the page section root during reconciliation', () => {
+  it('excludes the homepage from structural page row ordering', () => {
     const site = makeSite({
       pages: [
         makePage({ id: 'pricing', slug: 'pricing' }),
@@ -232,10 +322,11 @@ describe('site explorer organization', () => {
       explorer: {
         ...createDefaultSiteExplorerOrganization(),
         pages: {
-          folders: [{ id: 'folder-1', name: 'Marketing', order: 0 }],
-          items: [
-            { id: 'pricing', order: 0 },
-            { id: 'home', parentFolderId: 'folder-1', order: 1 },
+          expandedFolders: [],
+          emptyFolders: [],
+          rowOrder: [
+            { kind: 'item', id: 'pricing', order: 0 },
+            { kind: 'item', id: 'home', parentPath: 'docs', order: 1 },
           ],
         },
       },
@@ -243,9 +334,6 @@ describe('site explorer organization', () => {
 
     const explorer = reconcileSiteExplorerOrganization(site.explorer, site)
 
-    expect(explorer.pages.items).toEqual([
-      { id: 'home', order: 0 },
-      { id: 'pricing', order: 2 },
-    ])
+    expect(explorer.pages.rowOrder).toEqual([{ kind: 'item', id: 'pricing', order: 0 }])
   })
 })

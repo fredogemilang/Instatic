@@ -248,6 +248,37 @@ describe('buildAssetPlan — MIME types', () => {
     const { assets } = buildAssetPlan([pagePlan], [], fileMap)
     expect(assets[0]?.mimeType).toBe('image/png')
   })
+
+  it('sweeps unreferenced uploadable assets but skips source companion files', () => {
+    const fileMap = makeFileMap({
+      'index.html': { bytes: txt('<html><body><h1>Home</h1></body></html>'), mimeType: 'text/html' },
+      'assets/logo.png': { bytes: MINIMAL_PNG },
+      'assets/brand.woff2': { bytes: txt('font') },
+      'assets/reel.mp4': { bytes: txt('video') },
+      'scss/main.scss': { bytes: txt('$brand: red;') },
+      'assets/css/main.css.map': { bytes: txt('{}') },
+      'README.md': { bytes: txt('# docs') },
+      'mail.php': { bytes: txt('<?php') },
+      'desktop.ini': { bytes: txt('[LocalizedFileNames]') },
+    })
+    const { pagePlan } = makeHtmlPagePlan(
+      'index.html',
+      new TextDecoder().decode(fileMap.files['index.html']!.bytes),
+      fileMap,
+    )
+    const { assets } = buildAssetPlan([pagePlan], [], fileMap)
+
+    expect(assets.map((a) => a.sourcePath).sort()).toEqual([
+      'assets/brand.woff2',
+      'assets/logo.png',
+      'assets/reel.mp4',
+    ])
+    expect(assets.map((a) => a.mimeType).sort()).toEqual([
+      'font/woff2',
+      'image/png',
+      'video/mp4',
+    ])
+  })
 })
 
 // ---------------------------------------------------------------------------

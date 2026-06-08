@@ -43,9 +43,14 @@ export type { Condition, ConditionDef } from './condition'
 export type { SiteSettings } from './siteSettings'
 export type { SiteShell, SiteDocument } from './siteDocument'
 export type {
+  DecorativeExplorerSection,
+  DecorativeSiteExplorerSectionId,
   SiteExplorerFolder,
   SiteExplorerItemPlacement,
   SiteExplorerSectionId,
+  StructuralExplorerRowOrder,
+  StructuralExplorerSection,
+  StructuralSiteExplorerSectionId,
 } from './siteExplorer'
 
 // Defaults
@@ -60,7 +65,9 @@ export { parseBreakpoint } from './breakpoint'
 export { parsePage } from './page'
 export { parseSiteDocument } from './siteDocument'
 export {
+  DECORATIVE_SITE_EXPLORER_SECTION_IDS,
   SITE_EXPLORER_SECTION_IDS,
+  STRUCTURAL_SITE_EXPLORER_SECTION_IDS,
   createDefaultSiteExplorerOrganization,
   createExplorerFolder,
   deleteExplorerFolder,
@@ -73,6 +80,19 @@ export {
   renameExplorerFolder,
   wrapExplorerItemsInFolder,
 } from './siteExplorer'
+export {
+  buildDeleteExplorerPathPlan,
+  buildMoveExplorerFolderPlan,
+  buildMoveExplorerItemPlan,
+  buildRenameExplorerFolderPlan,
+  commitExplorerPathPlan,
+  type ExplorerPathChangeBlocker,
+  type ExplorerPathChangePlan,
+  type ExplorerPathChangeWarning,
+  type ExplorerPathDeletedItem,
+  type ExplorerPathPlanKind,
+  type ExplorerPathRewriteChange,
+} from './explorerPathPlans'
 
 // Slug → public path + internal page-reference links.
 export {

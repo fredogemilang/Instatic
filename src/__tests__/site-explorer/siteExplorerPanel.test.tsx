@@ -182,9 +182,134 @@ describe('SiteExplorerPanel', () => {
     expect(rows[0].getAttribute('draggable')).not.toBe('true')
   })
 
+  it('renders nested page and script paths as recursive folders', () => {
+    loadSite()
+    useEditorStore.setState((state) => {
+      if (!state.site) return
+      state.site.pages.push(makePage({
+        id: 'page-docs',
+        title: 'Documentation',
+        slug: 'documentation',
+        rootNodeId: 'root-docs',
+        nodes: { 'root-docs': makeNode({ id: 'root-docs', moduleId: 'base.body' }) },
+      }))
+      state.site.pages.push(makePage({
+        id: 'page-setup',
+        title: 'Setup',
+        slug: 'documentation/setup',
+        rootNodeId: 'root-setup',
+        nodes: { 'root-setup': makeNode({ id: 'root-setup', moduleId: 'base.body' }) },
+      }))
+      state.site.files.push({
+        id: 'script-vendor',
+        path: 'documentation/assets/js/vendor/jquery.min.js',
+        type: 'script',
+        content: '',
+        createdAt: 1,
+        updatedAt: 1,
+      })
+    })
+
+    render(<SiteExplorerPanel variant="docked" />)
+
+    const panel = screen.getByTestId('site-explorer-panel')
+    const pagesTree = within(panel).getByRole('tree', { name: 'Pages' })
+    expect(within(pagesTree).getByRole('button', { name: 'documentation' })).toBeDefined()
+    expect(within(pagesTree).getByRole('button', { name: /open page setup/i })).toBeDefined()
+
+    const scriptsTree = within(panel).getByRole('tree', { name: 'Scripts' })
+    expect(within(scriptsTree).getByRole('button', { name: 'assets' })).toBeDefined()
+    expect(within(scriptsTree).getByRole('button', { name: 'js' })).toBeDefined()
+  })
+
+  it('confirms structural folder rename with exact descendant slug changes', () => {
+    loadSite()
+    useEditorStore.setState((state) => {
+      if (!state.site) return
+      state.site.pages.push(makePage({
+        id: 'page-docs',
+        title: 'Documentation',
+        slug: 'documentation',
+        rootNodeId: 'root-docs',
+        nodes: { 'root-docs': makeNode({ id: 'root-docs', moduleId: 'base.body' }) },
+      }))
+      state.site.pages.push(makePage({
+        id: 'page-setup',
+        title: 'Setup',
+        slug: 'documentation/setup',
+        rootNodeId: 'root-setup',
+        nodes: { 'root-setup': makeNode({ id: 'root-setup', moduleId: 'base.body' }) },
+      }))
+    })
+
+    render(<SiteExplorerPanel variant="docked" />)
+
+    const pagesTree = within(screen.getByTestId('site-explorer-panel')).getByRole('tree', { name: 'Pages' })
+    fireEvent.contextMenu(within(pagesTree).getByRole('button', { name: 'documentation' }), {
+      clientX: 120,
+      clientY: 160,
+    })
+    fireEvent.click(screen.getByRole('menuitem', { name: /rename/i }))
+    const input = screen.getByRole('textbox', { name: 'Rename documentation' })
+    fireEvent.change(input, { target: { value: 'docs' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    const dialog = screen.getByRole('dialog', { name: /rename documentation to docs/i })
+    expect(within(dialog).getByText('documentation/setup')).toBeDefined()
+    expect(within(dialog).getByText('docs/setup')).toBeDefined()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
+
+    const slugs = useEditorStore.getState().site!.pages.map((page) => page.slug).sort()
+    expect(slugs).toEqual(['docs', 'docs/setup', 'index', 'pricing'])
+  })
+
+  it('confirms structural folder delete with exact descendants', () => {
+    loadSite()
+    useEditorStore.setState((state) => {
+      if (!state.site) return
+      state.site.pages.push(makePage({
+        id: 'page-docs',
+        title: 'Documentation',
+        slug: 'documentation',
+        rootNodeId: 'root-docs',
+        nodes: { 'root-docs': makeNode({ id: 'root-docs', moduleId: 'base.body' }) },
+      }))
+      state.site.pages.push(makePage({
+        id: 'page-setup',
+        title: 'Setup',
+        slug: 'documentation/setup',
+        rootNodeId: 'root-setup',
+        nodes: { 'root-setup': makeNode({ id: 'root-setup', moduleId: 'base.body' }) },
+      }))
+    })
+
+    render(<SiteExplorerPanel variant="docked" />)
+
+    const pagesTree = within(screen.getByTestId('site-explorer-panel')).getByRole('tree', { name: 'Pages' })
+    fireEvent.contextMenu(within(pagesTree).getByRole('button', { name: 'documentation' }), {
+      clientX: 120,
+      clientY: 160,
+    })
+    fireEvent.click(screen.getByRole('menuitem', { name: /delete/i }))
+
+    const dialog = screen.getByRole('alertdialog', { name: /delete documentation/i })
+    expect(within(dialog).getByText('documentation')).toBeDefined()
+    expect(within(dialog).getByText('documentation/setup')).toBeDefined()
+    expect(useEditorStore.getState().site?.pages.some((page) => page.id === 'page-docs')).toBe(true)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    const pageIds = useEditorStore.getState().site!.pages.map((page) => page.id)
+    expect(pageIds).toEqual(['page-home', 'page-pricing'])
+  })
+
   it('uses left-aligned tree row buttons and DOM-panel-style drop helpers', () => {
     const treeSectionSource = readFileSync(
       new URL('../../admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeSection.tsx', import.meta.url),
+      'utf-8',
+    )
+    const treeRowsSource = readFileSync(
+      new URL('../../admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeRows.tsx', import.meta.url),
       'utf-8',
     )
     const panelSource = readFileSync(
@@ -208,9 +333,10 @@ describe('SiteExplorerPanel', () => {
       'utf-8',
     )
 
-    expect(treeSectionSource).toContain('align="start"')
+    expect(treeRowsSource).toContain('align="start"')
     expect(treeSectionSource).toContain('treeDropStyles')
-    expect(treeSectionSource).toContain('data-drop-position')
+    expect(treeRowsSource).toContain('treeDropStyles')
+    expect(treeRowsSource).toContain('data-drop-position')
     expect(treeSectionSource).toContain('RootDropGap')
     expect(dndScopeSource).toContain('DragOverlay')
     expect(editorBodySource).toContain('collisionDetection={pointerWithin}')
@@ -245,7 +371,7 @@ describe('SiteExplorerPanel', () => {
       'utf-8',
     )
     const treeSectionSource = readFileSync(
-      new URL('../../admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeSection.tsx', import.meta.url),
+      new URL('../../admin/pages/site/panels/SiteExplorerPanel/SiteExplorerTreeRows.tsx', import.meta.url),
       'utf-8',
     )
 
@@ -259,13 +385,12 @@ describe('SiteExplorerPanel', () => {
 
   it('renders page folders and nested page rows from explorer organization', () => {
     loadSite()
-    const folderId = useEditorStore.getState().createExplorerFolder('pages', 'Marketing')
-    useEditorStore.getState().moveExplorerItem('pages', 'page-pricing', folderId, 0)
+    useEditorStore.getState().renamePage('page-pricing', 'Pricing', 'marketing/pricing')
 
     render(<SiteExplorerPanel variant="docked" />)
 
     const pagesTree = within(screen.getByTestId('site-explorer-panel')).getByRole('tree', { name: 'Pages' })
-    expect(within(pagesTree).getByRole('treeitem', { name: 'Marketing' })).toBeDefined()
+    expect(within(pagesTree).getByRole('treeitem', { name: 'marketing' })).toBeDefined()
     const pricingRow = within(pagesTree).getByRole('treeitem', { name: /open page pricing/i })
     expect(pricingRow.getAttribute('aria-level')).toBe('2')
   })
@@ -296,26 +421,25 @@ describe('SiteExplorerPanel', () => {
     expect(rowForButton(/open page about/i).getAttribute('aria-selected')).toBe('true')
   })
 
-  it('wraps selected pages in a new folder from the item context menu', () => {
+  it('wraps selected components in a decorative folder from the item context menu', () => {
     loadSite()
-    useEditorStore.getState().addPage('About', 'about')
+    const footerId = useEditorStore.getState().createVisualComponent('FooterCard')
 
     render(<SiteExplorerPanel variant="docked" />)
 
-    fireEvent.click(screen.getByRole('button', { name: /open page pricing/i }), { metaKey: true })
-    fireEvent.click(screen.getByRole('button', { name: /open page about/i }), { metaKey: true })
-    fireEvent.contextMenu(screen.getByRole('button', { name: /open page pricing/i }), {
+    fireEvent.click(screen.getByRole('button', { name: /open component herocard/i }), { metaKey: true })
+    fireEvent.click(screen.getByRole('button', { name: /open component footercard/i }), { metaKey: true })
+    fireEvent.contextMenu(screen.getByRole('button', { name: /open component herocard/i }), {
       clientX: 120,
       clientY: 140,
     })
-    fireEvent.click(screen.getByRole('menuitem', { name: /wrap 2 pages in folder/i }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /wrap 2 components in folder/i }))
 
-    const folder = useEditorStore.getState().site?.explorer.pages.folders.find((entry) => entry.name === 'New folder')
+    const folder = useEditorStore.getState().site?.explorer.components.folders.find((entry) => entry.name === 'New folder')
     expect(folder).toBeDefined()
-    const placements = useEditorStore.getState().site?.explorer.pages.items ?? []
-    expect(placements.find((item) => item.id === 'page-pricing')?.parentFolderId).toBe(folder?.id)
-    const aboutId = useEditorStore.getState().site?.pages.find((page) => page.slug === 'about')?.id
-    expect(placements.find((item) => item.id === aboutId)?.parentFolderId).toBe(folder?.id)
+    const placements = useEditorStore.getState().site?.explorer.components.items ?? []
+    expect(placements.find((item) => item.id === 'vc-HeroCard')?.parentFolderId).toBe(folder?.id)
+    expect(placements.find((item) => item.id === footerId)?.parentFolderId).toBe(folder?.id)
   })
 
   it('shows bulk-specific actions for a site explorer multi-selection context menu', () => {
@@ -332,7 +456,7 @@ describe('SiteExplorerPanel', () => {
     })
 
     expect(screen.getByText('2 pages selected')).toBeDefined()
-    expect(screen.getByRole('menuitem', { name: /wrap 2 pages in folder/i })).toBeDefined()
+    expect(screen.queryByRole('menuitem', { name: /wrap 2 pages in folder/i })).toBeNull()
     expect(screen.getByRole('menuitem', { name: /delete 2 pages/i })).toBeDefined()
     expect(screen.queryByRole('menuitem', { name: /open in new tab/i })).toBeNull()
     expect(screen.queryByRole('menuitem', { name: /use as template/i })).toBeNull()
@@ -341,9 +465,8 @@ describe('SiteExplorerPanel', () => {
 
   it('interleaves root folders and root items by their explorer order', () => {
     loadSite()
-    const folderId = useEditorStore.getState().createExplorerFolder('pages', 'Marketing')
-    useEditorStore.getState().moveExplorerItem('pages', 'page-pricing', null, 0)
-    useEditorStore.getState().moveExplorerFolder('pages', folderId, 2)
+    const folderPath = useEditorStore.getState().createExplorerFolder('pages', 'Marketing')
+    useEditorStore.getState().moveStructuralExplorerRow('pages', { kind: 'folder', id: folderPath }, 1)
 
     render(<SiteExplorerPanel variant="docked" />)
 
@@ -352,7 +475,7 @@ describe('SiteExplorerPanel', () => {
     expect(rows.map((row) => row.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
       'Home/',
       'Pricing/pricing',
-      'Marketing',
+      'marketing',
     ])
   })
 

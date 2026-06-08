@@ -35,7 +35,7 @@ import type {
   ImportFontFamily,
   ImportFontFile,
 } from './types'
-import { guessMimeType } from './mimeTypes'
+import { guessMimeType, isImportUploadableMimeType } from './mimeTypes'
 
 // ---------------------------------------------------------------------------
 // Props that may contain relative asset URLs in page nodes
@@ -136,18 +136,20 @@ export function buildAssetPlan(
   // --- Resolve @font-face blocks into custom font families ---
   const fonts = buildFontFamilies(cssFileResults, fileMap, assetMap, warnings)
 
-  // --- Sweep up unreferenced binary/media files ---
+  // --- Sweep up unreferenced media/font files ---
   //
-  // Anything the user bundled that classifies as image / font / binary lands
-  // in the media library even when nothing in the imported HTML / CSS refers
-  // to it. The intent is "I dragged a folder in, I expect to see those files
-  // in my media library" — silently dropping the unreferenced ones makes the
-  // wizard feel lossy. Page-source files (html, css, js, meta) are still
-  // excluded; they're consumed by the page / rule pipelines.
+  // Anything the user bundled with a CMS-uploadable media/font MIME lands in
+  // the media library even when nothing in the imported HTML / CSS refers to
+  // it. The intent is "I dragged a folder in, I expect to see those files in
+  // my media library" — but source companions (.scss, sourcemaps, PHP mailers,
+  // desktop.ini, README files, etc.) are not public site assets and the media
+  // endpoint rejects them. Exclude them here so the review counts match the
+  // committed import instead of surfacing a wall of upload-time 400s.
   for (const [filePath, entry] of Object.entries(fileMap.files)) {
     if (assetMap.has(filePath)) continue
     const mimeType = entry.mimeType ?? guessMimeType(filePath)
     if (NON_ASSET_MIME_PREFIXES.some((prefix) => mimeType.toLowerCase().startsWith(prefix))) continue
+    if (!isImportUploadableMimeType(mimeType)) continue
     assetMap.set(filePath, { sourcePath: filePath, mimeType, bytes: entry.bytes })
   }
 
@@ -453,8 +455,8 @@ const NON_ASSET_MIME_PREFIXES: readonly string[] = [
  * Returns null when:
  *   - the URL is external / uses a special scheme,
  *   - the resolved path is not in the FileMap, or
- *   - the resolved file is a web document / script (HTML, CSS, JS) — those
- *     are page/style sources, not uploadable media assets.
+ *   - the resolved file is a web document / script (HTML, CSS, JS), or any
+ *     other MIME the CMS media endpoint cannot store.
  */
 function resolveAndRecord(
   rawUrl: string,
@@ -474,10 +476,13 @@ function resolveAndRecord(
 
   // HTML, CSS, and JS files are page/style sources — never upload them as
   // media assets.  An anchor <a href="other-page.html"> must not cause
-  // "other-page.html" to appear in plan.assets.
+  // "other-page.html" to appear in plan.assets. Likewise, source companions
+  // such as SCSS, sourcemaps, PHP mail handlers, and OS metadata are not
+  // public media assets and would be rejected by the media endpoint.
   if (NON_ASSET_MIME_PREFIXES.some((prefix) => mimeType.toLowerCase().startsWith(prefix))) {
     return null
   }
+  if (!isImportUploadableMimeType(mimeType)) return null
 
   if (!assetMap.has(fileMapKey)) {
     assetMap.set(fileMapKey, { sourcePath: fileMapKey, mimeType, bytes: entry.bytes })

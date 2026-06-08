@@ -1,6 +1,11 @@
 import { useState, type MouseEvent } from 'react'
 import type { SiteExplorerSectionId } from '@core/page-tree'
-import type { SiteExplorerTreeItem, SiteExplorerTreeSectionModel } from './siteExplorerModel'
+import type {
+  SiteExplorerStructuralEntry,
+  SiteExplorerStructuralSectionModel,
+  SiteExplorerTreeItem,
+  SiteExplorerTreeSectionModel,
+} from './siteExplorerModel'
 
 export interface SiteExplorerSelectionState {
   sectionId: SiteExplorerSectionId | null
@@ -13,6 +18,10 @@ export interface SiteExplorerMenuSelection {
 }
 
 const EMPTY_EXPLORER_SELECTION: SiteExplorerSelectionState = { sectionId: null, itemIds: [] }
+
+type SiteExplorerAnySectionModel<TTarget> =
+  | SiteExplorerTreeSectionModel<TTarget>
+  | SiteExplorerStructuralSectionModel<TTarget>
 
 export function useSiteExplorerSelection<TTarget>() {
   const [selection, setSelection] = useState<SiteExplorerSelectionState>(EMPTY_EXPLORER_SELECTION)
@@ -30,7 +39,7 @@ export function useSiteExplorerSelection<TTarget>() {
   }
 
   function updateSelectionForItem(
-    model: SiteExplorerTreeSectionModel<TTarget>,
+    model: SiteExplorerAnySectionModel<TTarget>,
     item: SiteExplorerTreeItem<TTarget>,
     event: MouseEvent<HTMLButtonElement>,
   ): boolean {
@@ -61,7 +70,7 @@ export function useSiteExplorerSelection<TTarget>() {
   }
 
   function menuSelectionForItem(
-    model: SiteExplorerTreeSectionModel<TTarget>,
+    model: SiteExplorerAnySectionModel<TTarget>,
     item: SiteExplorerTreeItem<TTarget>,
   ): SiteExplorerMenuSelection {
     const selectedIds = selection.sectionId === model.sectionId ? selection.itemIds : []
@@ -81,10 +90,14 @@ export function useSiteExplorerSelection<TTarget>() {
   }
 }
 
-function selectableItemIds<TTarget>(model: SiteExplorerTreeSectionModel<TTarget>): string[] {
+function selectableItemIds<TTarget>(model: SiteExplorerAnySectionModel<TTarget>): string[] {
   const ids: string[] = []
   for (const item of model.pinnedItems) {
     if (!item.pinned) ids.push(item.id)
+  }
+  if (model.kind === 'structural') {
+    for (const entry of model.rootEntries) collectStructuralEntryItemIds(entry, ids)
+    return ids
   }
   for (const entry of model.rootEntries) {
     if (entry.kind === 'item') {
@@ -98,8 +111,20 @@ function selectableItemIds<TTarget>(model: SiteExplorerTreeSectionModel<TTarget>
   return ids
 }
 
+function collectStructuralEntryItemIds<TTarget>(
+  entry: SiteExplorerStructuralEntry<TTarget>,
+  ids: string[],
+): void {
+  if (entry.kind === 'item') {
+    if (!entry.item.pinned) ids.push(entry.item.id)
+    return
+  }
+  if (entry.landingItem && !entry.landingItem.pinned) ids.push(entry.landingItem.id)
+  for (const child of entry.children) collectStructuralEntryItemIds(child, ids)
+}
+
 function rangeSelectionIds<TTarget>(
-  model: SiteExplorerTreeSectionModel<TTarget>,
+  model: SiteExplorerAnySectionModel<TTarget>,
   anchorId: string | null,
   targetId: string,
 ): string[] {

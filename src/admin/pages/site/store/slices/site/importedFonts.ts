@@ -60,6 +60,46 @@ export function addImportedFonts(
 }
 
 /**
+ * Merge already-installed font entries into `site.settings.fonts.items`.
+ *
+ * Google CSS2 imports use the CMS Google-font installer first, which returns
+ * the same FontEntry shape as the Typography panel. This helper applies that
+ * entry inside the import transaction so the whole import remains one undo
+ * step while still using the canonical installed-font model.
+ */
+export function addInstalledFontEntries(
+  site: Draft<SiteDocument>,
+  entries: FontEntry[],
+): { id: string; family: string }[] {
+  if (entries.length === 0) return []
+  site.settings.fonts ??= { items: [] }
+  const lib = site.settings.fonts
+  const committed: { id: string; family: string }[] = []
+
+  for (const entry of entries) {
+    const familyLower = entry.family.toLowerCase()
+    const sameIdIndex = lib.items.findIndex((font) => font.id === entry.id)
+    const sameFamilyIndex = lib.items.findIndex(
+      (font) => font.family.toLowerCase() === familyLower && font.source === entry.source,
+    )
+    const idx = sameIdIndex >= 0 ? sameIdIndex : sameFamilyIndex
+    const previousId = idx >= 0 ? lib.items[idx].id : null
+
+    if (idx >= 0) lib.items[idx] = entry
+    else lib.items.push(entry)
+
+    if (previousId && previousId !== entry.id) {
+      for (const token of lib.tokens ?? []) {
+        if (token.familyId === previousId) token.familyId = entry.id
+      }
+    }
+    committed.push({ id: entry.id, family: entry.family })
+  }
+
+  return committed
+}
+
+/**
  * Merge imported `--font-*` variables into the site's editable font-token list.
  * Collisions get a suffix so imported declarations never overwrite the user's
  * current font-token contract.

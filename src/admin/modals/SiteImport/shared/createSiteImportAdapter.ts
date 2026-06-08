@@ -11,6 +11,7 @@ import { Type, type Static } from '@sinclair/typebox'
 import type { SiteImportAdapter, SiteImportTransaction } from '@core/siteImport'
 import { parseJsonResponse } from '@core/utils/jsonValidate'
 import { responseErrorMessage } from '@core/http'
+import { installCmsGoogleFont } from '@core/persistence/cmsFonts'
 import { useEditorStore } from '@site/store/store'
 
 // Minimal TypeBox schema for the upload response — both `id` and `publicPath`
@@ -202,6 +203,10 @@ export function createSiteImportAdapter(opts: AdapterCallbacks): SiteImportAdapt
   }
 
   return {
+    installGoogleFont(font) {
+      return installCmsGoogleFont(font)
+    },
+
     async uploadAsset({ path, bytes, mimeType }) {
       opts.onUploadStart?.({ path })
       const form = new FormData()
@@ -241,8 +246,8 @@ export function createSiteImportAdapter(opts: AdapterCallbacks): SiteImportAdapt
           overwritePage: (id, input) => helpers.overwritePage(id, input),
           overwriteStyleRule: (id, rule) => helpers.overwriteStyleRule(id, rule),
           addConditions: (conditions) => helpers.addConditions(conditions),
-          setFontImportUrl: (url) => helpers.setFontImportUrl(url),
           addFonts: (fonts) => helpers.addFonts(fonts),
+          addInstalledFonts: (fonts) => helpers.addInstalledFonts(fonts),
           addFontTokens: (tokens) => helpers.addFontTokens(tokens),
           overwriteFontTokens: (items) => helpers.overwriteFontTokens(items),
           addColorTokens: (colors) => helpers.addColorTokens(colors),

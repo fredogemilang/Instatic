@@ -122,7 +122,9 @@ export const createFilesSlice: EditorStoreSliceCreator<FilesSlice> = (set, get) 
         if (idx === -1) return
         state.site.files.splice(idx, 1)
         if (state.site.runtime?.scripts) delete state.site.runtime.scripts[id]
+        if (state.site.runtime?.styles) delete state.site.runtime.styles[id]
         delete state.siteRuntime.scripts[id]
+        delete state.siteRuntime.styles[id]
         if (state.activeEditorFileId === id) state.activeEditorFileId = null
         reconcileSiteExplorerInPlace(state.site)
         state.site.updatedAt = Date.now()
