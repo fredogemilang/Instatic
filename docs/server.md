@@ -623,6 +623,7 @@ See [docs/reference/typebox-patterns.md](reference/typebox-patterns.md) for boun
   - `src/__tests__/architecture/db-postgres-isms.test.ts`
   - `src/__tests__/architecture/db-json-column-naming.test.ts`
   - `src/__tests__/architecture/migration-parity.test.ts`
+  - `src/__tests__/architecture/cms-handlers-capability-gated.test.ts` — every file under `server/handlers/cms/` calls an auth guard; allowlist entries carry explicit justifications
   - `src/__tests__/architecture/ai-handlers-capability-gated.test.ts`
   - `src/__tests__/architecture/ai-driver-isolation.test.ts`
   - `src/__tests__/architecture/plugin-sandbox-invariants.test.ts`
