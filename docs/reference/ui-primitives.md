@@ -91,7 +91,6 @@ Low-level escape hatches (use only when the three named shapes don't fit):
 | Primitive       | When to use                                                  | Key props                                    |
 |-----------------|--------------------------------------------------------------|----------------------------------------------|
 | `Skeleton`      | A single shimmer bar with configurable width, height, radius | `width?`, `height?`, `radius?`, `className?`, `ariaLabel?` |
-| `SkeletonText`  | N stacked text lines, last line narrower (paragraph shape)   | `lines?` (default 3), `lineHeight?`, `className?` |
 | `SkeletonCircle`| Circular skeleton — avatars, status dots, round thumbnails   | `size` (px diameter), `className?`           |
 
 ### Charts (`@ui/components/charts`)
@@ -108,7 +107,7 @@ A small chart kit used by dashboard widgets and the framework scale UI. Strictly
 
 ## `Skeleton` — loading states
 
-All seven exports live at `@ui/components/Skeleton`. The shimmer uses `--editor-surface-3` / `--editor-surface-4` tokens directly, so it respects the editor palette automatically.
+All six exports live at `@ui/components/Skeleton`. The shimmer uses `--editor-surface-3` / `--editor-surface-4` tokens directly, so it respects the editor palette automatically.
 
 ```tsx
 import { SkeletonBlock, SkeletonCards, SkeletonRows, SkeletonTree, Skeleton } from '@ui/components/Skeleton'
@@ -138,7 +137,6 @@ import { SkeletonBlock, SkeletonCards, SkeletonRows, SkeletonTree, Skeleton } fr
 | Sidebar list, table rows, compact item list           | `SkeletonRows`     |
 | Tree-of-nodes panel (Layers panel, Selectors tree)    | `SkeletonTree`     |
 | One-off bar that doesn't fit any of the above         | `Skeleton`         |
-| Paragraph of text                                     | `SkeletonText`     |
 | Avatar / round image placeholder                      | `SkeletonCircle`   |
 
 **Accessibility:** The three named shapes forward `ariaLabel` → `aria-label` + `role="status"` on the wrapper. The underlying `<Skeleton>` span is `aria-hidden` by default (pure visual chrome). The **surrounding host** (`Widget`, `Dialog`, `AdminPageLayout`) is responsible for setting `aria-busy="true"` — don't duplicate that on the skeleton itself.
