@@ -167,7 +167,7 @@ This is the single source of truth for slug derivation used by all admin write p
 | `server/repositories/data/rows/index.ts`         | Barrel for the `rows/` directory                                     |
 | `server/repositories/data/publish.ts`            | Publish / unpublish / schedule a row; write `data_row_versions`       |
 | `server/repositories/data/templateSeeding.ts`    | Seed default entry template for new postType tables                   |
-| `server/repositories/data/shared.ts`             | Shared helpers: `userRefAt` (typed accessor per prefix — unknown prefix is a compile error), `toIso` / `toIsoOrNull` (date coercion), `UserJoinColumns` (non-optional columns — all four joins are always present via LEFT JOIN, `null` when no user matched) |
+| `server/repositories/data/shared.ts`             | Shared helpers: `userRefAt` (typed accessor per prefix — unknown prefix is a compile error), `userRefColumns` / `userRefJoin` (SQL fragment builders — the single source for the four `<prefix>_*` user-ref join columns and LEFT JOIN clauses, spliced verbatim by both `rows/mapper.ts` and `publish.ts`), `UserJoinColumns` (interface for all four `<prefix>_*` column groups — always present via LEFT JOIN, `null` when no user matched) |
 | `server/repositories/data/index.ts`              | Barrel for the whole `data/` directory                               |
 
 All repository functions are dialect-naive ANSI SQL. JSON columns end in `_json`; the SQLite adapter auto-parses on read. See [docs/reference/database-dialects.md](../reference/database-dialects.md).
