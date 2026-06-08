@@ -11,7 +11,7 @@
 import { nanoid } from 'nanoid'
 import type { StoreApi } from 'zustand'
 import type { FrameworkColorToken } from '@core/framework-schema'
-import type { NodeTree, Page, PageNode, StyleRule, SiteDocument } from '@core/page-tree'
+import type { NodeTree, PageNode, StyleRule, SiteDocument } from '@core/page-tree'
 import type { SiteRuntimeConfig } from '@core/site-runtime'
 import { addPage, createNode, reconcileSiteExplorerInPlace, reindexNodeParents } from '@core/page-tree'
 import { syncAllVCRefSlotInstances, allTreeNodeMaps } from '../vcSlotReconcile'
@@ -69,7 +69,6 @@ export function depthInTree(tree: NodeTree<PageNode>, nodeId: string): number {
  *
  *   - `mutateSite`:       the SiteDocument draft.
  *   - `mutateSiteState`:  the full editor-state draft plus the SiteDocument draft.
- *   - `mutatePage`:       the active page (legacy single-document mode).
  *   - `mutateActiveTree`: the active NodeTree<PageNode>, routed by `activeDocument`.
  *
  * `mutateActiveTree` is the SOLE place that branches on `kind === 'visualComponent'`
@@ -181,15 +180,6 @@ export function buildSiteHelpers(
       state.hasUnsavedChanges = true
     })
     return true
-  }
-
-  /** Mutate the active page — auto-records undo history on real changes. */
-  function mutatePage(fn: (page: Page) => SiteMutationResult): boolean {
-    return runHistoricMutation((draft) => {
-      const page = draft.site!.pages.find((p) => p.id === draft.activePageId)
-      if (!page) return false
-      return fn(page)
-    }, null)
   }
 
   /**
@@ -478,7 +468,6 @@ export function buildSiteHelpers(
   return {
     set,
     get,
-    mutatePage,
     mutateActiveTree,
     mutateActiveTreeAndSite,
     mutateSite,

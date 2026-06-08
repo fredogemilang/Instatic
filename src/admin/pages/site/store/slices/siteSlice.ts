@@ -50,7 +50,7 @@ declare module '@site/store/types' {
 export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) => {
   // Build the closure-shared mutation helpers once. Every action factory
   // receives this same object — so there is exactly one
-  // `mutateActiveTree` / `mutateSite` / `mutatePage` per slice instance.
+  // `mutateActiveTree` / `mutateSite` per slice instance.
   const helpers = buildSiteHelpers(set, get)
 
   return {

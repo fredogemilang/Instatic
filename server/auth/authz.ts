@@ -25,9 +25,17 @@ function readCookie(req: Request, name: string): string {
   return ''
 }
 
-export async function getSessionHash(req: Request): Promise<string> {
+/**
+ * Hash of the request's session cookie, or `null` when no session cookie is
+ * present. Returning `null` (rather than an empty string) keeps "no
+ * identifiable session" distinct from a real hash — critical for
+ * `revokeAllOtherSessions`, whose `keepSessionHash === null` path revokes
+ * EVERY session. An empty-string sentinel would silently collapse into that
+ * fallback.
+ */
+export async function getSessionHash(req: Request): Promise<string | null> {
   const token = readCookie(req, SESSION_COOKIE_NAME)
-  return token ? hashSessionToken(token) : ''
+  return token ? hashSessionToken(token) : null
 }
 
 export async function requireAuthenticatedUser(

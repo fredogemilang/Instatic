@@ -196,6 +196,32 @@ export function clearCanvasSelectionDraft(state: EditorStore): void {
   state.activeClassId = null
 }
 
+/**
+ * Drop only the ids that no longer exist in the active tree, keeping surviving
+ * selections intact and re-syncing the `selectedNodeId` anchor (= last item of
+ * the array).
+ *
+ * Use after a node deletion. Unlike `clearCanvasSelectionDraft` (which drops
+ * the whole selection), this preserves still-valid selections and removes just
+ * the deleted nodes — including descendants swept away with a deleted subtree,
+ * since those are pruned by tree-membership, not by id list. This is what stops
+ * a context-menu delete from leaving a phantom selection ring on the canvas.
+ */
+export function pruneCanvasSelectionDraft(state: EditorStore): void {
+  const tree = getActiveTree(state)
+  const surviving = tree
+    ? state.selectedNodeIds.filter((id) => Boolean(tree.nodes[id]))
+    : []
+  if (surviving.length === state.selectedNodeIds.length) return
+  state.selectedNodeIds = surviving
+  state.selectedNodeId = surviving.length > 0 ? surviving[surviving.length - 1] : null
+  if (surviving.length === 0) {
+    state.hoveredNodeId = null
+    state.hoveredBreakpointId = null
+    state.activeClassId = null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

@@ -456,9 +456,6 @@ export interface SiteSliceHelpers {
   set: (recipe: SiteSliceRecipe) => void
   get: StoreApi<EditorStore>['getState']
 
-  /** Mutate the active page — commits undo history only on real changes. */
-  mutatePage: (fn: (page: Page) => SiteMutationResult) => boolean
-
   /**
    * Mutate the active node tree — commits undo history only on real changes.
    *

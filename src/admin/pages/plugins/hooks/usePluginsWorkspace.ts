@@ -31,6 +31,7 @@ import {
 import { notifyCmsPluginsChanged } from '../utils/pluginEvents'
 import { subscribePluginEvents } from '../utils/pluginEventStream'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import { pushToast } from '@ui/components/Toast'
 
 /**
  * Per-install state for the confirmation dialog. The dialog renders different
@@ -353,9 +354,12 @@ export function usePluginsWorkspace(): PluginsWorkspaceVM {
         summary.replaced.visualComponents.length +
         summary.replaced.pages.length +
         summary.replaced.classes.length
-      setError(
-        `Installed pack from ${plugin.name}: ${installedCount} item(s), ${replacedCount} replaced.`,
-      )
+      pushToast({
+        kind: 'success',
+        title: `Installed pack from ${plugin.name}`,
+        body: `${installedCount} item(s) added, ${replacedCount} replaced.`,
+        location: 'plugins:install-pack',
+      })
       notifyCmsPluginsChanged()
       // The pack writes Visual Components, pages, and classes directly to the
       // draft site at the DB level. Tell the editor's persistence layer to
