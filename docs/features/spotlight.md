@@ -11,7 +11,7 @@ Spotlight is mounted by `<SpotlightRoot>` inside `AuthenticatedAdmin` (post-logi
 - Mount point: `<SpotlightRoot>` in `AuthenticatedAdmin.tsx`. Wraps the whole post-login app.
 - Trigger: ⌘K / Ctrl+K (global keydown). Esc closes (or clears query if non-empty).
 - Built-in commands: `src/admin/spotlight/builtinCommands.ts`. Returns the static `Command[]`.
-- Async providers: `src/admin/spotlight/providers/*.ts` (pages, components, media, content, plugins, …). Run in parallel as the query changes.
+- Async providers: `src/admin/spotlight/providers/*.ts` (pages, media, content, data, plugin pages, site files). Run in parallel as the query changes.
 - Plugin commands: register via the SDK at activation. Same shape as built-ins.
 - State: `useReducer` in `SpotlightRoot`. Recent commands persisted in `localStorage` via `recentStore`.
 - Scopes: a scope narrows the palette to a single domain (e.g. "Find page", "Run command on selected node").
@@ -34,12 +34,16 @@ src/admin/spotlight/
 ├── commandRegistry.ts             — getScope, filterCommands, getPluginPaletteSpotlightProviders
 ├── providerRunner.ts              — async provider scheduler (cache + abort)
 ├── providers/                     — per-domain providers
-│   ├── pages.ts                   — page search
-│   ├── components.ts              — VC search
-│   ├── media.ts                   — media search
-│   ├── content.ts                 — post / row search
-│   ├── plugins.ts                 — plugin search
-│   └── ...
+│   ├── serverProvider.ts          — shared factory for server-backed providers
+│   ├── schemas.ts                 — TypeBox response schemas (one per endpoint)
+│   ├── pagesProvider.ts           — page search (local, reads editor store)
+│   ├── siteFilesProvider.ts       — site file search (local, reads editor store)
+│   ├── mediaProvider.ts           — media search (server)
+│   ├── contentProvider.ts         — data row search (server)
+│   ├── dataProvider.ts            — data table search (server)
+│   └── pluginPagesProvider.ts     — plugin admin page search (server)
+├── __tests__/
+│   └── serverProvider.test.ts     — unit tests for the shared server provider factory
 ├── commands/                      — command implementations grouped by domain
 ├── scopes/                        — scope definitions (find page, find component, ...)
 ├── matcher.ts                     — fuzzy match scoring
@@ -64,49 +68,77 @@ src/admin/spotlight/
 
 ```ts
 interface Command {
-  id:          CommandId             // 'editor.publish', 'site.add-page', 'system.toggle-density'
-  label:       string                // "Publish site"
-  description?:string                // shown under the label
-  group:       CommandGroup          // 'editor' | 'site' | 'content' | 'system' | 'navigation' | 'plugin'
-  icon?:       string                // pixel-art-icons name
-  shortcut?:   CommandShortcut       // { keys: ['mod', 'shift', 'p'], when?: 'editor' }
+  id:             CommandId          // 'editor.publish', 'site.add-page'
+  title:          string             // "Publish site" — primary row label
+  subtitle?:      string             // shown under the label
+  group:          CommandGroup       // 'editor' | 'site' | 'content' | 'media' | 'pages' | …
 
-  /** Static availability — filtered by capabilities + workspace. */
-  visible?:    (ctx: CommandContext) => boolean
+  iconName?:      string             // pixel-art-icons name, e.g. 'save-solid'
+  keywords?:      string[]           // extra search terms (low weight)
+
+  /** Capability gate — palette filters before display. */
+  capability?:    string | readonly string[]
+  /** Workspace gate — only show on these workspaces. 'any' = always. */
+  workspaces?:    ReadonlyArray<AdminWorkspace | 'any'>
+  /** Predicate run at query time — finer-grained gating. */
+  when?:          (ctx: CommandContext) => boolean
+  /** Boosts ranking when `when` returns true. Default 1.0. */
+  priorityBoost?: number
 
   /** Argument prompts — multi-step input flow. */
-  args?:       CommandArg[]
+  args?:          CommandArg[]
 
-  /** Dangerous commands require a second Enter to confirm (delete, sign out all). */
-  confirm?:    { prompt: string }
+  /** Dangerous commands show danger styling + inline confirm. */
+  destructive?:   boolean
+  /** If true, palette stays open after run. */
+  keepOpenAfterRun?: boolean
 
-  /** The execution function. */
-  run:         (ctx: CommandRunContext) => Promise<void> | void
-
-  /** Optional: scope id this command lives under. */
-  scope?:      string
+  /**
+   * The execution function. May return `{ pushScope }` to start a scoped sub-flow.
+   * Shortcut hints are NOT stored here — they live in `keybindings.ts`.
+   */
+  run: (ctx: CommandRunContext) => void | Promise<void> | { pushScope: string }
 }
 ```
 
-A `Command` knows everything about itself: where it's visible, what arguments it needs, whether it's destructive, what shortcut activates it. The palette is purely a UI for the registry.
+A `Command` knows everything about itself: where it's visible, what arguments it needs, whether it's destructive. The palette is purely a UI for the registry.
 
 ---
 
 ## The `CommandContext`
 
+Two related types flow through Spotlight:
+
 ```ts
+/** Snapshot built once per palette open. Passed to search / when predicates. */
 interface CommandContext {
-  user:            CurrentUser
-  workspace:       AdminWorkspace          // 'dashboard' | 'site' | 'content' | ...
-  navigate:        NavigateFn
-  activeDocument?: ActiveDocument          // current page / VC if in editor
-  pushToast:       (toast: ToastInput) => void
-  stepUp:          () => Promise<boolean>
-  // ...
+  workspace: AdminWorkspace
+  pathname:  string
+  user:      CmsCurrentUser
+  /** Populated by SpotlightRoot when the site editor is the active workspace. */
+  editor?: {
+    selectedNodeIds:       ReadonlyArray<string>
+    activePageId:          string | null
+    activeDocument:        ActiveDocument | null
+    canUndo:               boolean
+    canRedo:               boolean
+    activeBreakpointId:    string
+  }
+}
+
+/** Extended context injected into command.run(). Adds action callbacks. */
+interface CommandRunContext extends CommandContext {
+  args:          Record<string, string>  // collected sub-command arguments
+  navigate:      (path: string) => void
+  closeSpotlight:() => void
+  pushScope:     (scopeId: string, args?: Record<string, string>) => void
+  popScope:      () => void
+  /** Wraps an action in the step-up re-auth flow. */
+  runStepUp:     <T>(action: () => Promise<T>) => Promise<T>
 }
 ```
 
-Built by `SpotlightRoot` on every open. Inside the editor (`workspace === 'site'`), `SpotlightRoot` subscribes to the editor store via `subscribeWithSelector` to track the active page / selected node / mode — so commands like "Wrap selection in container" know what they're operating on.
+Built by `SpotlightRoot` on every open. Inside the editor (`workspace === 'site'`), `SpotlightRoot` subscribes to the editor store via `subscribeWithSelector` to track the active page / selected node / mode.
 
 The subscription is **dropped on close** to avoid spurious re-renders.
 
@@ -116,15 +148,15 @@ The subscription is **dropped on close** to avoid spurious re-renders.
 
 `src/admin/spotlight/builtinCommands.ts` exports the static command set. Common groups:
 
-| Group        | Examples                                                                  |
-|--------------|---------------------------------------------------------------------------|
-| `editor`     | Publish, Save, Undo, Redo, Wrap in container, Toggle preview              |
-| `site`       | Add page, Add VC, Open settings, Open framework scale                     |
-| `content`    | New post, Edit post                                                       |
-| `system`     | Toggle density, Show keyboard help, Sign out, Switch user                 |
-| `navigation` | Go to dashboard, Go to site, Go to media, Go to plugins, ...              |
+| Group              | Examples                                                             |
+|--------------------|----------------------------------------------------------------------|
+| `editor`           | Publish, Save, Undo, Redo, Wrap in container, Toggle preview         |
+| `pages`            | Add page, Open page settings                                         |
+| `content`          | New post, Edit post                                                  |
+| `navigation`       | Go to dashboard, Go to site, Go to media, Go to plugins, …           |
+| `settings`         | Open framework scale, Open site settings                             |
 
-Each command's `visible(ctx)` predicate filters by user capability + workspace. `filterCommands(commands, ctx)` runs once per palette open.
+Each command's `when(ctx)` / `workspaces` / `capability` fields filter by user capability + workspace context. `filterCommands(commands, ctx)` runs once per palette open.
 
 ---
 
@@ -134,24 +166,63 @@ Providers run **as the user types**. Each provider produces results for one doma
 
 ```ts
 interface SpotlightProvider {
-  id:       string             // 'pages', 'components', 'media', ...
-  group:    CommandGroup
+  id:          string
+  /** Becomes the group header in results. */
+  label:       string
   /**
-   * Called with the current query + context. Returns hits to merge into
+   * Called with the current query + context. Returns Commands to merge into
    * the palette. Should be quick — debounced + cached by the runner.
    */
-  search:   (query: string, ctx: CommandContext, signal: AbortSignal) => Promise<ProviderHit[]>
+  search:      (query: string, ctx: CommandContext, signal: AbortSignal) => Promise<Command[]> | Command[]
+  /** Debounce in ms — applied per provider. 0 = synchronous each keystroke. */
+  debounceMs?: number
 }
 ```
 
 `ProviderRunner` in `providerRunner.ts`:
 
 - Fires all providers in parallel on query change
-- Debounces by ~80ms
+- Debounces per provider
 - Caches results per `(provider, query)` until close
 - `AbortController` cancels in-flight requests on close or query change
 
-Built-in providers cover pages, VCs, media, content rows, plugins, and a few others. Each fetches via the matching `/admin/api/cms/...` endpoint.
+### Provider types
+
+There are two kinds of provider:
+
+**Local providers** (`pagesProvider`, `siteFilesProvider`) read data from the editor store synchronously. No HTTP call, `debounceMs: 0`.
+
+**Server providers** (`mediaProvider`, `contentProvider`, `dataProvider`, `pluginPagesProvider`) fetch via `/admin/api/cms/...`. They are built with shared scaffolding in `serverProvider.ts` (see below).
+
+### Server provider scaffolding (`serverProvider.ts`)
+
+`serverProvider.ts` exports two primitives that all server-backed providers use:
+
+**`makeServerProvider(config)`** — the common case factory. Builds a `SpotlightProvider` from a TypeBox schema, an array selector, and a `Command` mapper. Handles the empty-query guard, `?query=&limit=` URL construction, `apiRequest` fetch, abort handling, and result mapping:
+
+```ts
+export const dataProvider = makeServerProvider({
+  id: 'data',
+  label: 'Data',
+  debounceMs: 150,
+  endpoint: '/admin/api/cms/data/tables',
+  schema: DataTablesListResponseSchema,
+  select: (body) => body.tables,
+  toCommand: (table): Command => ({
+    id: `data:${table.id}`,
+    title: table.name,
+    group: 'data',
+    iconName: 'table-solid',
+    run: (ctx) => { ctx.closeSpotlight(); ctx.navigate(`/admin/data?table=${table.id}`) },
+  }),
+})
+```
+
+**`fetchOnAbortEmpty(url, schema, signal)`** — the lower-level primitive. Fetches and validates the URL, returning `null` on abort instead of throwing. Use this directly when the provider has a genuinely different shape (e.g. no `?query=` param, custom client-side filtering) that `makeServerProvider` can't model. `pluginPagesProvider` is the canonical example.
+
+Both helpers validate the response body against a TypeBox schema via `apiRequest` — no `as Foo` past the HTTP boundary. Response schemas live in `providers/schemas.ts`.
+
+`MAX_RESULTS = 25` is exported from `serverProvider.ts` and used by all providers as the result cap.
 
 ### Plugin providers
 
@@ -161,25 +232,26 @@ Plugins with `editor.commands` permission can register Spotlight providers via t
 
 ## Scopes
 
-A scope narrows the palette to a single domain. The user enters a scope by typing a prefix (`scope:pages`) or via a "Find page…" command that pushes a scope frame.
+A scope narrows the palette to a single domain. Scopes are stacked (`ScopeFrame[]`) — a deeper scope pushed by a command knows how to pop back when its action completes.
 
 ```ts
 interface Scope {
-  id:           string          // 'pages', 'components', 'commands'
-  label:        string          // "Find page"
-  icon?:        string
-  providers:    string[]        // which providers to include
-  emptyState?:  ReactNode       // shown when there are no results
+  id:           string          // 'root' | 'pages' | 'modules' | …
+  title?:       string          // header text in argument mode
+  placeholder?: string
+  /** Synchronous static commands offered by this scope. */
+  commands:     () => Command[]
+  /** Async providers — called with debounced query + AbortSignal. */
+  providers?:   SpotlightProvider[]
 }
 ```
 
 When a scope is active:
 
-- The header shows the scope label (e.g. "Find page → ").
-- Only the scope's providers fire.
+- The header shows the scope title.
+- Only the scope's `commands()` and `providers` are queried.
 - Backspace on an empty query pops back to the unscoped state.
-
-Scopes are stacked (`ScopeFrame[]`) — a deeper scope pushed by a command knows how to pop back when its action completes.
+- A command's `run` may return `{ pushScope: 'scope-id' }` to enter a scope programmatically.
 
 ---
 
@@ -189,7 +261,7 @@ Scopes are stacked (`ScopeFrame[]`) — a deeper scope pushed by a command knows
 
 Key behaviors:
 
-- **Lazy chunk.** `Spotlight` is `React.lazy`-loaded inside `SpotlightRoot`; first-time open downloads ~30KB of palette code.
+- **Lazy chunk.** `Spotlight` is `React.lazy`-loaded inside `SpotlightRoot`; first-time open downloads the palette code.
 - **Backdrop blur** (`--spotlight-backdrop-blur: 8px`).
 - **Card rows.** Result rows have a border-radius and are laid out with a 1px gap — the same tile-card language as the module inserter and dashboard.
 - **Categorical group accents.** Each command group gets a stable rail-tint identity (e.g. `editor` → lilac, `navigation` → sky, `media` → peach). The accent drives the icon chip color and the group-header accent bar. Mapping lives in `groupAccent.ts`.
@@ -199,7 +271,7 @@ Key behaviors:
 
 ### Destructive confirm
 
-Commands with `confirm: { prompt: '...' }` enter a two-press confirm flow:
+Commands with `destructive: true` enter a two-press confirm flow:
 
 ```text
 First Enter:  row background turns red (--spotlight-confirm-bg), label shows the confirm prompt
@@ -218,13 +290,13 @@ Used by destructive commands: delete user, sign out all devices, revoke session,
 | ⌘K / Ctrl+K          | Open / close                                          |
 | Esc                  | Clear query (or close if empty)                       |
 | Arrow up / down      | Move selection                                        |
-| Enter                | Run selected (twice for `confirm` commands)           |
+| Enter                | Run selected (twice for `destructive` commands)       |
 | Tab                  | Cycle scope                                           |
 | Backspace (empty)    | Pop scope                                             |
 | ⌘?                   | Show all keybindings                                  |
-| Custom command shortcuts | Per-command `shortcut` field                      |
+| Custom command shortcuts | Per-command entry in `keybindings.ts`             |
 
-The keybindings registry is **the single source of truth** for shortcuts — gated by `keybindings-registry-single-source.test.ts`. Don't add raw `keydown` listeners in components; register a command with a `shortcut`.
+The keybindings registry is **the single source of truth** for shortcuts — gated by `keybindings-registry-single-source.test.ts`. Don't add raw `keydown` listeners in components; register a command with a shortcut in `keybindings.ts`.
 
 ---
 
@@ -232,7 +304,7 @@ The keybindings registry is **the single source of truth** for shortcuts — gat
 
 `recentStore.ts` persists the last N executed command ids in localStorage (`instatic-spotlight-recents`). When the palette opens with an empty query, the recents float to the top.
 
-The store is per-device, not per-user, because it sits in localStorage (the user can sign out and back in and still see their recents).
+The store is per-device, not per-user, because it sits in localStorage.
 
 ---
 
@@ -245,72 +317,75 @@ Append to `src/admin/spotlight/builtinCommands.ts`:
 ```ts
 {
   id: 'site.toggle-grid-overlay',
-  label: 'Toggle grid overlay',
+  title: 'Toggle grid overlay',
   group: 'editor',
-  icon: 'GridIcon',
-  shortcut: { keys: ['mod', 'g'], when: 'editor' },
-  visible: (ctx) => ctx.workspace === 'site',
+  iconName: 'grid-solid',
+  workspaces: ['site'],
   run: async (ctx) => {
     useEditorStore.getState().toggleGridOverlay()
-    ctx.pushToast({ kind: 'info', title: 'Grid toggled' })
+    ctx.closeSpotlight()
   },
 }
 ```
 
-### Add an async provider
+To add a keyboard shortcut, register the command id in `src/admin/spotlight/keybindings.ts` — shortcut hints are looked up at render time, not stored on the `Command`.
 
-Create `src/admin/spotlight/providers/myThings.ts`:
+### Add a server-backed async provider
+
+Use `makeServerProvider` from `src/admin/spotlight/providers/serverProvider.ts`. Supply the TypeBox schema for the endpoint's response, a selector that picks the array from the body, and a mapper that converts each item to a `Command`:
 
 ```ts
-import { apiRequest, isAbortError } from '@core/http'
+// src/admin/spotlight/providers/myThingsProvider.ts
+import { makeServerProvider } from './serverProvider'
+import { MyThingsResponseSchema } from './schemas'
+import type { Command } from '../types'
 
-export const myThingsProvider: SpotlightProvider = {
-  id: 'my-things',
-  group: 'site',
-  async search(query, ctx, signal) {
-    let data: Static<typeof MyThingsSchema>
-    try {
-      data = await apiRequest('/admin/api/cms/things', {
-        query: { q: query },
-        schema: MyThingsSchema,
-        signal,
-      })
-    } catch (err) {
-      if (isAbortError(err)) return [] // superseded query — drop silently
-      throw err
-    }
-    return data.rows.map((row) => ({
-      id: `thing:${row.id}`,
-      label: row.name,
-      group: 'site',
-      run: async () => ctx.navigate(`/admin/things/${row.id}`),
-    }))
-  },
-}
+export const myThingsProvider = makeServerProvider({
+  id: 'myThings',
+  label: 'Things',
+  debounceMs: 150,
+  endpoint: '/admin/api/cms/things',
+  schema: MyThingsResponseSchema,
+  select: (body) => body.things,
+  toCommand: (thing): Command => ({
+    id: `thing:${thing.id}`,
+    title: thing.name,
+    subtitle: thing.category,
+    group: 'results',
+    iconName: 'star-solid',
+    run: (ctx) => {
+      ctx.closeSpotlight()
+      ctx.navigate(`/admin/things/${thing.id}`)
+    },
+  }),
+})
 ```
 
-Register it in `src/admin/spotlight/providers/index.ts`.
+Add the response schema to `providers/schemas.ts`. Register the provider in `src/admin/spotlight/providers/index.ts`.
+
+For a provider that needs custom filtering or no `?query=` param, use `fetchOnAbortEmpty` directly (see `pluginPagesProvider.ts` as a reference).
 
 ### Add a scope
 
 ```ts
-const findThingScope: Scope = {
+// src/admin/spotlight/scopes/myThingsScope.ts
+const myThingsScope: Scope = {
   id: 'find-thing',
-  label: 'Find thing',
-  icon: 'SearchIcon',
-  providers: ['my-things'],
-  emptyState: <EmptyState title="No things found" />,
+  title: 'Find thing',
+  placeholder: 'Search things…',
+  commands: () => [],
+  providers: [myThingsProvider],
 }
 ```
 
-Register in `src/admin/spotlight/scopes/`. Then a command can push the scope:
+Register in `src/admin/spotlight/scopes/`. Then a command can enter the scope:
 
 ```ts
 {
   id: 'site.find-thing',
-  label: 'Find thing…',
-  group: 'site',
-  run: (ctx) => ctx.pushScope('find-thing'),
+  title: 'Find thing…',
+  group: 'navigation',
+  run: () => ({ pushScope: 'find-thing' }),
 }
 ```
 
@@ -323,7 +398,7 @@ Plugins with `editor.commands` permission register commands at activation:
 export function activate(api) {
   api.editor.palette.registerCommand({
     id: 'acme.do-thing',
-    label: 'Do the thing',
+    title: 'Do the thing',
     group: 'plugin',
     run: async () => { /* … */ },
   })
@@ -334,7 +409,7 @@ See [docs/features/plugin-system.md](plugin-system.md).
 
 ### Read editor state from a command
 
-Inside the editor workspace, the command context has `activeDocument` (the current page or VC). For deeper reads:
+Inside the editor workspace, `ctx.editor` carries a snapshot of active page / selection. For deeper reads call `useEditorStore.getState()` directly:
 
 ```ts
 run: async (ctx) => {
@@ -344,19 +419,17 @@ run: async (ctx) => {
 }
 ```
 
-Spotlight is part of the admin shell, so it may call admin navigation helpers and dip into workspace stores from commands. Providers remain read-only; mutations live in command `run` handlers.
-
 ### Run a step-up-gated action
 
 ```ts
 run: async (ctx) => {
-  const ok = await ctx.stepUp()
-  if (!ok) return  // user cancelled
-  // ... destructive action
+  await ctx.runStepUp(async () => {
+    await apiRequest('/admin/api/cms/sensitive', { method: 'POST', schema: OkSchema })
+  })
 }
 ```
 
-`stepUp()` returns true on success, false on dismiss. The actual step-up UI is owned by `<StepUpProvider>` upstream.
+`runStepUp` wraps the action with the step-up re-auth dialog. On cancel it throws `Error('step_up_cancelled')` — Spotlight catches and ignores that automatically.
 
 ---
 
@@ -364,13 +437,14 @@ run: async (ctx) => {
 
 | Pattern                                                              | Use instead                                              |
 |----------------------------------------------------------------------|----------------------------------------------------------|
-| Adding a raw `keydown` listener for a global shortcut                | Register a command with a `shortcut`. Gated.            |
+| Adding a raw `keydown` listener for a global shortcut                | Register in `keybindings.ts`. Gated.                    |
 | Direct store mutation inside a provider's `search`                   | Providers are read-only — mutate in commands' `run`. Gated by `spotlight-no-direct-store-mutation.test.ts`. |
 | Persisting recents server-side                                       | They're per-device in localStorage. Cross-device recents need a real feature, not a Spotlight detail. |
-| Lazy-importing the editor store at module-eval time                  | The store mounts only when SitePage mounts — eager import would force the chunk |
-| Long-running providers without `signal` handling                     | The runner aborts on close — respect `signal.aborted`    |
-| Multi-screen flow inside a single command                            | Use scopes — each step pushes a new scope frame          |
-| Calling `navigate(...)` before the palette closes                    | Palette closes itself after `run` completes — let it     |
+| Lazy-importing the editor store at module-eval time                  | The store mounts only when SitePage mounts — eager import would force the chunk. Use `require(...)` inside `search` (see `pagesProvider.ts`). |
+| Long-running providers without `signal` handling                     | The runner aborts on close — return `[]` when `signal.aborted`. |
+| Multi-screen flow inside a single command                            | Use scopes — each step pushes a new scope frame.         |
+| Hand-rolling `fetch` + `isAbortError` in a server provider           | Use `makeServerProvider` or `fetchOnAbortEmpty` from `serverProvider.ts`. |
+| Using `as Foo` past a JSON boundary in a provider                    | Pass a TypeBox schema to `makeServerProvider` or `fetchOnAbortEmpty`. Gated by `boundary-validation.test.ts`. |
 
 ---
 
@@ -386,9 +460,11 @@ run: async (ctx) => {
   - `src/admin/spotlight/builtinCommands.ts` — built-in registry
   - `src/admin/spotlight/commandRegistry.ts` — scopes + filtering
   - `src/admin/spotlight/providerRunner.ts` — async provider scheduler
+  - `src/admin/spotlight/providers/serverProvider.ts` — shared server-provider factory
+  - `src/admin/spotlight/providers/schemas.ts` — TypeBox response schemas
   - `src/admin/spotlight/providers/*.ts` — per-domain providers
   - `src/admin/spotlight/matcher.ts` — fuzzy match
-  - `src/admin/spotlight/types.ts` — `Command`, `SpotlightProvider`, `Scope`
+  - `src/admin/spotlight/types.ts` — `Command`, `SpotlightProvider`, `Scope`, `CommandContext`
   - `src/admin/spotlight/keybindings.ts` — keybinding registry
   - `src/admin/spotlight/groupAccent.ts` — CommandGroup → rail-tint accent mapping
 - Gate tests:

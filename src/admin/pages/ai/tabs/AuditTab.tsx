@@ -23,6 +23,7 @@ import {
   type AiUsageByScopeRow,
   type AiUsageByUserRow,
 } from '../../../ai/api'
+import { UsageTablePanel } from './UsageTablePanel'
 import styles from '../AiPage.module.css'
 
 type Range = 'today' | '7d' | '30d' | 'all'
@@ -58,11 +59,11 @@ function rangeToSinceIso(range: Range): string {
   return start.toISOString()
 }
 
-function formatNumber(value: number): string {
+export function formatNumber(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 0 })
 }
 
-function formatCost(usd: number): string {
+export function formatCost(usd: number): string {
   if (usd === 0) return '$0.00'
   if (usd < 0.01) return `< $0.01`
   if (usd < 1) return `$${usd.toFixed(2)}`
@@ -128,44 +129,21 @@ const PROVIDER_LABEL: Record<string, string> = {
 
 function ModelsPanel({ rows }: { rows: AiUsageByModelRow[] }) {
   return (
-    <div className={styles.auditPanel}>
-      <div className={styles.auditPanelHeader}>
-        <h3 className={styles.auditPanelTitle}>By model</h3>
-        <span className={styles.auditPanelHint}>{rows.length} models</span>
-      </div>
-      <table className={styles.auditTable}>
-        <thead>
-          <tr>
-            <th>Provider</th>
-            <th>Model</th>
-            <th className={styles.numeric}>Chats</th>
-            <th className={styles.numeric}>Input</th>
-            <th className={styles.numeric}>Output</th>
-            <th className={styles.numeric}>Spend</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={6} className={styles.auditEmptyRow}>
-                No model activity yet.
-              </td>
-            </tr>
-          ) : (
-            rows.map((row) => (
-              <tr key={`${row.providerId}:${row.modelId}`}>
-                <td>{PROVIDER_LABEL[row.providerId] ?? row.providerId}</td>
-                <td><code>{row.modelId}</code></td>
-                <td className={styles.numeric}>{formatNumber(row.chatCount)}</td>
-                <td className={styles.numeric}>{formatNumber(row.promptTokens)}</td>
-                <td className={styles.numeric}>{formatNumber(row.completionTokens)}</td>
-                <td className={styles.numeric}>{formatCost(row.costUsd)}</td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
+    <UsageTablePanel<AiUsageByModelRow>
+      title="By model"
+      hint={`${rows.length} models`}
+      rows={rows}
+      rowKey={(row) => `${row.providerId}:${row.modelId}`}
+      emptyLabel="No model activity yet."
+      columns={[
+        { header: 'Provider', cell: (row) => PROVIDER_LABEL[row.providerId] ?? row.providerId },
+        { header: 'Model', cell: (row) => <code>{row.modelId}</code> },
+        { header: 'Chats', numeric: true, cell: (row) => formatNumber(row.chatCount) },
+        { header: 'Input', numeric: true, cell: (row) => formatNumber(row.promptTokens) },
+        { header: 'Output', numeric: true, cell: (row) => formatNumber(row.completionTokens) },
+        { header: 'Spend', numeric: true, cell: (row) => formatCost(row.costUsd) },
+      ]}
+    />
   )
 }
 
@@ -225,83 +203,42 @@ function TotalsRow({ data }: { data: AiAuditResponse }) {
 
 function UsersPanel({ rows }: { rows: AiUsageByUserRow[] }) {
   return (
-    <div className={styles.auditPanel}>
-      <div className={styles.auditPanelHeader}>
-        <h3 className={styles.auditPanelTitle}>Top users by cost</h3>
-        <span className={styles.auditPanelHint}>{rows.length} users</span>
-      </div>
-      <table className={styles.auditTable}>
-        <thead>
-          <tr>
-            <th>User</th>
-            <th className={styles.numeric}>Chats</th>
-            <th className={styles.numeric}>Input</th>
-            <th className={styles.numeric}>Output</th>
-            <th className={styles.numeric}>Spend</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={5} className={styles.auditEmptyRow}>
-                No AI activity in this range yet.
-              </td>
-            </tr>
-          ) : (
-            rows.map((row) => (
-              <tr key={row.userId}>
-                <td>{row.userLabel}</td>
-                <td className={styles.numeric}>{formatNumber(row.chatCount)}</td>
-                <td className={styles.numeric}>{formatNumber(row.promptTokens)}</td>
-                <td className={styles.numeric}>{formatNumber(row.completionTokens)}</td>
-                <td className={styles.numeric}>{formatCost(row.costUsd)}</td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
+    <UsageTablePanel<AiUsageByUserRow>
+      title="Top users by cost"
+      hint={`${rows.length} users`}
+      rows={rows}
+      rowKey={(row) => row.userId}
+      emptyLabel="No AI activity in this range yet."
+      columns={[
+        { header: 'User', cell: (row) => row.userLabel },
+        { header: 'Chats', numeric: true, cell: (row) => formatNumber(row.chatCount) },
+        { header: 'Input', numeric: true, cell: (row) => formatNumber(row.promptTokens) },
+        { header: 'Output', numeric: true, cell: (row) => formatNumber(row.completionTokens) },
+        { header: 'Spend', numeric: true, cell: (row) => formatCost(row.costUsd) },
+      ]}
+    />
   )
 }
 
 function ScopesPanel({ rows }: { rows: AiUsageByScopeRow[] }) {
   return (
-    <div className={styles.auditPanel}>
-      <div className={styles.auditPanelHeader}>
-        <h3 className={styles.auditPanelTitle}>By surface</h3>
-        <span className={styles.auditPanelHint}>{rows.length} scopes</span>
-      </div>
-      <table className={styles.auditTable}>
-        <thead>
-          <tr>
-            <th>Scope</th>
-            <th className={styles.numeric}>Chats</th>
-            <th className={styles.numeric}>Tokens</th>
-            <th className={styles.numeric}>Spend</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={4} className={styles.auditEmptyRow}>
-                No surface activity yet.
-              </td>
-            </tr>
-          ) : (
-            rows.map((row) => (
-              <tr key={row.scope}>
-                <td className={styles.auditScopeLabel}>{row.scope}</td>
-                <td className={styles.numeric}>{formatNumber(row.chatCount)}</td>
-                <td className={styles.numeric}>
-                  {formatNumber(row.promptTokens + row.completionTokens)}
-                </td>
-                <td className={styles.numeric}>{formatCost(row.costUsd)}</td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
+    <UsageTablePanel<AiUsageByScopeRow>
+      title="By surface"
+      hint={`${rows.length} scopes`}
+      rows={rows}
+      rowKey={(row) => row.scope}
+      emptyLabel="No surface activity yet."
+      columns={[
+        { header: 'Scope', cellClassName: styles.auditScopeLabel, cell: (row) => row.scope },
+        { header: 'Chats', numeric: true, cell: (row) => formatNumber(row.chatCount) },
+        {
+          header: 'Tokens',
+          numeric: true,
+          cell: (row) => formatNumber(row.promptTokens + row.completionTokens),
+        },
+        { header: 'Spend', numeric: true, cell: (row) => formatCost(row.costUsd) },
+      ]}
+    />
   )
 }
 
