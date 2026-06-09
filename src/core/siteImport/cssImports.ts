@@ -66,7 +66,7 @@ export function expandLinkedCssImports(
 
     stack.push(cssPath)
     const cssSource = decodeUtf8(entry.bytes)
-    const sourceForRules = stripFollowedImportRules(cssSource, cssPath, fileMap, warnings, visit)
+    const sourceForRules = stripFollowedImportRules(cssSource, cssPath, warnings, visit)
     stack.pop()
     visited.add(cssPath)
     sources.push({ cssPath, cssSource: sourceForRules })
@@ -84,7 +84,6 @@ export function expandLinkedCssImports(
 function stripFollowedImportRules(
   cssSource: string,
   cssPath: string,
-  fileMap: FileMap,
   warnings: ImportWarning[],
   visit: (cssPath: string, importRule?: CssImportRule, importedBy?: string) => void,
 ): string {

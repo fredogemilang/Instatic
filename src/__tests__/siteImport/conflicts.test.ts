@@ -263,6 +263,28 @@ describe('applyConflictResolutions', () => {
     expect(result.pages[0].nodeFragment.nodes['other-node'].classIds).toEqual(['intro'])
   })
 
+  it('auto-rename rule: remaps ambient selectors that reference the renamed class', () => {
+    const plan = makePlan(
+      [],
+      [
+        makeClassRule('btn'),
+        makeAmbientRule('.btn:hover'),
+        makeAmbientRule('.card .btn'),
+      ],
+    )
+    const res: RuleConflict = {
+      source: '',
+      desiredName: 'btn',
+      existingRuleId: 'preexisting-btn',
+      defaultResolution: { action: 'auto-rename', resolvedName: 'btn-2' },
+    }
+    const result = applyConflictResolutions(plan, [], [res])
+
+    expect(result.styleRules[0].selector).toBe('.btn-2')
+    expect(result.styleRules[1].selector).toBe('.btn-2:hover')
+    expect(result.styleRules[2].selector).toBe('.card .btn-2')
+  })
+
   it('skip rule: node classIds keep the original name (binds to pre-existing rule)', () => {
     const page: PagePlan = {
       source: 'index.html',

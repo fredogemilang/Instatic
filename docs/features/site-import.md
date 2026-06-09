@@ -35,7 +35,7 @@ src/core/siteImport/
 ├── fontTokens.ts        — extract root --font-* custom properties as ImportFontToken[] from :root/html/body rules
 ├── fontImports.ts       — resolve trusted Google CSS2 @import rules into installed-font requests
 ├── cssImports.ts        — expand unconditional local CSS @import graphs while preserving each source path
-├── scopeClasses.ts      — scope colliding class names across per-page stylesheets
+├── scopeClasses.ts      — scope colliding class names and ambient selectors across per-page stylesheet cascades
 ├── mimeTypes.ts         — extension → MIME fallback for FileMap entries that carry no MIME type (e.g. ZIP)
 ├── assetPlan.ts         — normalise URL props/HTML attributes in node fragments + CSS/@keyframes url(); resolve @font-face; collect assets
 ├── applyAssetRewrites.ts — patch fragment props + CSS/@keyframes url() with new media URLs (post-upload)
@@ -194,7 +194,7 @@ All URL-shaped values inside `pages[].nodeFragment` props, imported `htmlAttribu
 
 A multi-page site typically links one stylesheet per page, and those stylesheets routinely use the same class name (`.btn`, `.hero`) with different declarations. The CMS has a single global style rule registry, so a naïve merge would let one page's class clobber another's.
 
-`scopeCollidingClasses` (`scopeClasses.ts`) runs after CSS parsing and before the asset plan:
+`scopeCollidingClasses` (`scopeClasses.ts`) runs after CSS parsing and before the asset plan. It compares the effective class definitions produced by each page's ordered linked CSS cascade, not isolated CSS files, so base stylesheet rules and responsive/context stylesheet fragments for the same class stay bound to the same imported node class:
 
 - **One distinct definition** across all stylesheets → bare name kept; the class is shared.
 - **N distinct definitions** → first keeps the bare name; the rest get a numeric suffix (`btn`, `btn-2`, …). Definitions that are identical share a name.
@@ -202,9 +202,9 @@ A multi-page site typically links one stylesheet per page, and those stylesheets
 
 The rename is applied consistently: the `kind:'class'` rule's `name` + `selector`, every ambient selector in that stylesheet that references the class as a token, and the `classIds` tokens on every node of every page linked to that stylesheet. A `scoped-class` warning is emitted per scoped name.
 
-After scoping, two groups of single-class rules are converted to `kind:'ambient'`: classes that no imported node actually uses, and the shared Bootstrap-like utility names above. Static templates often create or toggle unused classes from JavaScript (`.mt-cursor`, `.is-open`, `.show`, etc.); leaving those as editable class rules would let publisher class tree-shaking drop them because no imported node owns their `classIds`. Shared utilities are ambient for a different reason: nodes keep the plain class token, while every source rule for that token remains publishable in cascade order.
+Imported ambient selectors are also prefixed under a generated body class for the page's stylesheet cascade (`h1` → `body.instatic-import-scope-* h1`, `body` → `body.instatic-import-scope-*`). This keeps global resets or demo/documentation-page CSS from one imported HTML file from overriding another imported page while still importing every authored HTML page.
 
-Pure element / attribute selectors (`body`, `h1`, `a:hover`) carry no class token and cannot be scoped — they remain global, last cascade order wins.
+After scoping, two groups of single-class rules are converted to `kind:'ambient'`: classes that no imported node actually uses, and the shared Bootstrap-like utility names above. Static templates often create or toggle unused classes from JavaScript (`.mt-cursor`, `.is-open`, `.show`, etc.); leaving those as editable class rules would let publisher class tree-shaking drop them because no imported node owns their `classIds`. Shared utilities are ambient for a different reason: nodes keep the plain class token, while every source rule for that token remains publishable in cascade order.
 
 ---
 
@@ -314,6 +314,7 @@ On success the same step switches to its **complete** state — a success mark, 
   - `src/core/siteImport/fontTokens.ts` — `extractRootFontTokens`
   - `src/core/siteImport/fontImports.ts` — `extractGoogleFontImports`
   - `src/core/siteImport/cssImports.ts` — `expandLinkedCssImports`
+  - `src/core/siteImport/scopeClasses.ts` — cascade-aware class scoping for shared class names across imported stylesheets
   - `src/core/siteImport/conflicts.ts` — `detectConflicts`, `applyConflictResolutions`
   - `src/admin/modals/SiteImport/SiteImportModal.tsx` — wizard shell
   - `src/admin/modals/SiteImport/steps/AnalyzeStep.tsx` — category navigator + detail panes

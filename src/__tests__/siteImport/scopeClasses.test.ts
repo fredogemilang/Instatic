@@ -20,6 +20,14 @@ function classRule(name: string, styles: Record<string, unknown>): NewStyleRule 
   return { name, kind: 'class', selector: `.${name}`, order: 0, styles, contextStyles: {} }
 }
 
+function classRuleWithContexts(
+  name: string,
+  styles: Record<string, unknown>,
+  contextStyles: Record<string, Record<string, unknown>>,
+): NewStyleRule {
+  return { name, kind: 'class', selector: `.${name}`, order: 0, styles, contextStyles }
+}
+
 function ambientRule(selector: string, styles: Record<string, unknown>): NewStyleRule {
   return { name: selector, kind: 'ambient', selector, order: 0, styles, contextStyles: {} }
 }
@@ -38,6 +46,16 @@ function page(source: string, linkedCssPaths: string[], classIds: string[]): Pag
 
 function tokensOf(plan: PagePlan): string[] {
   return Object.values(plan.nodeFragment.nodes)[0].classIds ?? []
+}
+
+function bodyTokensOf(plan: PagePlan): string[] {
+  return plan.nodeFragment.body?.classIds ?? []
+}
+
+function importScopeOf(plan: PagePlan): string {
+  const scope = bodyTokensOf(plan).find((className) => className.startsWith('instatic-import-scope-'))
+  expect(scope).toBeDefined()
+  return scope!
 }
 
 function ruleNamed(file: CssFileResult, name: string): NewStyleRule | undefined {
@@ -115,11 +133,12 @@ describe('scopeCollidingClasses', () => {
 
     const result = scopeCollidingClasses(pages, files)
     const styleFile = result.cssFileResults[1]
+    const scopeClass = importScopeOf(result.pagePlans[0])
 
     // The renamed file's ambient selectors all follow the rename.
     const selectors = styleFile.rules.map((r) => r.selector)
-    expect(selectors).toContain('.btn-2:hover')
-    expect(selectors).toContain('.plan-cta .btn-2')
+    expect(selectors).toContain(`body.${scopeClass} .btn-2:hover`)
+    expect(selectors).toContain(`body.${scopeClass} .plan-cta .btn-2`)
 
     // The first (canonical) file's ambient selectors are untouched.
     const firstSelectors = result.cssFileResults[0].rules.map((r) => r.selector)
@@ -186,12 +205,140 @@ describe('scopeCollidingClasses', () => {
 
     expect(result.renames).toEqual([])
     expect(tokensOf(result.pagePlans[0])).toEqual(['row', 'col-xl-3', 'align-items-stretch'])
+    const scopeClass = importScopeOf(result.pagePlans[0])
     expect(result.cssFileResults.flatMap((f) => f.rules.map((r) => r.selector))).toEqual([
+      `.${scopeClass}`,
       '.row',
-      '.row > *',
+      `body.${scopeClass} .row > *`,
       '.col-xl-3',
-      '.row',
+      `body.${scopeClass} .row`,
       '.align-items-stretch',
+    ])
+  })
+
+  it('keeps base and responsive fragments of one linked cascade on the same class', () => {
+    const files = [
+      file('shortcodes.css', [
+        classRule('page-title', {
+          background: "url('../img/hero.jpg') no-repeat center center",
+          paddingTop: '229px',
+        }),
+        ambientRule('.page-title .title', { color: 'white' }),
+      ]),
+      file('responsive.css', [
+        classRuleWithContexts('page-title', {}, { mobile: { paddingTop: '80px' } }),
+      ]),
+    ]
+    const pages = [
+      page('index.html', ['shortcodes.css', 'responsive.css'], ['page-title']),
+    ]
+
+    const result = scopeCollidingClasses(pages, files)
+
+    expect(result.renames).toEqual([])
+    expect(tokensOf(result.pagePlans[0])).toEqual(['page-title'])
+    const scopeClass = importScopeOf(result.pagePlans[0])
+    expect(ruleNamed(result.cssFileResults[0], 'page-title')).toMatchObject({
+      kind: 'class',
+      name: 'page-title',
+      selector: '.page-title',
+      styles: {
+        background: "url('../img/hero.jpg') no-repeat center center",
+        paddingTop: '229px',
+      },
+    })
+    expect(result.cssFileResults[1].rules.find((rule) => rule.selector === `body.${scopeClass} .page-title`)).toMatchObject({
+      kind: 'ambient',
+      name: `body.${scopeClass} .page-title`,
+      selector: `body.${scopeClass} .page-title`,
+      contextStyles: { mobile: { paddingTop: '80px' } },
+    })
+  })
+
+  it('duplicates a shared base stylesheet per divergent page cascade', () => {
+    const files = [
+      file('base.css', [classRule('btn', { padding: '12px' })]),
+      file('red.css', [classRule('btn', { color: 'red' })]),
+      file('blue.css', [classRule('btn', { color: 'blue' })]),
+    ]
+    const pages = [
+      page('red.html', ['base.css', 'red.css'], ['btn']),
+      page('blue.html', ['base.css', 'blue.css'], ['btn']),
+    ]
+
+    const result = scopeCollidingClasses(pages, files)
+
+    expect(tokensOf(result.pagePlans[0])).toEqual(['btn'])
+    expect(tokensOf(result.pagePlans[1])).toEqual(['btn-2'])
+    const redScope = importScopeOf(result.pagePlans[0])
+    const blueScope = importScopeOf(result.pagePlans[1])
+    expect(result.cssFileResults.map((css) => css.cssPath)).toEqual([
+      'base.css',
+      'red.css',
+      'base.css',
+      'blue.css',
+    ])
+    expect(ruleNamed(result.cssFileResults[0], 'btn')).toMatchObject({
+      kind: 'class',
+      name: 'btn',
+      selector: '.btn',
+      styles: { padding: '12px' },
+    })
+    expect(result.cssFileResults[1].rules.find((rule) => rule.selector === `body.${redScope} .btn`)).toMatchObject({
+      kind: 'ambient',
+      name: `body.${redScope} .btn`,
+      selector: `body.${redScope} .btn`,
+      styles: { color: 'red' },
+    })
+    expect(ruleNamed(result.cssFileResults[2], 'btn-2')).toMatchObject({
+      kind: 'class',
+      name: 'btn-2',
+      selector: '.btn-2',
+      styles: { padding: '12px' },
+    })
+    expect(result.cssFileResults[3].rules.find((rule) => rule.selector === `body.${blueScope} .btn-2`)).toMatchObject({
+      kind: 'ambient',
+      name: `body.${blueScope} .btn-2`,
+      selector: `body.${blueScope} .btn-2`,
+      styles: { color: 'blue' },
+    })
+  })
+
+  it('scopes imported ambient selectors to each page cascade without dropping pages', () => {
+    const files = [
+      file('site.css', [
+        ambientRule('h1', { fontSize: '150px' }),
+        ambientRule('body', { fontFamily: 'Forum' }),
+      ]),
+      file('font-demo.css', [
+        ambientRule('html, body, div, h1', { fontSize: '100%' }),
+        ambientRule('.glyph:hover', { color: 'red' }),
+      ]),
+    ]
+    const pages = [
+      page('index.html', ['site.css'], []),
+      page('assets/font/flaticon.html', ['font-demo.css'], []),
+    ]
+
+    const result = scopeCollidingClasses(pages, files)
+
+    expect(result.pagePlans.map((plan) => plan.source)).toEqual([
+      'index.html',
+      'assets/font/flaticon.html',
+    ])
+    const siteScope = importScopeOf(result.pagePlans[0])
+    const demoScope = importScopeOf(result.pagePlans[1])
+    expect(siteScope).not.toBe(demoScope)
+
+    expect(result.cssFileResults[0].rules.map((rule) => rule.selector)).toEqual([
+      `.${siteScope}`,
+      `body.${siteScope} h1`,
+      `body.${siteScope}`,
+    ])
+    expect(result.cssFileResults[1].rules.map((rule) => rule.selector)).toEqual([
+      `.${demoScope}`,
+      `body.${demoScope}, body.${demoScope}, body.${demoScope} div, body.${demoScope} h1`,
+      `body.${demoScope} .glyph:hover`,
     ])
   })
 })

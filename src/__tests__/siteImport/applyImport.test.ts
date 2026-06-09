@@ -155,6 +155,14 @@ function makeMockAdapter(opts?: {
   }
 }
 
+function importScopeOf(page: ImportPlan['pages'][number]): string {
+  const scope = page.nodeFragment.body?.classIds?.find((className) =>
+    className.startsWith('instatic-import-scope-'),
+  )
+  expect(scope).toBeDefined()
+  return scope!
+}
+
 // ---------------------------------------------------------------------------
 // buildImportPlan — basic structure
 // ---------------------------------------------------------------------------
@@ -219,7 +227,8 @@ describe('buildImportPlan — structure', () => {
     expect(promo).toBeDefined()
     expect(promo!.styles.color).toContain('255')
     // The ambient selector is registered too.
-    expect(p.styleRules.some((r) => r.kind === 'ambient' && r.selector === 'a:hover')).toBe(true)
+    const scopeClass = importScopeOf(p.pages[0])
+    expect(p.styleRules.some((r) => r.kind === 'ambient' && r.selector === `body.${scopeClass} a:hover`)).toBe(true)
     // The page node still carries the class NAME (linked to an id at commit time).
     const fragment = p.pages[0].nodeFragment
     const divNode = Object.values(fragment.nodes).find((n) => n.moduleId === 'base.container')
@@ -351,10 +360,13 @@ describe('buildImportPlan — structure', () => {
       currentSite,
     })
 
-    const rowRules = p.styleRules.filter((rule) => rule.selector === '.row')
+    const scopeClass = importScopeOf(p.pages[0])
+    const rowRules = p.styleRules.filter((rule) =>
+      rule.selector === '.row' || rule.selector === `body.${scopeClass} .row`,
+    )
     expect(rowRules).toHaveLength(2)
     expect(rowRules.every((rule) => rule.kind === 'ambient')).toBe(true)
-    expect(p.styleRules.find((rule) => rule.selector === '.row > *')?.kind).toBe('ambient')
+    expect(p.styleRules.find((rule) => rule.selector === `body.${scopeClass} .row > *`)?.kind).toBe('ambient')
     expect(p.styleRules.find((rule) => rule.selector === '.col-xl-3')?.kind).toBe('ambient')
     expect(p.styleRules.find((rule) => rule.selector === '.align-items-stretch')?.kind).toBe('ambient')
     expect(p.styleRules.find((rule) => rule.selector === '.custom-row')?.kind).toBe('class')
@@ -433,9 +445,10 @@ describe('buildImportPlan — structure', () => {
         fallback: 'serif',
       },
     ])
-    const root = p.styleRules.find((rule) => rule.selector === ':root')
+    const scopeClass = importScopeOf(p.pages[0])
+    const root = p.styleRules.find((rule) => rule.selector === `body.${scopeClass}`)
     expect(root?.styles).toEqual({ '--font-size-base': '16px' })
-    expect(p.styleRules.find((rule) => rule.selector === 'h1')?.styles.fontFamily).toBe('var(--font-display)')
+    expect(p.styleRules.find((rule) => rule.selector === `body.${scopeClass} h1`)?.styles.fontFamily).toBe('var(--font-display)')
   })
 
   it('plans Google Fonts @import as installed font requests', () => {
@@ -481,7 +494,8 @@ describe('buildImportPlan — structure', () => {
       },
     ])
     expect('fontImportUrl' in p).toBe(false)
-    expect(p.styleRules.find((rule) => rule.selector === ':root')?.styles).toMatchObject({
+    const scopeClass = importScopeOf(p.pages[0])
+    expect(p.styleRules.find((rule) => rule.selector === `body.${scopeClass}`)?.styles).toMatchObject({
       '--title-font': '"Plus Jakarta Sans", serif',
       '--body-font': '"Manrope", sans-serif',
     })

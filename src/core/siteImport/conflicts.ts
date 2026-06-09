@@ -365,6 +365,8 @@ export function applyConflictResolutions(
         // The selector must stay in sync with the name for class-kind rules.
         next = { ...next, name: resolvedName, selector: `.${resolvedName}` }
       }
+    } else if (classRenames.size > 0) {
+      next = rewriteAmbientRuleClassRefs(rule, classRenames)
     }
     return varRenames.size > 0 ? rewriteRuleVarRefs(next, varRenames) : next
   })
@@ -448,6 +450,29 @@ function remapFragment(
   }
 
   return changed ? { nodes, rootIds: fragment.rootIds, ...(body ? { body } : {}) } : fragment
+}
+
+function rewriteAmbientRuleClassRefs(
+  rule: NewStyleRule,
+  classRenames: Map<string, string>,
+): NewStyleRule {
+  if (rule.kind !== 'ambient' || typeof rule.rawCss === 'string') return rule
+  const selector = rewriteSelectorClasses(rule.selector, classRenames)
+  if (selector === rule.selector) return rule
+  return {
+    ...rule,
+    selector,
+    name: rule.name === rule.selector ? selector : rule.name,
+  }
+}
+
+const SELECTOR_CLASS_TOKEN_RE = /\.(-?[A-Za-z_][\w-]*)/g
+
+function rewriteSelectorClasses(selector: string, classRenames: Map<string, string>): string {
+  return selector.replace(SELECTOR_CLASS_TOKEN_RE, (whole, token: string) => {
+    const renamed = classRenames.get(token)
+    return renamed && renamed !== token ? `.${renamed}` : whole
+  })
 }
 
 /**
