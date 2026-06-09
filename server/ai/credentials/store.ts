@@ -28,6 +28,7 @@ import {
 import {
   getMasterKeyFingerprint,
   loadMasterKey,
+  MasterKeyConfigurationError,
 } from './masterKey'
 import type {
   CreateCredentialInput,
@@ -240,8 +241,17 @@ export async function createCredentialForUser(
   input: CreateCredentialInput,
 ): Promise<CredentialRecord> {
   const id = nanoid()
-  const encrypted = await maybeEncryptForInput(input)
-  const fingerprint = encrypted ? await getMasterKeyFingerprint() : null
+  let encrypted: EncryptedSecret | null
+  let fingerprint: string | null
+  try {
+    encrypted = await maybeEncryptForInput(input)
+    fingerprint = encrypted ? await getMasterKeyFingerprint() : null
+  } catch (err) {
+    if (err instanceof MasterKeyConfigurationError) {
+      throw credentialEncryptionConfigurationError(err)
+    }
+    throw err
+  }
   const baseUrl =
     input.authMode === 'baseUrl' ? input.baseUrl : null
 
@@ -325,10 +335,17 @@ export async function updateCredentialForUser(
       nextIv = null
       nextFingerprint = null
     } else {
-      const encrypted = await encryptKey(patch.apiKey)
-      nextCiphertext = encrypted.ciphertext
-      nextIv = encrypted.iv
-      nextFingerprint = await getMasterKeyFingerprint()
+      try {
+        const encrypted = await encryptKey(patch.apiKey)
+        nextCiphertext = encrypted.ciphertext
+        nextIv = encrypted.iv
+        nextFingerprint = await getMasterKeyFingerprint()
+      } catch (err) {
+        if (err instanceof MasterKeyConfigurationError) {
+          throw credentialEncryptionConfigurationError(err)
+        }
+        throw err
+      }
     }
   }
 
@@ -420,4 +437,13 @@ function isFkViolation(err: unknown): boolean {
   if (!(err instanceof Error)) return false
   const msg = err.message.toLowerCase()
   return msg.includes('foreign key') || msg.includes('23503') || msg.includes('fk_')
+}
+
+function credentialEncryptionConfigurationError(
+  err: MasterKeyConfigurationError,
+): CredentialError {
+  return new CredentialError(
+    `AI credential encryption is not configured: ${err.message.replace('[ai/masterKey] ', '')}`,
+    500,
+  )
 }

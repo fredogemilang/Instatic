@@ -34,6 +34,13 @@ const ENV_VAR_NAME = 'INSTATIC_SECRET_KEY'
 let cachedKey: CryptoKey | null = null
 let cachedFingerprint: string | null = null
 
+export class MasterKeyConfigurationError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'MasterKeyConfigurationError'
+  }
+}
+
 /**
  * Load (and cache) the AES-256 master key as a non-extractable `CryptoKey`.
  *
@@ -91,7 +98,7 @@ function readMasterKeyBytes(): Uint8Array {
   }
 
   if (process.env.NODE_ENV === 'production') {
-    throw new Error(
+    throw new MasterKeyConfigurationError(
       `[ai/masterKey] ${ENV_VAR_NAME} is required in production. ` +
       'Generate one with: bun run scripts/generate-secret-key.ts',
     )
@@ -125,14 +132,14 @@ function parseAndValidateBase64(value: string, source: string): Uint8Array {
   try {
     bytes = base64ToBytes(value)
   } catch (err) {
-    throw new Error(
+    throw new MasterKeyConfigurationError(
       `[ai/masterKey] ${source} is not valid base64. ` +
       'Generate a new key with: bun run scripts/generate-secret-key.ts',
       { cause: err },
     )
   }
   if (bytes.length !== REQUIRED_KEY_BYTES) {
-    throw new Error(
+    throw new MasterKeyConfigurationError(
       `[ai/masterKey] ${source} decoded to ${bytes.length} bytes; ` +
       `must be exactly ${REQUIRED_KEY_BYTES}. ` +
       'Generate a new key with: bun run scripts/generate-secret-key.ts',

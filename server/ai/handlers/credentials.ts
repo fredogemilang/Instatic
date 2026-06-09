@@ -8,6 +8,7 @@
  */
 
 import { Type } from '@core/utils/typeboxHelpers'
+import { getErrorMessage } from '@core/utils/errorMessage'
 import { jsonResponse, readValidatedBody, badRequest } from '../../http'
 import { requireCapability } from '../../auth/authz'
 import type { DbClient } from '../../db/client'
@@ -122,13 +123,20 @@ async function handleCreate(req: Request, db: DbClient): Promise<Response> {
     // Convenience: point any scope that has no default yet at this fresh
     // credential. Never overwrites an existing choice; failures here must not
     // fail credential creation.
-    await seedEmptyDefaults(db, record, userOrResponse.id)
+    try {
+      await seedEmptyDefaults(db, record, userOrResponse.id)
+    } catch (err) {
+      console.warn(
+        '[ai/credentials] auto-default skipped - default seeding failed:',
+        safeCredentialErrorMessage(err, bodySecrets(body)),
+      )
+    }
     return jsonResponse({ credential: await toCredentialView(record) }, { status: 201 })
   } catch (err) {
     if (err instanceof CredentialError) {
       return jsonResponse({ error: err.message }, { status: err.status })
     }
-    console.error('[ai/credentials] create failed:', err)
+    console.error('[ai/credentials] create failed:', safeCredentialErrorMessage(err, bodySecrets(body)))
     return jsonResponse({ error: 'Failed to create credential.' }, { status: 500 })
   }
 }
@@ -157,14 +165,19 @@ async function seedEmptyDefaults(
   if (emptyScopes.length === 0) return
 
   let topModelId: string | null
+  let apiKeyForRedaction: string | null = null
   try {
     const resolved = await resolveCredentialForDriver(record)
+    apiKeyForRedaction = resolved.apiKey
     const driver = resolveDriver(record.providerId)
     const models = await driver.listModels(resolved)
     const top = models.find((m) => m.tier === 'smartest') ?? models[0]
     topModelId = top?.id ?? null
   } catch (err) {
-    console.warn('[ai/credentials] auto-default skipped — model lookup failed:', err)
+    console.warn(
+      '[ai/credentials] auto-default skipped - model lookup failed:',
+      safeCredentialErrorMessage(err, [apiKeyForRedaction]),
+    )
     return
   }
   if (!topModelId) return
@@ -222,7 +235,7 @@ async function handleUpdate(req: Request, db: DbClient, id: string): Promise<Res
     if (err instanceof CredentialError) {
       return jsonResponse({ error: err.message }, { status: err.status })
     }
-    console.error('[ai/credentials] update failed:', err)
+    console.error('[ai/credentials] update failed:', safeCredentialErrorMessage(err, bodySecrets(body)))
     return jsonResponse({ error: 'Failed to update credential.' }, { status: 500 })
   }
 }
@@ -255,7 +268,7 @@ async function handleDelete(req: Request, db: DbClient, id: string): Promise<Res
     if (err instanceof CredentialError) {
       return jsonResponse({ error: err.message }, { status: err.status })
     }
-    console.error('[ai/credentials] delete failed:', err)
+    console.error('[ai/credentials] delete failed:', safeCredentialErrorMessage(err))
     return jsonResponse({ error: 'Failed to delete credential.' }, { status: 500 })
   }
 }
@@ -274,8 +287,10 @@ async function dispatchTest(req: Request, db: DbClient, id: string): Promise<Res
   const record = await readCredentialForUser(db, userOrResponse.id, id)
   if (!record) return jsonResponse({ error: 'Credential not found' }, { status: 404 })
 
+  let apiKeyForRedaction: string | null = null
   try {
     const resolved = await resolveCredentialForDriver(record)
+    apiKeyForRedaction = resolved.apiKey
     const driver = resolveDriver(record.providerId)
     const models = await driver.listModels(resolved)
     await createAuditEvent(db, {
@@ -292,7 +307,7 @@ async function dispatchTest(req: Request, db: DbClient, id: string): Promise<Res
     })
     return jsonResponse({ ok: true, modelCount: models.length })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Test failed.'
+    const message = safeCredentialErrorMessage(err, [apiKeyForRedaction], 'Test failed.')
     await createAuditEvent(db, {
       actorUserId: userOrResponse.id,
       action: 'ai.credential.tested',
@@ -309,4 +324,30 @@ async function dispatchTest(req: Request, db: DbClient, id: string): Promise<Res
     })
     return jsonResponse({ ok: false, error: message }, { status: 200 })
   }
+}
+
+function bodySecrets(body: { apiKey?: string }): string[] {
+  return body.apiKey ? [body.apiKey] : []
+}
+
+function safeCredentialErrorMessage(
+  err: unknown,
+  secrets: readonly (string | null | undefined)[] = [],
+  fallback = 'Unknown error',
+): string {
+  return redactCredentialSecrets(getErrorMessage(err, fallback), secrets)
+}
+
+function redactCredentialSecrets(
+  value: string,
+  secrets: readonly (string | null | undefined)[],
+): string {
+  let redacted = value
+  for (const secret of secrets) {
+    if (!secret) continue
+    redacted = redacted.split(secret).join('[redacted]')
+  }
+  return redacted
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
+    .replace(/\bsk-[A-Za-z0-9._-]{6,}\b/g, '[redacted]')
 }
