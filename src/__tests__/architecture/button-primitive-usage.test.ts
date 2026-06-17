@@ -182,6 +182,15 @@ const ALLOWLIST = new Set([
   // • the "All" / "None" bulk text links — 11.5px inline text actions, not
   //   the token-driven Button sizes.
   'admin/modals/SiteImport/steps/AnalyzeStep.tsx',
+
+  // ── §8.13 Export site dialog category navigator ─────────────────────────
+  // ExportDialog is the sibling of §8.12 — the same category-navigator
+  // pattern, on the export side. Its bare <button>s are:
+  // • nav items — full-width 4-cell rows (tint dot + label + count + green
+  //   include-state dot), identical to §8.12's nav-item / §8.7 pattern;
+  // • the "Select all" / "Select none" bulk text links — 11.5px inline text
+  //   actions, not the token-driven Button sizes (same as §8.12).
+  'admin/pages/data/components/ExportDialog/ExportDialog.tsx',
 ])
 
 // ---------------------------------------------------------------------------

@@ -45,6 +45,7 @@ describe('MediaAssetExportSchema.storagePath', () => {
     blurHash: null,
     bytesBase64: '',
     posterPath: null,
+    folderIds: [] as string[],
   }
 
   test('accepts ordinary relative paths (including spaces and parens)', () => {

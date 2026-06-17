@@ -299,6 +299,8 @@ describe('SiteImportModal — CMS bundle import', () => {
             rows: 1,
             mediaFiles: 0,
             mediaEmbedded: false,
+            mediaFolders: 0,
+            redirects: 0,
           },
         })
       }
@@ -347,6 +349,8 @@ describe('SiteImportModal — CMS bundle import', () => {
             rows: 1,
             mediaFiles: 0,
             mediaEmbedded: false,
+            mediaFolders: 0,
+            redirects: 0,
           },
         })
       }
@@ -361,6 +365,8 @@ describe('SiteImportModal — CMS bundle import', () => {
           rowsReplaced: 0,
           rowsSkipped: 0,
           mediaImported: 0,
+          mediaFoldersImported: 0,
+          redirectsImported: 0,
         })
       }
       return jsonResponse({ error: `Unexpected request: ${url}` }, 500)
@@ -427,6 +433,8 @@ describe('SiteImportModal — CMS bundle import', () => {
             rows: 0,
             mediaFiles: 0,
             mediaEmbedded: false,
+            mediaFolders: 0,
+            redirects: 0,
           },
         })
       }

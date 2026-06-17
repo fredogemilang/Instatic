@@ -109,7 +109,10 @@ function BundlePreviewPanel({
     timeStyle: 'short',
   })
   const hasContent =
-    preview.tables.some((table) => table.inBundle > 0) || preview.totals.mediaFiles > 0
+    preview.tables.some((table) => table.inBundle > 0) ||
+    preview.totals.mediaFiles > 0 ||
+    preview.totals.mediaFolders > 0 ||
+    preview.totals.redirects > 0
 
   return (
     <div className={styles.preview}>
@@ -153,6 +156,20 @@ function BundlePreviewPanel({
                     ? '(bytes embedded)'
                     : '(not embedded - paths only)'}
                 </span>
+              </li>
+            )}
+            {preview.totals.mediaFolders > 0 && (
+              <li className={styles.diffRow}>
+                <span className={styles.diffBullet} aria-hidden="true">-</span>
+                <span className={styles.diffTableName}>Media folders</span>
+                <span className={styles.diffDetail}>{preview.totals.mediaFolders} in bundle</span>
+              </li>
+            )}
+            {preview.totals.redirects > 0 && (
+              <li className={styles.diffRow}>
+                <span className={styles.diffBullet} aria-hidden="true">-</span>
+                <span className={styles.diffTableName}>Redirects</span>
+                <span className={styles.diffDetail}>{preview.totals.redirects} in bundle</span>
               </li>
             )}
           </ul>

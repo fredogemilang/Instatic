@@ -156,6 +156,64 @@ export async function deleteMediaFolder(
   return result.rowCount > 0
 }
 
+// ---------------------------------------------------------------------------
+// Bundle export / import
+// ---------------------------------------------------------------------------
+
+/** A media folder serialized for bundle transfer (authorship dropped). */
+export interface ExportableMediaFolder {
+  id: string
+  parentId: string | null
+  name: string
+  slug: string
+  sortOrder: number
+}
+
+/** The whole folder tree, raw, for a full-site export. */
+export async function listExportableMediaFolders(db: DbClient): Promise<ExportableMediaFolder[]> {
+  const folders = await listMediaFolders(db)
+  return folders.map((f) => ({
+    id: f.id,
+    parentId: f.parentId,
+    name: f.name,
+    slug: f.slug,
+    sortOrder: f.sortOrder,
+  }))
+}
+
+/** Wipe all folders (cascades membership) — used by the `replace` import strategy. */
+export async function deleteAllMediaFolders(db: DbClient): Promise<void> {
+  await db`delete from media_folders`
+}
+
+/**
+ * Insert a folder preserving its original id, upserting on conflict so a
+ * re-import is idempotent. `created_by_user_id` is left null — folder
+ * authorship is instance-local and is not carried in the bundle. Used by the
+ * bundle import handler.
+ */
+export async function importMediaFolder(
+  db: DbClient,
+  input: ExportableMediaFolder,
+): Promise<void> {
+  await db`
+    insert into media_folders (id, parent_id, name, slug, sort_order, created_by_user_id)
+    values (
+      ${input.id},
+      ${input.parentId},
+      ${input.name},
+      ${input.slug},
+      ${input.sortOrder},
+      ${null}
+    )
+    on conflict (id) do update
+      set parent_id = excluded.parent_id,
+          name = excluded.name,
+          slug = excluded.slug,
+          sort_order = excluded.sort_order
+  `
+}
+
 /**
  * Detect whether a (parent, slug) pair is already taken — used by the create
  * / rename handlers to return a friendly error rather than a raw unique

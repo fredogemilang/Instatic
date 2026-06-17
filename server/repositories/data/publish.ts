@@ -464,3 +464,69 @@ export async function getDataRowRedirectByRoute(
 
   return { id: queryRow.id, fromPath, targetPath }
 }
+
+// ---------------------------------------------------------------------------
+// Bundle export / import — raw redirect rows
+// ---------------------------------------------------------------------------
+
+/**
+ * A redirect serialized for bundle transfer, in raw column form (camelCased).
+ * Shape-compatible with `BundleRedirect` in `@core/data/bundleSchema` so the
+ * export handler can pass these straight through.
+ */
+export interface ExportableRedirect {
+  id: string
+  tableId: string
+  fromRouteBase: string
+  fromSlug: string
+  targetRowId: string
+}
+
+interface ExportableRedirectRow {
+  id: string
+  table_id: string
+  from_route_base: string
+  from_slug: string
+  target_row_id: string
+}
+
+/** Every redirect, raw, for a full-site export. */
+export async function listExportableRedirects(db: DbClient): Promise<ExportableRedirect[]> {
+  const { rows } = await db<ExportableRedirectRow>`
+    select id, table_id, from_route_base, from_slug, target_row_id
+    from data_row_redirects
+    order by from_route_base asc, from_slug asc
+  `
+  return rows.map((row) => ({
+    id: row.id,
+    tableId: row.table_id,
+    fromRouteBase: row.from_route_base,
+    fromSlug: row.from_slug,
+    targetRowId: row.target_row_id,
+  }))
+}
+
+/** Wipe all redirects — used by the `replace` import strategy before reinsert. */
+export async function deleteAllDataRowRedirects(db: DbClient): Promise<void> {
+  await db`delete from data_row_redirects`
+}
+
+/**
+ * Insert a redirect preserving its original id, upserting on the unique
+ * (from_route_base, from_slug) source key. Used by the bundle import handler.
+ */
+export async function importDataRowRedirect(db: DbClient, input: ExportableRedirect): Promise<void> {
+  await db`
+    insert into data_row_redirects (id, table_id, from_route_base, from_slug, target_row_id)
+    values (
+      ${input.id},
+      ${input.tableId},
+      ${input.fromRouteBase},
+      ${input.fromSlug},
+      ${input.targetRowId}
+    )
+    on conflict (from_route_base, from_slug) do update
+      set table_id = excluded.table_id,
+          target_row_id = excluded.target_row_id
+  `
+}

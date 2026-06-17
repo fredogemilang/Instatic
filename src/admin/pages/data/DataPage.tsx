@@ -24,20 +24,6 @@ import { DataSidebar } from './components/DataSidebar/DataSidebar'
 import { DataCanvas } from './components/DataCanvas/DataCanvas'
 import { DataInspector } from './components/DataInspector/DataInspector'
 import { NewTableDialog } from './components/NewTableDialog/NewTableDialog'
-import { ExportDialog } from './components/ExportDialog/ExportDialog'
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface ExportDialogOpenState {
-  kind: 'open'
-  initialScope: 'all' | 'selected'
-  selectedRowIds: string[]
-  activeTableId: string | null
-}
-
-type ExportDialogState = { kind: 'closed' } | ExportDialogOpenState
 
 // ---------------------------------------------------------------------------
 // DataPage
@@ -62,11 +48,11 @@ export function DataPage() {
   const workspace = useDataWorkspace()
   const setPropertiesPanel = useEditorStore((s) => s.setPropertiesPanel)
   const openSiteImport = useAdminUi((s) => s.openSiteImport)
+  const openSiteExport = useAdminUi((s) => s.openSiteExport)
   const confirmDelete = useConfirmDelete()
   const { runStepUp } = useStepUp()
 
   const [newTableDialogOpen, setNewTableDialogOpen] = useState(false)
-  const [exportDialog, setExportDialog] = useState<ExportDialogState>({ kind: 'closed' })
 
   useEffect(() => {
     function refreshAfterBundleImport() {
@@ -243,11 +229,9 @@ export function DataPage() {
             onOpenTableSettings={handleOpenTableSettings}
             onDeleteTable={(table) => handleDeleteTable(table.id)}
             onCreateTable={() => setNewTableDialogOpen(true)}
-            onOpenExport={() => setExportDialog({
-              kind: 'open',
-              initialScope: 'all',
-              selectedRowIds: [],
+            onOpenExport={() => openSiteExport({
               activeTableId: workspace.selectedTableId,
+              initialScope: 'all',
             })}
             onOpenImport={openSiteImport}
             canCreate={canCreate}
@@ -271,11 +255,10 @@ export function DataPage() {
             onOpenInSiteEditor={handleOpenInSiteEditor}
             onOpenRow={handleOpenRow}
             onSetRowStatus={handleSetRowStatus}
-            onExportRows={(rowIds) => setExportDialog({
-              kind: 'open',
-              initialScope: 'selected',
-              selectedRowIds: rowIds,
+            onExportRows={(rowIds) => openSiteExport({
               activeTableId: workspace.selectedTableId,
+              selectedRowIds: rowIds,
+              initialScope: 'selected',
             })}
             canCreate={canCreate}
             canEdit={canEdit}
@@ -293,17 +276,6 @@ export function DataPage() {
             await runStepUp(() => workspace.createTable(input))
             setNewTableDialogOpen(false)
           }}
-        />
-      )}
-
-      {exportDialog.kind === 'open' && (
-        <ExportDialog
-          open={true}
-          onClose={() => setExportDialog({ kind: 'closed' })}
-          tables={workspace.tables}
-          activeTableId={exportDialog.activeTableId}
-          selectedRowIds={exportDialog.selectedRowIds}
-          initialScope={exportDialog.initialScope}
         />
       )}
 

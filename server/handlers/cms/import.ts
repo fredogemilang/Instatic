@@ -46,7 +46,12 @@ import {
   replaceDataRow,
   type DataRowImportInput,
 } from '../../repositories/data/rows'
-import { importMediaAsset } from '../../repositories/media'
+import { importMediaAsset, assignAssetToFolders } from '../../repositories/media'
+import {
+  deleteAllDataRowRedirects,
+  importDataRowRedirect,
+} from '../../repositories/data/publish'
+import { deleteAllMediaFolders, importMediaFolder } from '../../repositories/mediaFolders'
 import { backfillDefaultEntryTemplates } from '../../publish/templateSeeding'
 import { jsonResponse, readValidatedBody } from '../../http'
 import { parseValue } from '@core/utils/typeboxHelpers'
@@ -60,6 +65,31 @@ import { CMS_API_PREFIX, type CmsHandlerOptions } from './shared'
 
 // The four system table ids that are always seeded and never deleted.
 const SYSTEM_TABLE_IDS = new Set(['posts', 'pages', 'components', 'layouts'])
+
+/**
+ * Order folders so every parent precedes its children — `media_folders.parent_id`
+ * is a self-referencing foreign key, so inserts must be topological. Any folder
+ * whose parent isn't in the set is treated as a root (defensive: a malformed
+ * bundle never wedges the import).
+ */
+function orderFoldersParentFirst<T extends { id: string; parentId: string | null }>(
+  folders: readonly T[],
+): T[] {
+  const byId = new Map(folders.map((f) => [f.id, f]))
+  const emitted = new Set<string>()
+  const ordered: T[] = []
+
+  const visit = (folder: T): void => {
+    if (emitted.has(folder.id)) return
+    const parent = folder.parentId !== null ? byId.get(folder.parentId) : undefined
+    if (parent) visit(parent)
+    emitted.add(folder.id)
+    ordered.push(folder)
+  }
+
+  for (const folder of folders) visit(folder)
+  return ordered
+}
 
 export async function handleImportRoute(
   req: Request,
@@ -121,6 +151,13 @@ export async function handleImportRoute(
   let rowsReplaced = 0
   let rowsSkipped = 0
   let mediaImported = 0
+  let mediaFoldersImported = 0
+  let redirectsImported = 0
+
+  // Folder ids that actually landed — asset memberships are restored only for
+  // these, so an asset's `folderIds` pointing at a folder we didn't import is
+  // silently skipped rather than violating the membership foreign key.
+  const importedFolderIds = new Set<string>()
 
   // ---------------------------------------------------------------------------
   // DB transaction
@@ -192,6 +229,29 @@ export async function handleImportRoute(
       // 6. Replace the site shell (only when the bundle carries one)
       if (bundle.site) {
         await saveDraftSite(tx, bundle.site)
+      }
+
+      // 7. Media folder tree. `delete from data_rows` above does NOT touch
+      //    media_folders (unrelated FK), so wipe explicitly, then insert
+      //    parent-first to satisfy the self-referencing parent_id FK.
+      if (bundle.mediaFolders) {
+        await deleteAllMediaFolders(tx)
+        for (const folder of orderFoldersParentFirst(bundle.mediaFolders)) {
+          await importMediaFolder(tx, folder)
+          importedFolderIds.add(folder.id)
+          mediaFoldersImported++
+        }
+      }
+
+      // 8. Redirects. Old ones already cascade-deleted with their target rows
+      //    in step 1; wipe explicitly for clarity, then reinsert from the
+      //    bundle now that the target rows exist.
+      if (bundle.redirects) {
+        await deleteAllDataRowRedirects(tx)
+        for (const redirect of bundle.redirects) {
+          await importDataRowRedirect(tx, redirect)
+          redirectsImported++
+        }
       }
     })
   } else if (strategy === 'merge-add') {
@@ -347,6 +407,14 @@ export async function handleImportRoute(
           blurHash: asset.blurHash,
           posterPath: asset.posterPath,
         })
+
+        // Restore folder membership — but only into folders we actually
+        // imported, so a stale folderId can't violate the membership FK.
+        const targetFolders = asset.folderIds.filter((id) => importedFolderIds.has(id))
+        if (targetFolders.length > 0) {
+          await assignAssetToFolders(db, asset.id, { add: targetFolders })
+        }
+
         mediaImported++
       } catch (err) {
         console.error('[import] Failed to import media asset:', asset.id, err)
@@ -364,6 +432,8 @@ export async function handleImportRoute(
     rowsReplaced,
     rowsSkipped,
     mediaImported,
+    mediaFoldersImported,
+    redirectsImported,
   }
 
   // Paranoia: validate result shape before returning

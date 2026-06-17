@@ -61,13 +61,24 @@ function buildCmsImportToastBody(result: CmsImportResult): string {
   if (result.mediaImported > 0) {
     parts.push(pluralize(result.mediaImported, 'media file imported', 'media files imported'))
   }
+  if (result.mediaFoldersImported > 0) {
+    parts.push(pluralize(result.mediaFoldersImported, 'folder imported', 'folders imported'))
+  }
+  if (result.redirectsImported > 0) {
+    parts.push(pluralize(result.redirectsImported, 'redirect imported', 'redirects imported'))
+  }
 
   return parts.join(' · ')
 }
 
 function previewHasContent(preview: BundlePreview | null): boolean {
   if (!preview) return false
-  return preview.tables.some((table) => table.inBundle > 0) || preview.totals.mediaFiles > 0
+  return (
+    preview.tables.some((table) => table.inBundle > 0) ||
+    preview.totals.mediaFiles > 0 ||
+    preview.totals.mediaFolders > 0 ||
+    preview.totals.redirects > 0
+  )
 }
 
 export function describeCmsBundleLoadError(err: unknown): string {

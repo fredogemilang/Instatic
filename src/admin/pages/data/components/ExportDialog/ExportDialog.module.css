@@ -1,133 +1,326 @@
 /**
- * ExportDialog — body styles only.
- * Dialog chrome (backdrop, header, footer) lives in @ui/components/Dialog.
+ * ExportDialog — a sibling of the Site Import modal: a fixed-height two-column
+ * layout with a category navigator (left) and a detail pane (right). Dialog
+ * chrome (backdrop, header, footer) lives in @ui/components/Dialog.
  */
 
-/* ── Outer layout ─────────────────────────────────────────────────── */
+/* ── Body override (edge-to-edge two-column) ─────────────────────────── */
 
 .body {
+    padding: 0;
+    overflow: hidden;
+}
+
+.step {
+    display: grid;
+    grid-template-columns: 232px 1fr;
+    height: min(560px, calc(80vh - 160px));
+    min-height: 380px;
+}
+
+/* ── Left: category navigator ───────────────────────────────────────── */
+
+.nav {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 4px;
+    padding: 14px 10px;
+    overflow-y: auto;
+    background: var(--editor-surface-2);
+    border-right: 1px solid var(--editor-border);
 }
 
-/* ── Section ──────────────────────────────────────────────────────── */
-
-.section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+.navLead {
+    margin: 0 6px 10px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--editor-text-secondary);
 }
 
-.sectionLabel {
-    margin: 0 0 2px 0;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--editor-text-muted);
+.navLead strong {
+    font-weight: 600;
+    color: var(--editor-text-bright);
 }
 
-/* ── Toggle row (Switch + label block) ───────────────────────────── */
-
-.toggleRow {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-    user-select: none;
-}
-
-.toggleLabelBlock {
+.navList {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    flex: 1 1 0;
-    min-width: 0;
 }
 
-.toggleLabel {
-    font-size: 13px;
-    color: var(--editor-text);
-    line-height: 1.2;
-}
-
-.toggleHelper {
-    font-size: 11px;
-    color: var(--editor-text-muted);
-    line-height: 1.3;
-}
-
-/* ── Table rows ───────────────────────────────────────────────────── */
-
-.tableRow {
-    display: flex;
+.navItem {
+    display: grid;
+    grid-template-columns: 8px 1fr auto 8px;
     align-items: center;
-    gap: 8px;
+    gap: 11px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: var(--editor-radius);
+    background: transparent;
+    color: var(--editor-text-secondary);
+    font: inherit;
+    text-align: left;
     cursor: pointer;
-    user-select: none;
+    transition: background-color 120ms ease, color 120ms ease;
 }
 
-.tableRow:has(input:disabled) {
-    cursor: not-allowed;
-    opacity: 0.5;
-}
-
-.tableName {
-    flex: 1 1 0;
-    min-width: 0;
-    font-size: 13px;
+.navItem:hover {
+    background: var(--editor-surface-3);
     color: var(--editor-text);
+}
+
+.navItem[data-active] {
+    background: var(--editor-surface-3);
+    color: var(--editor-text-bright);
+}
+
+.navDot {
+    --tint: var(--rail-tint-mint);
+    width: 7px;
+    height: 7px;
+    border-radius: var(--editor-radius-sm);
+    background: var(--tint);
+}
+
+.navLabel {
     overflow: hidden;
+    font-size: 13px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.tableCount {
-    font-size: 11px;
+.navCount {
+    font-size: 12px;
     color: var(--editor-text-muted);
-    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
 }
 
-/* ── Scope radio rows ─────────────────────────────────────────────── */
+.navState {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--editor-surface-4);
+}
 
-.radioRow {
+.navState[data-on] {
+    background: var(--editor-success-green);
+}
+
+/* ── Nav footer: bulk actions + estimate ────────────────────────────── */
+
+.navBottom {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: auto;
+    padding: 12px 6px 4px;
+}
+
+.bulkRow {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.link {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--editor-text-secondary);
     cursor: pointer;
-    user-select: none;
-    font-size: 13px;
+}
+
+.link:hover {
+    color: var(--editor-text-bright);
+}
+
+.bulkSep {
+    color: var(--editor-text-subtle);
+}
+
+.estimate {
+    margin: 0;
+    font-size: 12px;
+    color: var(--editor-text-muted);
+}
+
+.estimateValue {
+    color: var(--editor-text);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Right: detail pane ─────────────────────────────────────────────── */
+
+.detail {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    padding: 18px 22px 22px;
+    overflow-y: auto;
+}
+
+.detHead {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 12px;
+}
+
+.detHeadBulk {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.detIcon {
+    --tint: var(--rail-tint-mint);
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--editor-radius);
+    background: var(--editor-surface-3);
+    color: var(--tint);
+}
+
+.detHeadText {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.detTitle {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--editor-text-bright);
+}
+
+.detSub {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--editor-text-secondary);
+}
+
+/* ── Fact list (what a category contributes) ────────────────────────── */
+
+.factList {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    margin: 0;
+    padding: 6px 0 0;
+    list-style: none;
+}
+
+.factList[data-off] {
+    opacity: 0.45;
+}
+
+.factRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12.5px;
     color: var(--editor-text);
 }
 
-.radioRow:has(input:disabled) {
-    cursor: not-allowed;
-    opacity: 0.5;
+.factDot {
+    --tint: var(--rail-tint-mint);
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--tint);
 }
 
-.radioInput {
-    flex-shrink: 0;
-    accent-color: var(--editor-text);
-    cursor: inherit;
-    width: 14px;
-    height: 14px;
+/* ── Row checklist (content tables) ─────────────────────────────────── */
+
+.rows {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: 4px;
 }
 
-/* ── Estimate line ────────────────────────────────────────────────── */
+.entryRow {
+    display: grid;
+    grid-template-columns: 16px 1fr;
+    align-items: center;
+    gap: 11px;
+    padding: 9px 10px;
+    border-radius: var(--editor-radius);
+    background: var(--editor-surface-2);
+    cursor: pointer;
+    user-select: none;
+}
 
-.estimate {
-    margin-top: 4px;
-    font-size: 12px;
+.entryRow:hover {
+    background: var(--editor-surface-3);
+}
+
+.entryRow[data-off] {
+    opacity: 0.55;
+}
+
+.entryInfo {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.entryTitle {
+    overflow: hidden;
+    font-size: 13px;
+    color: var(--editor-text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.entryMeta {
+    overflow: hidden;
+    font-size: 10.5px;
+    font-family: var(--font-mono);
     color: var(--editor-text-muted);
-    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-/* ── Inline error ────────────────────────────────────────────────── */
+/* ── Notes ──────────────────────────────────────────────────────────── */
+
+.loadingNote,
+.emptyNote {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--editor-text-muted);
+}
 
 .errorText {
     margin: 0;
     font-size: 11px;
-    color: var(--editor-danger);
     line-height: 1.3;
+    color: var(--editor-danger);
+}
+
+/* ── Footer note (left of the action buttons) ───────────────────────── */
+
+.footerNote {
+    margin-right: auto;
+    align-self: center;
+    font-size: 12px;
+    color: var(--editor-text-secondary);
+}
+
+.footerNote strong {
+    font-weight: 600;
+    color: var(--editor-text-bright);
 }

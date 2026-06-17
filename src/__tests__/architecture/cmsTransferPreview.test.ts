@@ -280,6 +280,7 @@ describe('handleImportPreviewRoute — totals.mediaEmbedded', () => {
         storagePath: 'photo.jpg',
         posterPath: null,
         bytesBase64: 'abc123',
+        folderIds: [],
       },
       {
         id: 'media-2',
@@ -298,6 +299,7 @@ describe('handleImportPreviewRoute — totals.mediaEmbedded', () => {
         storagePath: 'video.mp4',
         posterPath: null,
         bytesBase64: 'xyz789',
+        folderIds: [],
       },
     ]
 

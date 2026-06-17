@@ -108,6 +108,10 @@ const SiteImportModal = lazy(() =>
   import('./modals/SiteImport').then((m) => ({ default: m.SiteImportModal })),
 )
 
+const SiteExportModal = lazy(() =>
+  import('./modals/SiteExport').then((m) => ({ default: m.SiteExportModal })),
+)
+
 // Plugin runtime (globalThis.__instatic) is now installed LAZILY by
 // `ensurePluginRuntime()` in `pluginRuntimeBootstrap.ts`. The two callers
 // that need it (useInstalledEditorPlugins, PluginPageRenderer) await it
@@ -202,6 +206,7 @@ export default function AuthenticatedAdmin({ section, currentUser }: Authenticat
   const inRouter = useInRouterContext()
   const fallbackWorkspace = firstAccessibleWorkspace(currentUser)
   const siteImportOpen = useAdminUi((s) => s.siteImportOpen)
+  const siteExportOpen = useAdminUi((s) => s.siteExport !== null)
 
   // Schedule background preloads for non-active workspace pages AFTER
   // the active page has rendered + painted. `useEffect` fires after
@@ -318,6 +323,11 @@ export default function AuthenticatedAdmin({ section, currentUser }: Authenticat
           {siteImportOpen && (
             <Suspense fallback={null}>
               <SiteImportModal />
+            </Suspense>
+          )}
+          {siteExportOpen && (
+            <Suspense fallback={null}>
+              <SiteExportModal />
             </Suspense>
           )}
         </SpotlightRoot>

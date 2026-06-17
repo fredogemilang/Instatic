@@ -40,7 +40,9 @@ import { requireCapability } from '../../auth/authz'
 import { getDraftSite } from '../../repositories/site'
 import { listDataTables } from '../../repositories/data/tables'
 import { listDataRows } from '../../repositories/data/rows'
-import { listMediaAssetsForExport } from '../../repositories/media'
+import { listExportableRedirects } from '../../repositories/data/publish'
+import { listMediaAssetsForExport, countMediaAssetsForExport } from '../../repositories/media'
+import { listExportableMediaFolders } from '../../repositories/mediaFolders'
 import { jsonResponse, readValidatedBody } from '../../http'
 import { CMS_API_PREFIX, type CmsHandlerOptions } from './shared'
 import { ExportRequestSchema, type SiteBundle } from '@core/data/bundleSchema'
@@ -48,6 +50,7 @@ import { canSeeAllDataRows } from './data/access'
 
 const EXPORT_PATH = `${CMS_API_PREFIX}/export`
 const EXPORT_ESTIMATE_PATH = `${CMS_API_PREFIX}/export/estimate`
+const EXPORT_SUMMARY_PATH = `${CMS_API_PREFIX}/export/summary`
 
 /** A media asset row enriched with its storage path, as loaded for export. */
 type ExportableAsset = Awaited<ReturnType<typeof listMediaAssetsForExport>>[number]
@@ -77,6 +80,7 @@ function mediaEntryMetadata(asset: ExportableAsset): MediaEntryMetadata {
     blurHash: asset.blurHash,
     storagePath: asset.storagePath,
     posterPath: asset.posterPath,
+    folderIds: asset.folderIds,
   }
 }
 
@@ -91,6 +95,10 @@ interface ExportSelection {
   rows: Awaited<ReturnType<typeof listDataRows>>
   includeMedia: boolean
   includeSite: boolean
+  /** Folder tree, or undefined when folders weren't requested. */
+  mediaFolders: SiteBundle['mediaFolders']
+  /** Self-consistent redirect set, or undefined when redirects weren't requested. */
+  redirects: SiteBundle['redirects']
 }
 
 export async function handleExportRoute(
@@ -100,7 +108,8 @@ export async function handleExportRoute(
 ): Promise<Response | null> {
   const url = new URL(req.url)
   const isEstimate = url.pathname === EXPORT_ESTIMATE_PATH
-  if (url.pathname !== EXPORT_PATH && !isEstimate) return null
+  const isSummary = url.pathname === EXPORT_SUMMARY_PATH
+  if (url.pathname !== EXPORT_PATH && !isEstimate && !isSummary) return null
   if (req.method !== 'GET' && req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed' }, { status: 405 })
   }
@@ -108,28 +117,47 @@ export async function handleExportRoute(
   const user = await requireCapability(req, db, 'data.export')
   if (user instanceof Response) return user
 
-  // Parse filter options from query string (GET) or JSON body (POST)
-  let filterTables: string[] | undefined
-  let filterRowIds: string[] | undefined
+  // Summary — total counts of the non-table export categories, so the dialog
+  // can label and disable categories independent of the current selection.
+  if (isSummary) {
+    const [media, mediaFolders, redirects] = await Promise.all([
+      countMediaAssetsForExport(db),
+      listExportableMediaFolders(db),
+      listExportableRedirects(db),
+    ])
+    return jsonResponse({ media, mediaFolders: mediaFolders.length, redirects: redirects.length })
+  }
+
+  // Parse filter options from query string (GET) or JSON body (POST). A
+  // `selections` of `undefined` means "every table, all rows" (full export);
+  // otherwise each entry names a table and, optionally, a row subset.
+  let selections: { tableId: string; rowIds?: string[] }[] | undefined
   let includeMedia: boolean
   let includeSite: boolean
+  let includeMediaFolders: boolean
+  let includeRedirects: boolean
 
   if (req.method === 'POST') {
     const exportReq = await readValidatedBody(req, ExportRequestSchema)
     if (!exportReq) {
       return jsonResponse({ error: 'Invalid export request body' }, { status: 400 })
     }
-    filterTables = exportReq.tables
-    filterRowIds = exportReq.rowIds
+    selections = exportReq.tables
     includeMedia = exportReq.includeMedia ?? false
     includeSite = exportReq.includeSite ?? true
+    includeMediaFolders = exportReq.includeMediaFolders ?? true
+    includeRedirects = exportReq.includeRedirects ?? true
   } else {
+    // GET supports whole-table selection only (comma-separated ids); row-level
+    // subsets are a POST-only concern (the export dialog always POSTs).
     const tablesParam = url.searchParams.get('tables')
-    const rowIdsParam = url.searchParams.get('rowIds')
-    filterTables = tablesParam ? tablesParam.split(',').filter(Boolean) : undefined
-    filterRowIds = rowIdsParam ? rowIdsParam.split(',').filter(Boolean) : undefined
+    selections = tablesParam
+      ? tablesParam.split(',').filter(Boolean).map((tableId) => ({ tableId }))
+      : undefined
     includeMedia = url.searchParams.get('includeMedia') === '1'
     includeSite = url.searchParams.get('includeSite') !== '0'
+    includeMediaFolders = url.searchParams.get('includeMediaFolders') !== '0'
+    includeRedirects = url.searchParams.get('includeRedirects') !== '0'
   }
 
   // Always load the site shell — needed for sourceSiteName even when includeSite=false
@@ -138,35 +166,55 @@ export async function handleExportRoute(
     return jsonResponse({ error: 'Site not initialised — run setup before exporting' }, { status: 404 })
   }
 
-  // Load all tables, then apply the table filter if requested
+  // Resolve the table set: all tables for a full export, or just the named ones.
+  const selectionByTable = selections ? new Map(selections.map((s) => [s.tableId, s])) : null
   let tables = await listDataTables(db)
-  if (filterTables && filterTables.length > 0) {
-    const tableFilter = new Set(filterTables)
-    tables = tables.filter((t) => tableFilter.has(t.id))
+  if (selectionByTable) {
+    tables = tables.filter((t) => selectionByTable.has(t.id))
   }
 
-  // Load rows for the selected tables (parallel). Visibility filtering:
-  // a caller without `content.edit.any` / `content.publish.any` /
-  // `content.manage` only sees their own rows in the bundle. Without
-  // this, a Client with `data.export` granted (which already implies
-  // limited content access) could download every author's drafts.
-  // (G5 fix — see capabilities review.)
+  // Load rows per table (parallel), applying each table's row subset if one was
+  // given. Visibility filtering: a caller without `content.edit.any` /
+  // `content.publish.any` / `content.manage` only sees their own rows in the
+  // bundle, so a Client with `data.export` can't download every author's drafts
+  // (G5 fix — see capabilities review).
   const visibility = canSeeAllDataRows(user) ? {} : { ownerUserId: user.id }
   const rowsPerTable = await Promise.all(
-    tables.map((table) => listDataRows(db, table.id, visibility)),
+    tables.map(async (table) => {
+      const all = await listDataRows(db, table.id, visibility)
+      const sel = selectionByTable?.get(table.id)
+      if (!sel?.rowIds) return all
+      const want = new Set(sel.rowIds)
+      return all.filter((r) => want.has(r.id))
+    }),
   )
-  let rows = rowsPerTable.flat()
+  const rows = rowsPerTable.flat()
 
-  // If specific row ids were requested, filter rows and reconcile tables
-  if (filterRowIds && filterRowIds.length > 0) {
-    const rowIdFilter = new Set(filterRowIds)
-    rows = rows.filter((r) => rowIdFilter.has(r.id))
-    // Only include tables that are actually referenced by the filtered rows
-    const referencedTableIds = new Set(rows.map((r) => r.tableId))
-    tables = tables.filter((t) => referencedTableIds.has(t.id))
+  // Media folder tree — cheap; gather whenever requested.
+  const mediaFolders = includeMediaFolders ? await listExportableMediaFolders(db) : undefined
+
+  // Redirects — keep the bundle self-consistent: only include redirects whose
+  // table AND target row are part of this export, so the import can restore
+  // them without dangling foreign keys (both FKs cascade-delete in the schema).
+  let redirects: SiteBundle['redirects']
+  if (includeRedirects) {
+    const selectedTableIds = new Set(tables.map((t) => t.id))
+    const selectedRowIds = new Set(rows.map((r) => r.id))
+    const all = await listExportableRedirects(db)
+    redirects = all.filter(
+      (r) => selectedTableIds.has(r.tableId) && selectedRowIds.has(r.targetRowId),
+    )
   }
 
-  const selection: ExportSelection = { shell, tables, rows, includeMedia, includeSite }
+  const selection: ExportSelection = {
+    shell,
+    tables,
+    rows,
+    includeMedia,
+    includeSite,
+    mediaFolders,
+    redirects,
+  }
 
   // Media is embedded only when requested AND an uploads dir is configured —
   // both the estimate and the real export gate on this so they stay in sync.
@@ -250,5 +298,7 @@ function buildBundle(selection: ExportSelection, media: SiteBundle['media']): Si
     tables: selection.tables,
     rows: selection.rows,
     ...(media !== undefined ? { media } : {}),
+    ...(selection.mediaFolders !== undefined ? { mediaFolders: selection.mediaFolders } : {}),
+    ...(selection.redirects !== undefined ? { redirects: selection.redirects } : {}),
   }
 }

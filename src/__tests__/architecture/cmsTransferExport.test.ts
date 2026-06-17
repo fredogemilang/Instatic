@@ -253,12 +253,11 @@ describe('handleExportRoute — GET ?tables=posts', () => {
   })
 })
 
-describe('handleExportRoute — GET ?rowIds=<id1>,<id2>', () => {
+describe('handleExportRoute — POST { tables: [{ tableId: "posts", rowIds: [id1, id2] }] }', () => {
   test('returns only the 2 specified rows', async () => {
-    const req = makeGetRequest(
-      `/admin/api/cms/export?rowIds=${post1Id},${post2Id}`,
-      cookie,
-    )
+    const req = makePostRequest('/admin/api/cms/export', cookie, {
+      tables: [{ tableId: 'posts', rowIds: [post1Id, post2Id] }],
+    })
     const res = await handleExportRoute(req, db)
     const body = JSON.parse(await res!.text())
     const bundle = parseValue(SiteBundleSchema, body)
@@ -271,11 +270,10 @@ describe('handleExportRoute — GET ?rowIds=<id1>,<id2>', () => {
     expect(bundle.rows.length).toBe(2)
   })
 
-  test('tables are reconciled to only the rows\' parent tables', async () => {
-    const req = makeGetRequest(
-      `/admin/api/cms/export?rowIds=${post1Id},${post2Id}`,
-      cookie,
-    )
+  test('only the selected table is included (others are excluded)', async () => {
+    const req = makePostRequest('/admin/api/cms/export', cookie, {
+      tables: [{ tableId: 'posts', rowIds: [post1Id, post2Id] }],
+    })
     const res = await handleExportRoute(req, db)
     const body = JSON.parse(await res!.text())
     const bundle = parseValue(SiteBundleSchema, body)
@@ -324,7 +322,7 @@ describe('handleExportRoute — GET ?includeSite=0', () => {
 describe('handleExportRoute — POST { tables: ["pages"], includeSite: false }', () => {
   test('returns only the pages table', async () => {
     const req = makePostRequest('/admin/api/cms/export', cookie, {
-      tables: ['pages'],
+      tables: [{ tableId: 'pages' }],
       includeSite: false,
     })
     const res = await handleExportRoute(req, db)
@@ -337,7 +335,7 @@ describe('handleExportRoute — POST { tables: ["pages"], includeSite: false }',
 
   test('returns only the 1 pages row', async () => {
     const req = makePostRequest('/admin/api/cms/export', cookie, {
-      tables: ['pages'],
+      tables: [{ tableId: 'pages' }],
       includeSite: false,
     })
     const res = await handleExportRoute(req, db)
@@ -351,7 +349,7 @@ describe('handleExportRoute — POST { tables: ["pages"], includeSite: false }',
 
   test('site is absent when includeSite: false', async () => {
     const req = makePostRequest('/admin/api/cms/export', cookie, {
-      tables: ['pages'],
+      tables: [{ tableId: 'pages' }],
       includeSite: false,
     })
     const res = await handleExportRoute(req, db)
@@ -362,10 +360,10 @@ describe('handleExportRoute — POST { tables: ["pages"], includeSite: false }',
   })
 })
 
-describe('handleExportRoute — POST { rowIds: [bogusId] }', () => {
-  test('returns empty rows when bogus rowId does not match any row', async () => {
+describe('handleExportRoute — POST { tables: [{ tableId: "pages", rowIds: [bogusId] }] }', () => {
+  test('returns empty rows when the row subset matches nothing', async () => {
     const req = makePostRequest('/admin/api/cms/export', cookie, {
-      rowIds: ['completely-bogus-row-id-that-does-not-exist'],
+      tables: [{ tableId: 'pages', rowIds: ['completely-bogus-row-id-that-does-not-exist'] }],
     })
     const res = await handleExportRoute(req, db)
     const body = JSON.parse(await res!.text())
@@ -374,15 +372,18 @@ describe('handleExportRoute — POST { rowIds: [bogusId] }', () => {
     expect(bundle.rows.length).toBe(0)
   })
 
-  test('returns empty tables when no rows matched (no orphan table entries)', async () => {
+  test('still includes the selected table structure (a subset keeps its table)', async () => {
     const req = makePostRequest('/admin/api/cms/export', cookie, {
-      rowIds: ['completely-bogus-row-id-that-does-not-exist'],
+      tables: [{ tableId: 'pages', rowIds: ['completely-bogus-row-id-that-does-not-exist'] }],
     })
     const res = await handleExportRoute(req, db)
     const body = JSON.parse(await res!.text())
     const bundle = parseValue(SiteBundleSchema, body)
 
-    expect(bundle.tables.length).toBe(0)
+    // New model: a table named in `tables` is exported (its structure) even
+    // when its row subset is empty — only tables NOT listed are dropped.
+    expect(bundle.tables.length).toBe(1)
+    expect(bundle.tables[0].id).toBe('pages')
   })
 })
 

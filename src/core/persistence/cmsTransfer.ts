@@ -9,8 +9,8 @@
  * return standard JSON envelopes validated with TypeBox via `readEnvelope`.
  */
 
-import type { SiteBundle, BundlePreview, ImportResult, ImportStrategy, ExportRequest, ExportEstimate } from '@core/data/bundleSchema'
-import { SiteBundleSchema, BundlePreviewSchema, ImportResultSchema, ExportEstimateSchema } from '@core/data/bundleSchema'
+import type { SiteBundle, BundlePreview, ImportResult, ImportStrategy, ExportRequest, ExportEstimate, ExportSummary } from '@core/data/bundleSchema'
+import { SiteBundleSchema, BundlePreviewSchema, ImportResultSchema, ExportEstimateSchema, ExportSummarySchema } from '@core/data/bundleSchema'
 import { parseValue, formatValueErrors, compiled } from '@core/utils/typeboxHelpers'
 import { apiRequest, readEnvelope, assertOk } from '@core/http'
 
@@ -84,6 +84,27 @@ export async function estimateSiteBundle(
     schema: ExportEstimateSchema,
     signal,
     fallbackMessage: 'Failed to estimate export size',
+  })
+}
+
+// ---------------------------------------------------------------------------
+// getExportSummary
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /admin/api/cms/export/summary
+ *
+ * Total counts of the non-table export categories (media, media folders,
+ * redirects), so the export dialog can label each category and disable empty
+ * ones — independent of the current selection. Data-table row counts come from
+ * the workspace, not this endpoint.
+ */
+export async function getExportSummary(signal?: AbortSignal): Promise<ExportSummary> {
+  return apiRequest('/admin/api/cms/export/summary', {
+    method: 'GET',
+    schema: ExportSummarySchema,
+    signal,
+    fallbackMessage: 'Failed to load export summary',
   })
 }
 

@@ -25,13 +25,19 @@
  * @see src/core/data/bundleSchema.ts
  */
 
-import { describe, test, expect, beforeAll } from 'bun:test'
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { createSqliteClient } from '../../../server/db/sqlite'
 import { runMigrations } from '../../../server/db/runMigrations'
 import { sqliteMigrations } from '../../../server/db/migrations-sqlite'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { listDataTables } from '../../../server/repositories/data/tables'
-import { listDataRows, createDataRow, upsertDataRow } from '../../../server/repositories/data/rows'
+import { listDataRows, createDataRow, upsertDataRow, getDataRow } from '../../../server/repositories/data/rows'
 import { saveDraftSite, getDraftSite } from '../../../server/repositories/site'
+import { createMediaAsset, assignAssetToFolders, getMediaAsset } from '../../../server/repositories/media'
+import { createMediaFolder, listMediaFolders } from '../../../server/repositories/mediaFolders'
+import { importDataRowRedirect, listExportableRedirects } from '../../../server/repositories/data/publish'
 import { createUser } from '../../../server/repositories/users'
 import { createSession } from '../../../server/auth/sessions'
 import {
@@ -601,5 +607,129 @@ describe('with strategies — handler-level roundtrip', () => {
       // Bundle cell value, not the old 'Old Local Version' placeholder
       expect(localRow!.cells['title']).toBe(bundleFirst!.cells['title'])
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Full-site round-trip — media folders, folder membership, and redirects
+// ---------------------------------------------------------------------------
+//
+// Proves the "export → import into a fresh instance → identical" guarantee for
+// the categories beyond tables/rows: the media folder tree, each asset's folder
+// membership, and published-URL redirects. Uses a real temp uploads dir so the
+// media bytes (and therefore `folderIds`) travel through the bundle.
+
+describe('full-site round-trip — folders, membership, redirects', () => {
+  let sourceDir: string
+  let targetDir: string
+  let targetDb: DbClient
+  let folderId: string
+  let assetId: string
+  let redirectTargetRowId: string
+
+  beforeAll(async () => {
+    sourceDir = await mkdtemp(join(tmpdir(), 'instatic-export-src-'))
+    targetDir = await mkdtemp(join(tmpdir(), 'instatic-export-tgt-'))
+
+    // --- Source: seed a folder, an asset assigned to it, and a redirect ---
+    const sourceDb = createSqliteClient(':memory:')
+    await runMigrations(sourceDb, sqliteMigrations)
+    const sourceCookie = await seedRoundtripAuth(sourceDb, 'fullsite@roundtrip.test')
+
+    const targetRow = await createDataRow(sourceDb, {
+      tableId: 'posts',
+      cells: { title: 'Renamed Post', slug: 'renamed' },
+      slug: 'renamed',
+    })
+    redirectTargetRowId = targetRow.id
+
+    const folder = await createMediaFolder(sourceDb, {
+      id: 'folder-logos',
+      parentId: null,
+      name: 'Logos',
+      slug: 'logos',
+      createdByUserId: 'owner-fullsite@roundtrip.test',
+    })
+    folderId = folder.id
+
+    await writeFile(join(sourceDir, 'logo.png'), Buffer.from('fake-png-bytes'))
+    const asset = await createMediaAsset(sourceDb, {
+      id: 'asset-logo',
+      filename: 'logo.png',
+      mimeType: 'image/png',
+      sizeBytes: 14,
+      storagePath: 'logo.png',
+      publicPath: '/uploads/logo.png',
+      uploadedByUserId: null,
+      storageAdapterId: '',
+      externallyHosted: false,
+    })
+    assetId = asset.id
+    await assignAssetToFolders(sourceDb, asset.id, { add: [folder.id] })
+
+    await importDataRowRedirect(sourceDb, {
+      id: 'redirect-1',
+      tableId: 'posts',
+      fromRouteBase: '/posts',
+      fromSlug: 'old-slug',
+      targetRowId: targetRow.id,
+    })
+
+    // --- Export the full bundle (media included so folderIds travel) ---
+    const exportReq = new Request('http://localhost/admin/api/cms/export?includeMedia=1', { method: 'GET' })
+    exportReq.headers.set('cookie', sourceCookie)
+    const exportRes = await handleExportRoute(exportReq, sourceDb, { uploadsDir: sourceDir })
+    expect(exportRes!.status).toBe(200)
+    const bundle = parseValue(SiteBundleSchema, JSON.parse(await exportRes!.text()))
+
+    // The bundle must actually carry the new categories.
+    expect(bundle.mediaFolders?.length).toBe(1)
+    expect(bundle.redirects?.length).toBe(1)
+    expect(bundle.media?.find((m) => m.id === 'asset-logo')?.folderIds).toEqual(['folder-logos'])
+
+    // --- Import (replace) into a pristine instance ---
+    targetDb = createSqliteClient(':memory:')
+    await runMigrations(targetDb, sqliteMigrations)
+    const targetCookie = await seedRoundtripAuth(targetDb, 'fullsite-target@roundtrip.test')
+
+    const importReq = new Request('http://localhost/admin/api/cms/import?strategy=replace', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(bundle),
+    })
+    importReq.headers.set('cookie', targetCookie)
+    const importRes = await handleImportRoute(importReq, targetDb, { uploadsDir: targetDir })
+    expect(importRes!.status).toBe(200)
+    const result = parseValue(ImportResultSchema, JSON.parse(await importRes!.text()))
+    expect(result.mediaFoldersImported).toBe(1)
+    expect(result.redirectsImported).toBe(1)
+  })
+
+  afterAll(async () => {
+    await rm(sourceDir, { recursive: true, force: true })
+    await rm(targetDir, { recursive: true, force: true })
+  })
+
+  test('media folder tree is restored identically', async () => {
+    const folders = await listMediaFolders(targetDb)
+    expect(folders.length).toBe(1)
+    expect(folders[0]?.id).toBe(folderId)
+    expect(folders[0]?.name).toBe('Logos')
+    expect(folders[0]?.slug).toBe('logos')
+  })
+
+  test('asset folder membership is restored', async () => {
+    const asset = await getMediaAsset(targetDb, assetId)
+    expect(asset).not.toBeNull()
+    expect(asset!.folderIds).toContain(folderId)
+  })
+
+  test('redirect is restored and points at the imported row', async () => {
+    const redirects = await listExportableRedirects(targetDb)
+    expect(redirects.length).toBe(1)
+    expect(redirects[0]?.fromSlug).toBe('old-slug')
+    expect(redirects[0]?.targetRowId).toBe(redirectTargetRowId)
+    // The target row really exists in the fresh instance.
+    expect(await getDataRow(targetDb, redirectTargetRowId)).not.toBeNull()
   })
 })

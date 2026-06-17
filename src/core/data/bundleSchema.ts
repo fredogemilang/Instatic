@@ -6,6 +6,14 @@
  *   - all (or selected) data tables
  *   - all (or selected) data rows
  *   - optionally: non-deleted media assets with bytes embedded as base64
+ *   - optionally: the media folder tree (assets carry their `folderIds` membership)
+ *   - optionally: published-URL redirects (old route → row)
+ *
+ * Together these make a bundle a complete, portable *site* — re-importing into a
+ * fresh instance reproduces the same published output, editor state, media
+ * organisation, and routing. Instance-runtime state (sessions, audit logs) and
+ * credentials (user passwords, AI provider keys) are deliberately NOT carried —
+ * a portable bundle is not a place for secrets.
  *
  * The bundle is intended for self-contained transfer between self-hosted instances.
  * Media bytes are embedded directly in the JSON (base64-encoded). For large sites
@@ -69,9 +77,55 @@ export const MediaAssetExportSchema = Type.Object({
   storagePath: Type.String({ pattern: SAFE_RELATIVE_PATH_PATTERN }),
   /** Video poster image path (relative to uploads dir), or null for non-video assets. */
   posterPath: Type.Union([Type.String({ pattern: SAFE_RELATIVE_PATH_PATTERN }), Type.Null()]),
+  /**
+   * Ids of the media folders this asset belongs to (many-to-many). Restored on
+   * import only when the matching folders are present in `mediaFolders` —
+   * assignments to folders that weren't exported are skipped.
+   */
+  folderIds: Type.Array(Type.String()),
   /** Raw file bytes encoded as Base64. */
   bytesBase64: Type.String(),
 })
+
+// ---------------------------------------------------------------------------
+// BundleMediaFolder
+// ---------------------------------------------------------------------------
+
+/**
+ * A media-library folder serialized for transfer. The tree is rebuilt on import
+ * from `parentId` links (null = root). `createdByUserId` is intentionally
+ * omitted — folder authorship is instance-local and is reset to null on import,
+ * exactly like data-row authorship references that can't be rehydrated.
+ */
+export const BundleMediaFolderSchema = Type.Object({
+  id: Type.String(),
+  parentId: Type.Union([Type.String(), Type.Null()]),
+  name: Type.String(),
+  slug: Type.String(),
+  sortOrder: Type.Number(),
+})
+
+export type BundleMediaFolder = Static<typeof BundleMediaFolderSchema>
+
+// ---------------------------------------------------------------------------
+// BundleRedirect
+// ---------------------------------------------------------------------------
+
+/**
+ * A published-URL redirect (old route → row), serialized raw so it round-trips
+ * faithfully. `targetRowId` references a row in `rows`; the export only includes
+ * redirects whose table + target row are part of the bundle, so the import can
+ * restore them without dangling foreign keys.
+ */
+export const BundleRedirectSchema = Type.Object({
+  id: Type.String(),
+  tableId: Type.String(),
+  fromRouteBase: Type.String(),
+  fromSlug: Type.String(),
+  targetRowId: Type.String(),
+})
+
+export type BundleRedirect = Static<typeof BundleRedirectSchema>
 
 // ---------------------------------------------------------------------------
 // ImportStrategy
@@ -97,21 +151,40 @@ export type ImportStrategy = Static<typeof ImportStrategySchema>
 // ---------------------------------------------------------------------------
 
 /**
+ * One table's contribution to an export. `rowIds` omitted = the whole table
+ * (all rows); `rowIds` present = only those rows. A table not listed in
+ * `ExportRequest.tables` is excluded entirely.
+ */
+export const TableSelectionSchema = Type.Object({
+  tableId: Type.String(),
+  /** Restrict to these row ids. Omit to include every row in the table. */
+  rowIds: Type.Optional(Type.Array(Type.String())),
+})
+
+export type TableSelection = Static<typeof TableSelectionSchema>
+
+/**
  * Request body accepted by `POST /admin/api/cms/export` (and query string
- * equivalent for `GET`). All fields are optional — omitting them produces the
- * same full-site export as the v1 single-button behavior.
+ * equivalent for `GET`). All fields are optional — omitting them produces a
+ * full-site export (every table, every row, shell + media + folders + redirects).
  */
 export const ExportRequestSchema = Type.Object({
-  /** Restrict export to these table ids. If omitted, all tables are included. */
-  tables: Type.Optional(Type.Array(Type.String())),
-  /** Restrict rows to these specific row ids. If omitted, all rows in the
-   *  selected tables are included. */
-  rowIds: Type.Optional(Type.Array(Type.String())),
+  /**
+   * Tables to include, each with an optional row subset. Omit the whole field
+   * for a full export (all tables, all rows). Per entry: omit `rowIds` for the
+   * whole table, or list specific row ids for a subset. A table absent from
+   * this array is not exported at all.
+   */
+  tables: Type.Optional(Type.Array(TableSelectionSchema)),
   /** Embed media asset bytes in the bundle (increases bundle size). Default false. */
   includeMedia: Type.Optional(Type.Boolean()),
   /** Include the site shell (breakpoints, settings, classes, files, runtime).
    *  Default true. Set to false for content-only exports. */
   includeSite: Type.Optional(Type.Boolean()),
+  /** Include the media folder tree + each asset's folder membership. Default true. */
+  includeMediaFolders: Type.Optional(Type.Boolean()),
+  /** Include published-URL redirects (old route → row). Default true. */
+  includeRedirects: Type.Optional(Type.Boolean()),
 })
 
 export type ExportRequest = Static<typeof ExportRequestSchema>
@@ -132,6 +205,27 @@ export const ExportEstimateSchema = Type.Object({
 })
 
 export type ExportEstimate = Static<typeof ExportEstimateSchema>
+
+// ---------------------------------------------------------------------------
+// ExportSummary
+// ---------------------------------------------------------------------------
+
+/**
+ * Response of `GET /admin/api/cms/export/summary`. Total counts of the
+ * non-table export categories, so the export dialog can label each category
+ * ("Media — 24 files") and disable empty ones — independent of the current
+ * selection. Data-table row counts come from the workspace, not this endpoint.
+ */
+export const ExportSummarySchema = Type.Object({
+  /** Non-deleted media assets available to export. */
+  media: Type.Number(),
+  /** Media-library folders. */
+  mediaFolders: Type.Number(),
+  /** Published-URL redirects. */
+  redirects: Type.Number(),
+})
+
+export type ExportSummary = Static<typeof ExportSummarySchema>
 
 // ---------------------------------------------------------------------------
 // BundlePreview
@@ -170,6 +264,8 @@ export const BundlePreviewSchema = Type.Object({
     rows: Type.Number(),
     mediaFiles: Type.Number(),
     mediaEmbedded: Type.Boolean(),
+    mediaFolders: Type.Number(),
+    redirects: Type.Number(),
   }),
 })
 
@@ -191,6 +287,8 @@ export const ImportResultSchema = Type.Object({
   rowsReplaced: Type.Number(),
   rowsSkipped: Type.Number(),
   mediaImported: Type.Number(),
+  mediaFoldersImported: Type.Number(),
+  redirectsImported: Type.Number(),
 })
 
 export type ImportResult = Static<typeof ImportResultSchema>
@@ -218,6 +316,10 @@ export const SiteBundleSchema = Type.Object({
   rows: Type.Array(DataRowSchema),
   /** Non-deleted media assets with embedded bytes (optional — may be omitted to keep bundle small). */
   media: Type.Optional(Type.Array(MediaAssetExportSchema)),
+  /** Media-library folder tree (optional). Asset membership rides on `media[].folderIds`. */
+  mediaFolders: Type.Optional(Type.Array(BundleMediaFolderSchema)),
+  /** Published-URL redirects (optional). Each targets a row present in `rows`. */
+  redirects: Type.Optional(Type.Array(BundleRedirectSchema)),
 })
 
 export type SiteBundle = Static<typeof SiteBundleSchema>

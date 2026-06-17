@@ -37,6 +37,7 @@ import { getPreviewCommands } from './commands/preview'
 import { getAiAssistantCommands } from './commands/aiAssistant'
 import { getImportHtmlCommands } from './commands/importHtml'
 import { getSiteImportCommands } from './commands/siteImport'
+import { getSiteExportCommands } from './commands/siteExport'
 
 /**
  * Module-level cache of the STATIC built-in command list. Each
@@ -82,6 +83,7 @@ export function getAllCommands(): Command[] {
       ...getPreviewCommands(),
       ...getImportHtmlCommands(),
       ...getSiteImportCommands(),
+      ...getSiteExportCommands(),
       ...getAiAssistantCommands(),
       ...getHelpCommands(),
     ]

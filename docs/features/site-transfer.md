@@ -1,8 +1,10 @@
 # Site Transfer
 
-Export and import — move a complete site between self-hosted instances. One JSON bundle carries the shell, all data tables, all data rows, and (optionally) media assets with their bytes embedded as base64.
+Export and import — move a complete site between self-hosted instances. One JSON bundle carries the shell, all data tables, all data rows, the media library (assets + their bytes + the folder tree), and published-URL redirects. Everything that defines the *site* travels in one file, so re-importing into a fresh instance reproduces an **identical** site.
 
 The transfer format is **self-contained** — no external service, no signed URLs, no incremental sync. Use it for backup, environment promotion (staging → production), or migrating between hosts.
+
+The **Export site** dialog (`src/admin/pages/data/components/ExportDialog`) is a sibling of the Site Import modal: a two-column category navigator with a detail pane. Every category is selected by default — the primary action is a one-click **full export**. Untick any category to narrow the bundle. A live, server-accurate size estimate updates as the selection changes.
 
 ---
 
@@ -11,11 +13,16 @@ The transfer format is **self-contained** — no external service, no signed URL
 - Format: `SiteBundle` — TypeBox schema in `src/core/data/bundleSchema.ts`.
 - Endpoints:
   - `GET /admin/api/cms/export` or `POST /admin/api/cms/export` — produce a bundle from the current site
+  - `GET /admin/api/cms/export/estimate` (POST) — exact byte size for an `ExportRequest`, without reading media off disk
+  - `GET /admin/api/cms/export/summary` — total counts of the non-table categories (media, folders, redirects) so the dialog can label/disable them
   - `POST /admin/api/cms/import/preview` — analyze a bundle without applying (diff summary)
   - `POST /admin/api/cms/import[?strategy=...]` — apply the bundle
-- UI entry: drop the exported `.json` into the canonical Site Import modal (`src/admin/modals/SiteImport`). Spotlight and workspace **Import site** actions open this same global shell modal.
-- Three import strategies: `replace` (destructive), `merge-add` (insert if new), `merge-overwrite` (upsert).
+- Export categories: **theme & settings** (the shell), each **content table**, the **media library**, **media folders**, and **redirects** — all on by default.
+- UI entry (export): **Export site** in the Data workspace opens `src/admin/pages/data/components/ExportDialog`.
+- UI entry (import): drop the exported `.json` into the canonical Site Import modal (`src/admin/modals/SiteImport`). Spotlight and workspace **Import site** actions open this same global shell modal.
+- Three import strategies: `replace` (destructive — the full-restore path), `merge-add` (insert if new), `merge-overwrite` (upsert).
 - Media bytes are embedded as base64. Variants are **not** exported — they regenerate on first request after import.
+- Media folders + redirects are restored by the **`replace`** strategy (the full-restore path); merge strategies leave the local folder tree and redirects untouched.
 - v1 caveat: bundles are assembled in memory. Large sites with heavy media will be slow / memory-hungry — chunked streaming is a future improvement.
 
 ---
@@ -24,9 +31,13 @@ The transfer format is **self-contained** — no external service, no signed URL
 
 ```text
 src/core/data/bundleSchema.ts
-├── MediaAssetExportSchema       — one media asset with bytesBase64
+├── MediaAssetExportSchema       — one media asset with bytesBase64 + folderIds
+├── BundleMediaFolderSchema      — one media-library folder (tree via parentId)
+├── BundleRedirectSchema         — one published-URL redirect (raw row)
 ├── ImportStrategySchema         — 'replace' | 'merge-add' | 'merge-overwrite'
 ├── ExportRequestSchema          — POST /export body
+├── ExportEstimateSchema         — GET/POST /export/estimate response
+├── ExportSummarySchema          — GET /export/summary response (category counts)
 ├── BundlePreviewSchema          — diff summary
 ├── ImportResultSchema           — what was applied
 └── SiteBundleSchema             — the full bundle shape
@@ -58,10 +69,18 @@ interface SiteBundle {
   /** All (or selected) data rows — `data_rows` rows. Cells included verbatim. */
   rows:   DataRow[]
 
-  /** Optional: media assets with bytes embedded as base64 */
+  /** Optional: media assets with bytes embedded as base64. Each carries its `folderIds`. */
   media?: MediaAssetExport[]
+
+  /** Optional: the media-library folder tree (rebuilt from `parentId` links). */
+  mediaFolders?: BundleMediaFolder[]
+
+  /** Optional: published-URL redirects. Each targets a row present in `rows`. */
+  redirects?: BundleRedirect[]
 }
 ```
+
+`media[].folderIds` carries each asset's folder membership; on import it's restored only into folders that arrived in `mediaFolders`. The export keeps the bundle self-consistent: it only includes a redirect when both its table and its target row are part of the same bundle, so the import never hits a dangling foreign key.
 
 A bundle is a single JSON file. The whole thing parses through TypeBox at the import boundary; mismatched shape rejects the bundle with a clear path.
 
@@ -69,15 +88,20 @@ A bundle is a single JSON file. The whole thing parses through TypeBox at the im
 
 ### What's NOT in a bundle
 
+A portable bundle deliberately carries **no secrets and no instance-runtime state** — it travels between hosts and lands as a downloadable file, so credentials must never be in it.
+
 | Excluded                | Why                                                                   |
 |-------------------------|-----------------------------------------------------------------------|
 | Sessions                | Per-device, security-sensitive                                        |
-| Users with passwords    | Bundles are designed for site content, not account migration          |
-| Audit log               | Local to the host                                                     |
+| Users / roles + passwords | Bundles are for site content, not account migration; password hashes must not travel |
+| AI provider keys        | Credentials — never in a portable file                                |
+| Audit / login logs      | Local to the host                                                     |
 | Published HTML files    | Re-rendered on first publish after import                             |
 | Media variants          | Auto-generated by the upload pipeline on first request                |
-| Plugin **state**        | Plugin-owned `data_rows` are in `rows`; plugin install state isn't   |
+| Plugin packages + install state | Plugin-owned `data_rows` are in `rows`; the installed-plugin set + package bytes are a separate subsystem |
 | Per-user preferences    | Per-device — `localStorage` + `user_preferences` rows                 |
+
+Folder and row authorship (`created_by_user_id`) is **reset to null** on import — the users it referenced don't exist on a fresh instance, exactly like data-row author references.
 
 ---
 
@@ -89,12 +113,19 @@ GET accepts filter options as query-string params. POST accepts a JSON body matc
 
 ```ts
 {
-  tables?:       string[]    // table ids to include; default: all tables
-  rowIds?:       string[]    // specific row ids; default: all rows in selected tables
-  includeMedia?: boolean     // embed media bytes; default: false
-  includeSite?:  boolean     // include site shell; default: true
+  // Tables to include, each with an optional row subset. OMIT the whole field
+  // for a full export (all tables, all rows). Per entry: omit `rowIds` for the
+  // whole table, or list specific row ids for a subset. A table absent from
+  // this array is not exported at all.
+  tables?:              { tableId: string; rowIds?: string[] }[]
+  includeMedia?:        boolean     // embed media bytes; default: false (the dialog sends true)
+  includeSite?:         boolean     // include site shell; default: true
+  includeMediaFolders?: boolean     // include the folder tree + asset membership; default: true
+  includeRedirects?:    boolean     // include published-URL redirects; default: true
 }
 ```
+
+The redesigned **Export site** dialog defaults every category on and content tables to all rows, so its one-click action is a complete full-site export. Opening a content table reveals a **per-row checklist** (pages, posts, components, …) with per-table All / None, so an operator can include or exclude individual entries; the dialog then sends that table with an explicit `rowIds` subset. A table left untouched is sent with no `rowIds` (the whole table) and never needs its rows fetched. `GET` supports whole-table selection only (`?tables=posts,pages`); row-level subsets are POST-only.
 
 The handler:
 
@@ -136,6 +167,8 @@ Returns a `BundlePreview`:
     rows:          number   // total rows in bundle
     mediaFiles:    number   // total media assets in bundle
     mediaEmbedded: boolean  // true if bytes are embedded
+    mediaFolders:  number   // total folders in bundle
+    redirects:     number   // total redirects in bundle
   }
 }
 ```
@@ -156,11 +189,13 @@ Body: a `SiteBundle` JSON (verbatim). Strategy is a query-string parameter (defa
 type ImportStrategy = 'replace' | 'merge-add' | 'merge-overwrite'
 ```
 
-| Strategy           | Tables                            | Rows                              | Media                              |
-|--------------------|-----------------------------------|-----------------------------------|------------------------------------|
-| `replace`          | Wipe + recreate from bundle       | Wipe + recreate                   | Wipe + write all bytes             |
-| `merge-add`        | Skip if exists; add if new        | Skip if exists; add if new        | Skip if exists; add if new         |
-| `merge-overwrite`  | Upsert (incoming wins)            | Upsert (incoming wins)            | Upsert (incoming bytes win)        |
+| Strategy           | Tables                            | Rows                              | Media                              | Folders + redirects          |
+|--------------------|-----------------------------------|-----------------------------------|------------------------------------|------------------------------|
+| `replace`          | Wipe + recreate from bundle       | Wipe + recreate                   | Wipe + write all bytes             | Wipe + recreate from bundle  |
+| `merge-add`        | Skip if exists; add if new        | Skip if exists; add if new        | Skip if exists; add if new         | Left untouched               |
+| `merge-overwrite`  | Upsert (incoming wins)            | Upsert (incoming wins)            | Upsert (incoming bytes win)        | Left untouched               |
+
+Folder membership (`media_asset_folders`) is restored **after** the media bytes land, and only into folders the bundle actually carried. Redirect rows are inserted after their target rows exist (in `replace`, the rows' cascade-delete clears the old redirects first). Folders + redirects ride only the `replace` (full-restore) path because merging a folder tree or redirect set into a populated instance risks unique-key collisions — the same reason the site shell is `replace`/`merge-overwrite`-only.
 
 The handler:
 
@@ -204,7 +239,7 @@ The export → import path round-trips losslessly for everything in the bundle. 
 - `src/__tests__/architecture/cmsTransferExport.test.ts` — export produces a valid bundle.
 - `src/__tests__/architecture/cmsTransferPreview.test.ts` — preview matches what import would do.
 - `src/__tests__/architecture/cmsTransferImport.test.ts` — applying then re-exporting produces a bundle equivalent to the original.
-- `src/__tests__/architecture/import-export-roundtrip.test.ts` — full round-trip.
+- `src/__tests__/architecture/import-export-roundtrip.test.ts` — full round-trip, including a dedicated block that proves the **media folder tree, asset folder membership, and redirects** survive an export → `replace`-import into a pristine instance.
 
 If you change a persisted shape (a new column on `data_rows`, a new field on `data_tables`), you also need to:
 
@@ -243,8 +278,18 @@ Save the response JSON to disk (browser handles the download automatically).
 POST /admin/api/cms/export
 {
   "includeSite": false,
-  "tables": ["posts"],
+  "tables": [{ "tableId": "posts" }],
   "includeMedia": true
+}
+```
+
+Or a specific subset of rows from one table:
+
+```text
+POST /admin/api/cms/export
+{
+  "includeSite": false,
+  "tables": [{ "tableId": "posts", "rowIds": ["row_abc", "row_def"] }]
 }
 ```
 

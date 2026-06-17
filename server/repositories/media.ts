@@ -493,6 +493,14 @@ interface MediaAssetExportRow extends MediaAssetRow {
  * export. Storage path is kept separate from the normal `listMediaAssets` query
  * because the public read paths never need to expose it.
  */
+/** Count of non-deleted media assets available to export (no row hydration). */
+export async function countMediaAssetsForExport(db: DbClient): Promise<number> {
+  const { rows } = await db<{ n: number | string }>`
+    select count(*) as n from media_assets where deleted_at is null
+  `
+  return Number(rows[0]?.n ?? 0)
+}
+
 export async function listMediaAssetsForExport(db: DbClient): Promise<Array<MediaAsset & { storagePath: string }>> {
   const { rows } = await db.unsafe<MediaAssetExportRow>(
     `select ${MEDIA_ASSET_COLUMNS}, storage_path

@@ -1,18 +1,18 @@
 /**
- * ExportDialog — interactive export configuration dialog.
+ * ExportDialog — the granular "full site export" dialog (a sibling of the Site
+ * Import modal: a left category navigator + a right detail pane).
  *
- * Tests the full interaction surface:
- *   1.  Initial state: all tables checked, site shell on, media off, scope=all, estimate shown
- *   2.  Toggling site shell switch flips aria-checked
- *   3.  Toggling media switch flips aria-checked
- *   4.  Unchecking a table flips its checkbox
- *   5.  scope='selected' radio is disabled when no rows are selected
- *   6.  scope='selected' with N rows locks table checkboxes to the active table
- *   7.  initialScope='selected' pre-selects the scope radio on first render
- *   8.  Download success: fetch called with right body, success toast, onClose called
- *   9.  Download error: inline alert shown, error toast, onClose NOT called
- *   10. Cancel calls onClose
- *   11. Download button is disabled when all tables unchecked and site shell off
+ * Covers the new interaction surface:
+ *   1.  Initial state — full export: theme & settings on, footer says "Full export"
+ *   2.  Toggling the active category's switch flips its aria-checked
+ *   3.  Selecting the Media category shows its switch (on by default = full export)
+ *   4.  "Select none" disables Download and updates the footer summary
+ *   5.  Download success — fetch body carries every include* flag (full export)
+ *   6.  Download error — inline alert shown, error toast pushed, onClose NOT called
+ *   7.  Cancel calls onClose
+ *   8.  Estimate is fetched and shrinks when media is toggled OFF
+ *   9.  Row scope — initialScope='selected' shows the Selected segment, pressed
+ *   10. An empty category (count 0 from the summary) is disabled
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
@@ -68,11 +68,25 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
+/** Default mock: serves the summary + estimate endpoints so the dialog settles. */
+function defaultFetch(summary = { media: 2, mediaFolders: 1, redirects: 1 }, bytes = 12_000) {
+  return async (input: RequestInfo | URL): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url.startsWith('/admin/api/cms/export/summary')) return jsonResponse(summary)
+    if (url === '/admin/api/cms/export/estimate') return jsonResponse({ bytes })
+    return jsonResponse({ error: `Unexpected request: ${url}` }, 500)
+  }
+}
+
+/** Click a category's nav row, then return its detail-pane include Switch. */
+function openCategory(label: string): HTMLElement {
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(label, 'i') }))
+  return screen.getByRole('switch', { name: new RegExp(`include ${label} in export`, 'i') })
+}
+
 // ── Global state saved for restore ───────────────────────────────────────────
 
 const originalFetch = globalThis.fetch
-// TypeScript types these as always-defined; happy-dom may not implement them,
-// but we always set our own mock version so runtime absence is fine.
 let savedCreateObjectURL: typeof URL.createObjectURL
 let savedRevokeObjectURL: typeof URL.revokeObjectURL
 let savedAnchorClick: typeof HTMLAnchorElement.prototype.click
@@ -81,11 +95,10 @@ beforeEach(() => {
   savedCreateObjectURL = URL.createObjectURL
   savedRevokeObjectURL = URL.revokeObjectURL
   savedAnchorClick = HTMLAnchorElement.prototype.click
-  // Mock browser download helpers that don't exist in happy-dom
   URL.createObjectURL = (_obj: Blob | MediaSource) => 'blob:mock-url'
   URL.revokeObjectURL = (_url: string) => {}
-  // Prevent anchor navigation side-effects in the happy-dom environment
   HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {}
+  globalThis.fetch = defaultFetch()
 })
 
 afterEach(() => {
@@ -99,171 +112,60 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('ExportDialog', () => {
-  it('initial state — all tables checked, site shell on, media off, scope=all, estimate shown', () => {
-    render(
-      <ExportDialog
-        open={true}
-        onClose={() => {}}
-        tables={[POSTS_TABLE, PAGES_TABLE]}
+  it('initial state — full export: theme & settings on, footer says full export', () => {
+    render(<ExportDialog open={true} onClose={() => {}} tables={[POSTS_TABLE, PAGES_TABLE]} />)
 
-      />,
-    )
-
-    // Dialog renders with neutral tone → role="dialog"
     expect(screen.getByRole('dialog')).toBeTruthy()
 
-    // Site shell switch is on
-    const siteShellSwitch = screen.getByRole('switch', { name: /include site shell/i })
-    expect(siteShellSwitch.getAttribute('aria-checked')).toBe('true')
+    // Theme & settings is the default-active category; its switch is on.
+    const shellSwitch = screen.getByRole('switch', { name: /include theme & settings in export/i })
+    expect(shellSwitch.getAttribute('aria-checked')).toBe('true')
 
-    // Media switch is off
-    const mediaSwitch = screen.getByRole('switch', { name: /include media files/i })
-    expect(mediaSwitch.getAttribute('aria-checked')).toBe('false')
-
-    // Both table checkboxes are checked
-    const postsCheckbox = screen.getByRole('checkbox', { name: /include table posts/i }) as HTMLInputElement
-    const pagesCheckbox = screen.getByRole('checkbox', { name: /include table pages/i }) as HTMLInputElement
-    expect(postsCheckbox.checked).toBe(true)
-    expect(pagesCheckbox.checked).toBe(true)
-
-    // All-rows scope radio is selected
-    const allRadio = screen.getByRole('radio', { name: /all rows/i }) as HTMLInputElement
-    expect(allRadio.checked).toBe(true)
-
-    // Estimate label is rendered
+    // Everything is selected → the footer announces a full export.
+    expect(screen.getByText(/re-imports into a fresh instance identically/i)).toBeTruthy()
     expect(screen.getByText(/estimated size/i)).toBeTruthy()
   })
 
-  it('toggling the site-shell switch flips its aria-checked', () => {
-    render(
-      <ExportDialog
-        open={true}
-        onClose={() => {}}
-        tables={[POSTS_TABLE]}
+  it("toggling the active category's switch flips its aria-checked", () => {
+    render(<ExportDialog open={true} onClose={() => {}} tables={[POSTS_TABLE]} />)
 
-      />,
-    )
-
-    const sw = screen.getByRole('switch', { name: /include site shell/i })
+    const sw = screen.getByRole('switch', { name: /include theme & settings in export/i })
     expect(sw.getAttribute('aria-checked')).toBe('true')
-
     fireEvent.click(sw)
     expect(sw.getAttribute('aria-checked')).toBe('false')
-
     fireEvent.click(sw)
     expect(sw.getAttribute('aria-checked')).toBe('true')
   })
 
-  it('toggling the media switch flips its aria-checked', () => {
-    render(
-      <ExportDialog
-        open={true}
-        onClose={() => {}}
-        tables={[POSTS_TABLE]}
+  it('selecting the Media category shows its switch, on by default', () => {
+    render(<ExportDialog open={true} onClose={() => {}} tables={[POSTS_TABLE]} />)
 
-      />,
-    )
-
-    const sw = screen.getByRole('switch', { name: /include media files/i })
-    expect(sw.getAttribute('aria-checked')).toBe('false')
-
-    fireEvent.click(sw)
-    expect(sw.getAttribute('aria-checked')).toBe('true')
+    const mediaSwitch = openCategory('Media library')
+    expect(mediaSwitch.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(mediaSwitch)
+    expect(mediaSwitch.getAttribute('aria-checked')).toBe('false')
   })
 
-  it('unchecking a table checkbox flips it to unchecked', () => {
-    render(
-      <ExportDialog
-        open={true}
-        onClose={() => {}}
-        tables={[POSTS_TABLE, PAGES_TABLE]}
+  it('"Select none" disables Download and updates the footer summary', () => {
+    render(<ExportDialog open={true} onClose={() => {}} tables={[POSTS_TABLE, PAGES_TABLE]} />)
 
-      />,
-    )
+    fireEvent.click(screen.getByRole('button', { name: /select none/i }))
 
-    const postsCheckbox = screen.getByRole('checkbox', { name: /include table posts/i }) as HTMLInputElement
-    expect(postsCheckbox.checked).toBe(true)
-
-    fireEvent.click(postsCheckbox)
-    expect(postsCheckbox.checked).toBe(false)
-
-    // Other table should remain checked
-    const pagesCheckbox = screen.getByRole('checkbox', { name: /include table pages/i }) as HTMLInputElement
-    expect(pagesCheckbox.checked).toBe(true)
+    const downloadBtn = screen.getByRole('button', { name: /download bundle/i }) as HTMLButtonElement
+    expect(downloadBtn.disabled).toBe(true)
+    expect(screen.getByText(/0 of \d+ categories selected/i)).toBeTruthy()
   })
 
-  it("scope='selected' radio is disabled when selectedRowIds is empty", () => {
-    render(
-      <ExportDialog
-        open={true}
-        onClose={() => {}}
-        tables={[POSTS_TABLE, PAGES_TABLE]}
-
-        selectedRowIds={[]}
-      />,
-    )
-
-    const selectedRadio = screen.getByRole('radio', { name: /only the/i }) as HTMLInputElement
-    expect(selectedRadio.disabled).toBe(true)
-  })
-
-  it("scope='selected' with N rows locks table checkboxes to the active table", () => {
-    render(
-      <ExportDialog
-        open={true}
-        onClose={() => {}}
-        tables={[POSTS_TABLE, PAGES_TABLE]}
-
-        selectedRowIds={['r1', 'r2']}
-        activeTableId="posts"
-      />,
-    )
-
-    const selectedRadio = screen.getByRole('radio', { name: /only the/i }) as HTMLInputElement
-    expect(selectedRadio.disabled).toBe(false)
-
-    fireEvent.click(selectedRadio)
-
-    // All table checkboxes become disabled (scope is locked to active table)
-    const postsCheckbox = screen.getByRole('checkbox', { name: /include table posts/i }) as HTMLInputElement
-    const pagesCheckbox = screen.getByRole('checkbox', { name: /include table pages/i }) as HTMLInputElement
-    expect(postsCheckbox.disabled).toBe(true)
-    expect(pagesCheckbox.disabled).toBe(true)
-
-    // Active table is checked; inactive table is not
-    expect(postsCheckbox.checked).toBe(true)
-    expect(pagesCheckbox.checked).toBe(false)
-  })
-
-  it("initialScope='selected' pre-selects the scope radio on first render", () => {
-    render(
-      <ExportDialog
-        open={true}
-        onClose={() => {}}
-        tables={[POSTS_TABLE]}
-
-        selectedRowIds={['r1']}
-        activeTableId="posts"
-        initialScope="selected"
-      />,
-    )
-
-    const selectedRadio = screen.getByRole('radio', { name: /only the/i }) as HTMLInputElement
-    const allRadio = screen.getByRole('radio', { name: /all rows/i }) as HTMLInputElement
-
-    expect(selectedRadio.checked).toBe(true)
-    expect(allRadio.checked).toBe(false)
-  })
-
-  it('download success — fetch called with correct body, success toast pushed, onClose called', async () => {
+  it('download success — fetch body carries every include flag (full export)', async () => {
     let onCloseCalled = false
     let fetchBodyStr: string | null = null
 
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString()
+      if (url.startsWith('/admin/api/cms/export/summary')) return jsonResponse({ media: 2, mediaFolders: 1, redirects: 1 })
+      if (url === '/admin/api/cms/export/estimate') return jsonResponse({ bytes: 1000 })
       if (url === '/admin/api/cms/export') {
         fetchBodyStr = (init?.body as string) ?? null
-        // Return a valid 200 response; exportSiteBundle calls res.blob()
         return jsonResponse('{}')
       }
       return jsonResponse({ error: `Unexpected request: ${url}` }, 500)
@@ -278,30 +180,31 @@ describe('ExportDialog', () => {
           open={true}
           onClose={() => { onCloseCalled = true }}
           tables={[POSTS_TABLE, PAGES_TABLE]}
-  
         />,
       )
 
       fireEvent.click(screen.getByRole('button', { name: /download bundle/i }))
 
-      await waitFor(() => {
-        expect(onCloseCalled).toBe(true)
-      })
+      await waitFor(() => { expect(onCloseCalled).toBe(true) })
 
-      // Fetch was called with the correct body shape
       expect(fetchBodyStr).not.toBeNull()
       const body = JSON.parse(fetchBodyStr!) as {
-        tables: string[]
+        tables: { tableId: string; rowIds?: string[] }[]
         includeMedia: boolean
         includeSite: boolean
+        includeMediaFolders: boolean
+        includeRedirects: boolean
       }
-      expect(Array.isArray(body.tables)).toBe(true)
-      expect(body.tables).toContain('posts')
-      expect(body.tables).toContain('pages')
+      // Full export → every table listed with no row subset (whole table).
+      const ids = body.tables.map((t) => t.tableId)
+      expect(ids).toContain('posts')
+      expect(ids).toContain('pages')
+      expect(body.tables.every((t) => t.rowIds === undefined)).toBe(true)
       expect(body.includeSite).toBe(true)
-      expect(body.includeMedia).toBe(false)
+      expect(body.includeMedia).toBe(true)
+      expect(body.includeMediaFolders).toBe(true)
+      expect(body.includeRedirects).toBe(true)
 
-      // Success toast was pushed
       expect(capturedToasts.some((t) => t.kind === 'success' && t.title === 'Export complete')).toBe(true)
     } finally {
       unsub()
@@ -313,12 +216,9 @@ describe('ExportDialog', () => {
 
     globalThis.fetch = async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
-      if (url === '/admin/api/cms/export') {
-        return new Response(JSON.stringify({ error: 'boom' }), {
-          status: 500,
-          headers: { 'content-type': 'application/json' },
-        })
-      }
+      if (url.startsWith('/admin/api/cms/export/summary')) return jsonResponse({ media: 0, mediaFolders: 0, redirects: 0 })
+      if (url === '/admin/api/cms/export/estimate') return jsonResponse({ bytes: 1000 })
+      if (url === '/admin/api/cms/export') return jsonResponse({ error: 'boom' }, 500)
       return jsonResponse({ error: `Unexpected: ${url}` }, 500)
     }
 
@@ -326,36 +226,32 @@ describe('ExportDialog', () => {
     const unsub = subscribeToasts((snapshot) => { capturedToasts = [...snapshot] })
 
     try {
-      render(
-        <ExportDialog
-          open={true}
-          onClose={() => { onCloseCalled = true }}
-          tables={[POSTS_TABLE]}
-  
-        />,
-      )
+      render(<ExportDialog open={true} onClose={() => { onCloseCalled = true }} tables={[POSTS_TABLE]} />)
 
       fireEvent.click(screen.getByRole('button', { name: /download bundle/i }))
 
-      // Inline role="alert" error appears
-      await waitFor(() => {
-        expect(screen.getByRole('alert')).toBeTruthy()
-      })
-
+      await waitFor(() => { expect(screen.getByRole('alert')).toBeTruthy() })
       expect(onCloseCalled).toBe(false)
-
-      // Error toast was pushed
       expect(capturedToasts.some((t) => t.kind === 'error' && t.title === 'Export failed')).toBe(true)
     } finally {
       unsub()
     }
   })
 
-  it('estimate is fetched from the server and grows when media is toggled on', async () => {
-    // The estimate endpoint reports a size that depends on includeMedia, so we
-    // can assert the dialog re-requests and re-renders when the toggle flips.
+  it('Cancel button calls onClose', () => {
+    let onCloseCalled = false
+    render(<ExportDialog open={true} onClose={() => { onCloseCalled = true }} tables={[POSTS_TABLE]} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
+    expect(onCloseCalled).toBe(true)
+  })
+
+  it('estimate is fetched and shrinks when media is toggled OFF', async () => {
+    // Media is ON by default (full export), so the initial estimate is the large
+    // one; turning media off re-requests and the estimate drops.
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString()
+      if (url.startsWith('/admin/api/cms/export/summary')) return jsonResponse({ media: 2, mediaFolders: 1, redirects: 1 })
       if (url === '/admin/api/cms/export/estimate') {
         const body = JSON.parse((init?.body as string) ?? '{}') as { includeMedia?: boolean }
         return jsonResponse({ bytes: body.includeMedia ? 5_000_000 : 12_000 })
@@ -363,57 +259,79 @@ describe('ExportDialog', () => {
       return jsonResponse({ error: `Unexpected request: ${url}` }, 500)
     }
 
+    render(<ExportDialog open={true} onClose={() => {}} tables={[POSTS_TABLE]} />)
+
+    await waitFor(() => { expect(screen.getByText(/~4\.8 MB/i)).toBeTruthy() })
+
+    const mediaSwitch = openCategory('Media library')
+    fireEvent.click(mediaSwitch)
+    await waitFor(() => { expect(screen.getByText(/~12 KB/i)).toBeTruthy() })
+  })
+
+  it("initialScope='selected' pre-narrows the active table to the grid selection", () => {
     render(
       <ExportDialog
         open={true}
         onClose={() => {}}
-        tables={[POSTS_TABLE]}
+        tables={[POSTS_TABLE, PAGES_TABLE]}
+        selectedRowIds={['r1', 'r2']}
+        activeTableId="posts"
+        initialScope="selected"
       />,
     )
 
-    // Initial (media off) estimate resolves to ~12 KB.
-    await waitFor(() => {
-      expect(screen.getByText(/estimated size: ~12 KB/i)).toBeTruthy()
-    })
-
-    // Flip media on → the dialog re-requests and the estimate jumps to MB.
-    fireEvent.click(screen.getByRole('switch', { name: /include media files/i }))
-    await waitFor(() => {
-      expect(screen.getByText(/estimated size: ~4\.8 MB/i)).toBeTruthy()
-    })
+    // Opens on the Posts table, pre-narrowed to the 2 selected rows of 5.
+    expect(screen.getByText(/2 of 5 entries selected/i)).toBeTruthy()
   })
 
-  it('Cancel button calls onClose', () => {
-    let onCloseCalled = false
-    render(
-      <ExportDialog
-        open={true}
-        onClose={() => { onCloseCalled = true }}
-        tables={[POSTS_TABLE]}
+  it('content table detail lists rows as a checklist; toggling updates the count + request', async () => {
+    let lastExportBody: string | null = null
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.startsWith('/admin/api/cms/export/summary')) return jsonResponse({ media: 0, mediaFolders: 0, redirects: 0 })
+      if (url === '/admin/api/cms/export/estimate') return jsonResponse({ bytes: 1000 })
+      if (url.includes('/data/tables/posts/rows')) {
+        return jsonResponse({
+          rows: [
+            { id: 'p1', tableId: 'posts', cells: { title: 'First' }, slug: 'first', status: 'published', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', publishedAt: null, scheduledPublishAt: null, deletedAt: null, authorUserId: null, createdByUserId: null, updatedByUserId: null, publishedByUserId: null, author: null, createdBy: null, updatedBy: null, publishedBy: null },
+            { id: 'p2', tableId: 'posts', cells: { title: 'Second' }, slug: 'second', status: 'draft', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', publishedAt: null, scheduledPublishAt: null, deletedAt: null, authorUserId: null, createdByUserId: null, updatedByUserId: null, publishedByUserId: null, author: null, createdBy: null, updatedBy: null, publishedBy: null },
+          ],
+        })
+      }
+      if (url === '/admin/api/cms/export') { lastExportBody = (init?.body as string) ?? null; return jsonResponse('{}') }
+      return jsonResponse({ error: `Unexpected request: ${url}` }, 500)
+    }
 
-      />,
-    )
+    render(<ExportDialog open={true} onClose={() => {}} tables={[POSTS_TABLE]} />)
 
-    fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
-    expect(onCloseCalled).toBe(true)
+    // Open the Posts table — its rows load as a checklist.
+    fireEvent.click(screen.getByRole('button', { name: /posts/i }))
+    const firstRow = await screen.findByRole('checkbox', { name: /include first/i })
+    expect((firstRow as HTMLInputElement).checked).toBe(true)
+
+    // Untick one row → header reflects 1 of 2, and the export request carries
+    // an explicit rowIds subset for the posts table.
+    fireEvent.click(firstRow)
+    await waitFor(() => { expect(screen.getByText(/1 of 2 entries selected/i)).toBeTruthy() })
+
+    fireEvent.click(screen.getByRole('button', { name: /download bundle/i }))
+    await waitFor(() => { expect(lastExportBody).not.toBeNull() })
+    const body = JSON.parse(lastExportBody!) as { tables: { tableId: string; rowIds?: string[] }[] }
+    const posts = body.tables.find((t) => t.tableId === 'posts')
+    expect(posts?.rowIds).toEqual(['p2'])
   })
 
-  it('Download button is disabled when all tables unchecked and site shell is off', () => {
-    render(
-      <ExportDialog
-        open={true}
-        onClose={() => {}}
-        tables={[POSTS_TABLE]}
+  it('an empty category (summary count 0) is disabled', async () => {
+    globalThis.fetch = defaultFetch({ media: 0, mediaFolders: 3, redirects: 0 })
 
-      />,
-    )
+    render(<ExportDialog open={true} onClose={() => {}} tables={[POSTS_TABLE]} />)
 
-    // Turn off site shell
-    fireEvent.click(screen.getByRole('switch', { name: /include site shell/i }))
-    // Uncheck the only table
-    fireEvent.click(screen.getByRole('checkbox', { name: /include table posts/i }))
+    // Open the Media category, then wait for the summary to mark it empty.
+    fireEvent.click(screen.getByRole('button', { name: /media library/i }))
+    await waitFor(() => { expect(screen.getByText(/no media uploaded yet/i)).toBeTruthy() })
 
-    const downloadBtn = screen.getByRole('button', { name: /download bundle/i }) as HTMLButtonElement
-    expect(downloadBtn.disabled).toBe(true)
+    const mediaSwitch = screen.getByRole('switch', { name: /include media library in export/i }) as HTMLButtonElement
+    expect(mediaSwitch.disabled).toBe(true)
+    expect(mediaSwitch.getAttribute('aria-checked')).toBe('false')
   })
 })

@@ -93,6 +93,8 @@ export async function handleImportPreviewRoute(
       rows: bundle.rows.length,
       mediaFiles: bundle.media?.length ?? 0,
       mediaEmbedded: (bundle.media?.length ?? 0) > 0,
+      mediaFolders: bundle.mediaFolders?.length ?? 0,
+      redirects: bundle.redirects?.length ?? 0,
     },
   }
 

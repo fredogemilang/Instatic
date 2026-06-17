@@ -38,6 +38,24 @@ interface AdminUiState {
   closeSiteImport: () => void
 
   /**
+   * Global Site Export modal. `null` = closed. The optional context narrows the
+   * initial selection — the Data workspace passes the active table (and, for
+   * "Export selected", the checked row ids); Spotlight opens it with no context
+   * for a full export.
+   */
+  siteExport: {
+    activeTableId: string | null
+    selectedRowIds: string[]
+    initialScope: 'all' | 'selected'
+  } | null
+  openSiteExport: (context?: {
+    activeTableId?: string | null
+    selectedRowIds?: string[]
+    initialScope?: 'all' | 'selected'
+  }) => void
+  closeSiteExport: () => void
+
+  /**
    * Site summary surfaced in the admin toolbar (site name + favicon).
    * `siteName: null` means the shell has not loaded the identity yet; the
    * toolbar renders a skeleton instead of flashing a placeholder name.
@@ -116,6 +134,16 @@ export const useAdminUi = create<AdminUiState>((set) => ({
   siteImportOpen: false,
   openSiteImport: () => set({ siteImportOpen: true }),
   closeSiteImport: () => set({ siteImportOpen: false }),
+
+  siteExport: null,
+  openSiteExport: (context) => set({
+    siteExport: {
+      activeTableId: context?.activeTableId ?? null,
+      selectedRowIds: context?.selectedRowIds ?? [],
+      initialScope: context?.initialScope ?? 'all',
+    },
+  }),
+  closeSiteExport: () => set({ siteExport: null }),
 
   siteName: null,
   siteFaviconUrl: null,
